@@ -11,4 +11,24 @@ node ../../scripts/cli.mjs verify flujo-roto.yaml --diagnose  # rojo a propósit
 curl -X POST localhost:4010/__atrezzo/reset -d '{"escenario":"vacio"}'
 ```
 
-Con `playwright` instalado: `verify flujo.yaml --driver playwright` cuenta en el DOM real.
+Con `playwright` o `playwright-core` instalado (en este repo: `npm i -D playwright-core`, usa `/usr/bin/chromium` o `ATREZZO_CHROME`): `verify flujo.yaml --driver playwright` cuenta en el DOM real.
+
+### Cabeceras (apps con sesión)
+
+Esta tienda no tiene login, pero un flujo puede declarar cabeceras para autenticarse contra una app real (sesión por cookie, bearer…):
+
+```yaml
+viewport: { width: 1440, height: 1000 }
+headers:                          # todas las peticiones del flujo
+  Cookie: "${APP_COOKIE}"         # desde el entorno: APP_COOKIE="$(cat /tmp/cookie.txt)" atrezzo verify …
+steps:
+  - screen: clientes
+    visit: /clientes
+    headers: { Accept-Language: es-ES }   # se mezclan con las del flujo; gana el paso
+    wait_for: "table tbody tr"
+    expect:
+      - selector: "table tbody tr"
+        count: 6
+```
+
+`Cookie` y `Authorization` salen como `***` en el informe. Si la app redirige a `/login` (sesión ausente o caducada), el paso sale KO con el motivo, nunca verde.

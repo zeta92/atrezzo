@@ -1,9 +1,9 @@
 ---
-name: atrezzo-escena
+name: escena
 description: Crea un escenario atrezzo desde una intención ("12 filas, 3 con incidencia"). Úsalo cuando el usuario describa un estado de pantalla que quiere ver o probar (vacío, con errores, paginado, muchos datos) y haya que traducirlo a mundo + aserciones versionadas.
 ---
 
-# /atrezzo:atrezzo-escena
+# /atrezzo:escena
 
 Traduce la intención a `world` + `endpoints` + `path` + `expect`. Formato: `${CLAUDE_PLUGIN_ROOT}/references/escenario.md`.
 

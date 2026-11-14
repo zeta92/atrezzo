@@ -26,7 +26,9 @@ Comandos:
       Servidor HTTP con las proyecciones. Control: POST /__atrezzo/reset {"escenario":"x"},
       GET /__atrezzo/state.
   verify <flujo.yaml> [--url http://127.0.0.1:4010] [--driver http|playwright] [--diagnose] [--no-reset] [--json]
-      Ejecuta el flujo contra el mock y compara con las aserciones.
+      Ejecuta el flujo contra el mock (o contra la app real si el flujo no tiene escenario) y compara.
+      El flujo puede declarar headers (\${VAR} desde el entorno; Cookie/Authorization salen como ***).
+      Driver playwright: playwright o playwright-core; Chromium del sistema o ATREZZO_CHROME=/ruta.
   doctor [--dir .]
       Qué hay instalado, qué falta y si la config y los escenarios son válidos.
 

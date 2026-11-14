@@ -1,10 +1,12 @@
 // Verification loop: run the flow steps against a served mock, compare with the
 // expectations, and (optionally) diagnose mismatches instead of regenerating.
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { AtrezzoError, EXIT } from './errors.mjs';
 import { generateWorld } from './world.mjs';
+import { mergeHeaders, maskHeaders, redact, formatHeaders } from './headers.mjs';
 
 // ---------- helpers ----------
 
@@ -42,8 +44,8 @@ function joinUrl(base, path) {
   return new URL(path, base.endsWith('/') ? base : `${base}/`).toString().replace(/([^:]\/)\/+/g, '$1');
 }
 
-async function getJson(fetchImpl, url) {
-  const res = await fetchImpl(url);
+async function getJson(fetchImpl, url, init) {
+  const res = init ? await fetchImpl(url, init) : await fetchImpl(url);
   const text = await res.text();
   let body = null;
   try { body = JSON.parse(text); } catch { body = text; }
@@ -110,26 +112,74 @@ export function diagnose(row, ctx) {
 
 // ---------- playwright ----------
 
+const PW_MODULES = ['playwright', '@playwright/test', 'playwright-core'];
+export const DEFAULT_CHROME = '/usr/bin/chromium';
+
+/** Resolve playwright lazily from the project. Returns { mod, name } or null. */
 export async function loadPlaywright(cwd) {
   const req = createRequire(join(cwd, 'package.json'));
-  for (const mod of ['playwright', '@playwright/test']) {
-    try { return await import(pathToFileURL(req.resolve(mod)).href); } catch { /* next */ }
+  for (const name of PW_MODULES) {
+    try { return { mod: await import(pathToFileURL(req.resolve(name)).href), name }; } catch { /* next */ }
   }
   return null;
 }
 
-async function defaultPageFactory(cwd) {
+/** executablePath to use: ATREZZO_CHROME wins; playwright-core (no bundled browsers) falls back to the system Chromium. */
+export function chromeExecutable(moduleName, env = process.env) {
+  if (env.ATREZZO_CHROME) return env.ATREZZO_CHROME;
+  if (moduleName === 'playwright-core' && existsSync(DEFAULT_CHROME)) return DEFAULT_CHROME;
+  return undefined;
+}
+
+async function defaultPageFactory(cwd, { viewport } = {}) {
   const pw = await loadPlaywright(cwd);
   if (!pw) {
-    throw new AtrezzoError('El driver playwright necesita el paquete "playwright" y no está instalado en este proyecto.\n  Instálalo con: npm i -D playwright && npx playwright install chromium\n  O usa --driver http. No se ha verificado nada.', { exitCode: EXIT.UNVERIFIABLE });
+    throw new AtrezzoError('El driver playwright necesita el paquete "playwright" (o "playwright-core") y no está instalado en este proyecto.\n  Instálalo con: npm i -D playwright-core   (usa el Chromium del sistema; ATREZZO_CHROME=/ruta para otro binario)\n  o: npm i -D playwright && npx playwright install chromium\n  O usa --driver http. No se ha verificado nada.', { exitCode: EXIT.UNVERIFIABLE });
   }
-  const chromium = pw.chromium ?? pw.default?.chromium;
+  const chromium = pw.mod.chromium ?? pw.mod.default?.chromium;
+  const executablePath = chromeExecutable(pw.name);
   let browser;
-  try { browser = await chromium.launch(); } catch (e) {
-    throw new AtrezzoError(`Playwright está instalado pero no puede lanzar Chromium: ${e.message.split('\n')[0]}\n  Ejecuta: npx playwright install chromium`, { exitCode: EXIT.UNVERIFIABLE });
+  try { browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] }); } catch (e) {
+    const hint = executablePath ? `¿existe y es ejecutable ${executablePath}? (override con ATREZZO_CHROME=/ruta)` : 'Ejecuta: npx playwright install chromium, o define ATREZZO_CHROME=/ruta/al/chromium';
+    throw new AtrezzoError(`${pw.name} está instalado pero no puede lanzar Chromium: ${e.message.split('\n')[0]}\n  ${hint}`, { exitCode: EXIT.UNVERIFIABLE });
   }
-  const page = await browser.newPage();
-  return { page, close: () => browser.close() };
+  const context = await browser.newContext(viewport ? { viewport } : {});
+  const page = await context.newPage();
+  return { page, context, close: () => browser.close() };
+}
+
+const normPath = (p) => (p.length > 1 ? p.replace(/\/+$/, '') : p);
+const LOGIN_RE = /(^|\/)(login|signin|sign-in|iniciar-sesion|auth)(\/|$)/i;
+
+/**
+ * Open a step's page. Returns null if the page is the one asked for, or a sentence
+ * explaining why the step can't be trusted (redirect, HTTP error, wait_for timeout).
+ */
+async function openStep(pw, url, step, headers) {
+  const target = joinUrl(url, step.visit);
+  if (pw.context?.setExtraHTTPHeaders) await pw.context.setExtraHTTPHeaders(headers);
+  else await pw.page.setExtraHTTPHeaders?.(headers);
+  let resp;
+  try { resp = await pw.page.goto(target); } catch (e) {
+    return redact(`no se pudo abrir ${step.visit}: ${e.message.split('\n')[0]}`, headers);
+  }
+  await pw.page.waitForLoadState?.('networkidle', { timeout: 15_000 })?.catch?.(() => {});
+  const finalUrl = typeof pw.page.url === 'function' ? pw.page.url() : null;
+  if (finalUrl) {
+    const want = new URL(target); const got = new URL(finalUrl);
+    if (got.origin !== want.origin || normPath(got.pathname) !== normPath(want.pathname)) {
+      const where = got.origin === want.origin ? got.pathname + got.search : finalUrl;
+      return `la app redirigió ${step.visit} → ${where}` + (LOGIN_RE.test(got.pathname) ? ' (pantalla de login: sin sesión o sesión caducada; revisa headers/Cookie del flujo)' : '');
+    }
+  }
+  const status = typeof resp?.status === 'function' ? resp.status() : null;
+  if (status !== null && status >= 400) return `${step.visit} respondió HTTP ${status}`;
+  if (step.waitFor) {
+    try { await pw.page.waitForSelector(step.waitFor, { state: 'attached', timeout: 10_000 }); } catch {
+      return `wait_for "${step.waitFor}" no apareció en 10 s`;
+    }
+  }
+  return null;
 }
 
 // ---------- main ----------
@@ -137,15 +187,17 @@ async function defaultPageFactory(cwd) {
 /**
  * @param {object} flow   result of loadFlow()
  * @param {{ url: string, driver?: 'http'|'playwright', diagnose?: boolean, reset?: boolean,
- *           fetchImpl?: typeof fetch, pageFactory?: () => Promise<{page:any, close:()=>Promise<void>}>, cwd?: string }} opts
+ *           fetchImpl?: typeof fetch, pageFactory?: (opts: {viewport: object|null}) => Promise<{page:any, context?:any, close:()=>Promise<void>}>, cwd?: string }} opts
  */
 export async function runVerify(flow, opts) {
-  const { url, driver = 'http', diagnose: wantDiag = false, reset = true, fetchImpl = fetch, cwd = process.cwd() } = opts;
+  const { url, driver = 'http', diagnose: wantDiag = false, fetchImpl = fetch, cwd = process.cwd() } = opts;
+  const reset = (opts.reset ?? true) && !!flow.scenario; // without a scenario there is no mock to reset
+  const flowHeaders = flow.headers ?? {};
   const warnings = [];
-  const local = generateWorld(flow.scenario);
 
   try {
     if (reset) {
+      const local = generateWorld(flow.scenario);
       const res = await fetchImpl(joinUrl(url, '/__atrezzo/reset'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ escenario: flow.scenario.name }) });
       const body = await res.json().catch(() => ({}));
       if (res.status !== 200) throw new AtrezzoError(`El mock en ${url} no pudo cargar el escenario "${flow.scenario.name}": ${body.error ?? res.status}`, { exitCode: EXIT.UNVERIFIABLE });
@@ -157,28 +209,31 @@ export async function runVerify(flow, opts) {
   }
 
   let pw = null;
-  if (driver === 'playwright') pw = await (opts.pageFactory ? opts.pageFactory() : defaultPageFactory(cwd));
+  if (driver === 'playwright') pw = await (opts.pageFactory ? opts.pageFactory({ viewport: flow.viewport ?? null }) : defaultPageFactory(cwd, { viewport: flow.viewport ?? null }));
 
   const rows = [];
   try {
     for (const step of flow.steps) {
+      const headers = mergeHeaders(flowHeaders, step.headers);
+      const fetchOpts = Object.keys(headers).length ? { headers } : undefined;
+      const get = (u) => getJson(fetchImpl, u, fetchOpts);
       const responses = {};
       const needHttp = driver === 'http' || wantDiag;
       if (needHttp) {
         for (const [name, path] of Object.entries(step.requests)) {
-          try { responses[name] = { path, ...(await getJson(fetchImpl, joinUrl(url, path))) }; } catch (e) {
-            throw new AtrezzoError(`Fallo de red pidiendo ${path}: ${e.message}`, { exitCode: EXIT.UNVERIFIABLE });
+          try { responses[name] = { path, ...(await get(joinUrl(url, path))) }; } catch (e) {
+            throw new AtrezzoError(redact(`Fallo de red pidiendo ${path}: ${e.message}`, headers), { exitCode: EXIT.UNVERIFIABLE });
           }
         }
       }
+      let stepFail = null;
+      let stepFailRow = null;
       if (pw) {
         if (!step.visit) {
           for (const e of step.expect) rows.push({ screen: step.screen, expect: e, status: 'N/V', obtained: null, note: 'el paso no tiene "visit": playwright no sabe qué página abrir' });
           continue;
         }
-        await pw.page.goto(joinUrl(url, step.visit));
-        await pw.page.waitForLoadState?.('networkidle');
-        if (step.waitFor) await pw.page.waitForSelector(step.waitFor, { timeout: 10_000 });
+        stepFail = await openStep(pw, url, step, headers);
       }
       for (const e of step.expect) {
         const row = { screen: step.screen, expect: e, status: 'N/V', obtained: null, note: '' };
@@ -189,12 +244,15 @@ export async function runVerify(flow, opts) {
           ctx.items = r.status === 200 ? extractItems(r.body, e.data.pick) : [];
           ctx.matched = ctx.items.filter((it) => whereMatch(it, e.data.where)).length;
           if (wantDiag && r.status === 200) {
-            const full = await getJson(fetchImpl, joinUrl(url, withoutPagination(r.path))).catch(() => null);
+            const full = await get(joinUrl(url, withoutPagination(r.path))).catch(() => null);
             if (full?.status === 200) ctx.fullMatched = extractItems(full.body, e.data.pick).filter((it) => whereMatch(it, e.data.where)).length;
           }
         }
         if (pw) {
-          ctx.domCount = await pw.page.locator(e.selector).count();
+          try { ctx.domCount = await pw.page.locator(e.selector).count(); } catch (err) {
+            stepFail ??= `selector inválido o página cerrada: ${err.message.split('\n')[0]}`;
+            ctx.domCount = 0;
+          }
           row.obtained = ctx.domCount;
         } else if (ctx.items) {
           row.obtained = ctx.matched;
@@ -204,8 +262,13 @@ export async function runVerify(flow, opts) {
           continue;
         }
         ctx.obtained = row.obtained;
-        row.status = passes(e, row.obtained) ? 'OK' : 'KO';
-        if (row.status === 'KO' && wantDiag) row.hypotheses = diagnose(row, ctx);
+        // A step whose page is not the one requested is never green, even if the count happens to match.
+        row.status = !stepFail && passes(e, row.obtained) ? 'OK' : 'KO';
+        if (stepFail) {
+          // say it once per step; the other rows of the step point at it
+          if (stepFailRow === null) { stepFailRow = rows.length + 1; row.note = stepFail; } else row.note = `misma causa que #${stepFailRow}`;
+          if (wantDiag && stepFailRow === rows.length + 1) row.hypotheses = [{ tipo: 'navegacion', confianza: 'alta', evidencia: `lo contado no es la pantalla "${step.screen}"; el escenario y los selectores no son la causa. Arregla la navegación/sesión antes de mirar nada más.` }];
+        } else if (row.status === 'KO' && wantDiag) row.hypotheses = diagnose(row, ctx);
         rows.push(row);
       }
     }
@@ -216,11 +279,14 @@ export async function runVerify(flow, opts) {
   const ko = rows.filter((r) => r.status === 'KO').length;
   const nv = rows.filter((r) => r.status === 'N/V').length;
   const exitCode = ko ? EXIT.FAIL : nv || !rows.length ? EXIT.UNVERIFIABLE : EXIT.OK;
-  return { rows, exitCode, warnings, scenario: flow.scenario.name, seed: flow.scenario.seed, url, driver };
+  const shownHeaders = maskHeaders(mergeHeaders(flowHeaders, ...flow.steps.map((st) => st.headers)));
+  return { rows, exitCode, warnings, scenario: flow.scenario?.name ?? null, seed: flow.scenario?.seed ?? null, url, driver, viewport: flow.viewport ?? null, headers: shownHeaders };
 }
 
 export function formatReport(result) {
-  const head = [`Escenario: ${result.scenario} (semilla ${result.seed}) · driver: ${result.driver} · ${result.url}`];
+  const where = result.scenario ? `Escenario: ${result.scenario} (semilla ${result.seed})` : 'Sin escenario (app real, sin mock)';
+  const head = [`${where} · driver: ${result.driver} · ${result.url}${result.viewport ? ` · viewport ${result.viewport.width}x${result.viewport.height}` : ''}`];
+  if (result.headers && Object.keys(result.headers).length) head.push(`Cabeceras: ${formatHeaders(result.headers)}`);
   for (const w of result.warnings) head.push(`AVISO: ${w}`);
   const cols = ['#', 'pantalla', 'selector', 'esperado', 'obtenido', 'resultado'];
   const data = result.rows.map((r, i) => [String(i + 1), r.screen, r.expect.label ? `${r.expect.selector} (${r.expect.label})` : r.expect.selector, expectedText(r.expect), r.obtained === null ? '-' : String(r.obtained), r.status]);

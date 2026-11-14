@@ -4,8 +4,17 @@
   "description": "Plugin de Claude Code: mocks de API a partir de estados de aplicación",
   "type": "module",
   "private": true,
-  "bin": { "atrezzo": "scripts/cli.mjs" },
-  "engines": { "node": ">=22" },
-  "scripts": { "test": "node --test tests/" },
-  "license": "MIT"
+  "bin": {
+    "atrezzo": "scripts/cli.mjs"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test tests/"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "playwright-core": "^1.65.1"
+  }
 }

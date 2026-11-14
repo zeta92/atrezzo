@@ -13,13 +13,13 @@ CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs <comando>` (en adelante `atrezz
 
 | El usuario dice… | Usa |
 |---|---|
-| "monta atrezzo", "configura mocks en este repo", no existe `atrezzo.config.json` | `/atrezzo:atrezzo-init` |
-| "saca el contrato", "tengo un OpenAPI/HAR", "qué devuelve la API" | `/atrezzo:atrezzo-captura` |
-| "quiero 12 pedidos, 3 con incidencia", "un estado vacío", "datos para esta pantalla" | `/atrezzo:atrezzo-escena` |
-| "comprueba la pantalla", "no salen las filas", "¿cuadra?" | `/atrezzo:atrezzo-verifica` |
-| "estoy en X y quiero llegar a Y", "qué estados necesito para este flujo" | `/atrezzo:atrezzo-desde-intencion` |
+| "monta atrezzo", "configura mocks en este repo", no existe `atrezzo.config.json` | `/atrezzo:init` |
+| "saca el contrato", "tengo un OpenAPI/HAR", "qué devuelve la API" | `/atrezzo:captura` |
+| "quiero 12 pedidos, 3 con incidencia", "un estado vacío", "datos para esta pantalla" | `/atrezzo:escena` |
+| "comprueba la pantalla", "no salen las filas", "¿cuadra?" | `/atrezzo:verifica` |
+| "estoy en X y quiero llegar a Y", "qué estados necesito para este flujo" | `/atrezzo:desde-intencion` |
 
-Si no hay config, empieza siempre por `/atrezzo:atrezzo-init`. Si no hay contrato, `/atrezzo:atrezzo-captura` antes de `/atrezzo:atrezzo-escena`.
+Si no hay config, empieza siempre por `/atrezzo:init`. Si no hay contrato, `/atrezzo:captura` antes de `/atrezzo:escena`.
 
 ## El bucle
 

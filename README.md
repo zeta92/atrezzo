@@ -22,18 +22,18 @@ claude --plugin-dir /ruta/a/atrezzo          # para una sesión
 # o publícalo en un marketplace y: claude plugin install atrezzo@<marketplace>
 ```
 
-Requisitos: Node ≥ 22. Sin dependencias en tiempo de ejecución (parser YAML y servidor propios). Opcionales en el proyecto: `msw` (handlers en navegador/tests) y `playwright` (driver DOM).
+Requisitos: Node ≥ 22. Sin dependencias en tiempo de ejecución (parser YAML y servidor propios). Opcionales en el proyecto: `msw` (handlers en navegador/tests) y `playwright` o `playwright-core` (driver DOM). Con `playwright-core` se usa el Chromium del sistema (`/usr/bin/chromium`; otro binario con `ATREZZO_CHROME=/ruta`); el paquete se carga de forma perezosa y, si falta, `verify --driver playwright` sale con exit 2.
 
 ## Skills
 
 | comando | para qué |
 |---|---|
 | `/atrezzo:atrezzo` | router: decide qué skill usar y explica el bucle |
-| `/atrezzo:atrezzo-init` | inspecciona el repo y ejecuta `init` (no instala nada sin decirlo) |
-| `/atrezzo:atrezzo-captura` | contrato: OpenAPI/tipos → HAR (con scripts) → código; avisa de huecos |
-| `/atrezzo:atrezzo-escena` | intención ("12 filas, 3 con incidencia") → escenario versionado |
-| `/atrezzo:atrezzo-verifica` | sirve, verifica y diagnostica antes de tocar el escenario |
-| `/atrezzo:atrezzo-desde-intencion` | "estoy en X, quiero Y" → ruta de estados, escenarios por paso, huecos |
+| `/atrezzo:init` | inspecciona el repo y ejecuta `init` (no instala nada sin decirlo) |
+| `/atrezzo:captura` | contrato: OpenAPI/tipos → HAR (con scripts) → código; avisa de huecos |
+| `/atrezzo:escena` | intención ("12 filas, 3 con incidencia") → escenario versionado |
+| `/atrezzo:verifica` | sirve, verifica y diagnostica antes de tocar el escenario |
+| `/atrezzo:desde-intencion` | "estoy en X, quiero Y" → ruta de estados, escenarios por paso, huecos |
 
 > En Claude Code 2.1.319 el comando de una skill de plugin es `/<plugin>:<directorio>`; el `name:` del frontmatter no lo cambia. Por eso los comandos llevan el prefijo `atrezzo-` del directorio.
 
@@ -70,5 +70,5 @@ Ver [`examples/tienda`](examples/tienda/README.md): `world` → `serve` → `ver
 ## Límites conocidos
 
 - YAML: subconjunto (sin anclas/alias/multi-documento); el parser lo rechaza con línea y motivo.
-- El driver `playwright` está probado con un `page` falso en los tests; con Playwright real depende de que el proyecto lo tenga instalado con Chromium.
+- El driver `playwright` está probado con un `page` falso y con Chromium real (`tests/headers.test.mjs`, se saltan si no hay `playwright-core` + Chromium). Para apps con sesión, el flujo puede declarar `headers` (p. ej. `Cookie: "${APP_COOKIE}"`); ver `references/escenario.md`.
 - Errores HTTP, latencias y escrituras no son parte del mundo: se inyectan en el runtime (ver `references/runtimes.md`).

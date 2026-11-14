@@ -109,12 +109,16 @@ Con `--driver http` una aserción sin `data` queda **sin verificar** (exit 2), n
 ## Fichero de flujo (`flujo.yaml`)
 
 ```yaml
-escenario: escenarios/pedidos.yaml    # relativa al flujo
+escenario: escenarios/pedidos.yaml    # relativa al flujo (opcional: ver «App real» abajo)
 base_url: http://127.0.0.1:4010       # opcional (si no, --url o config)
+viewport: { width: 1440, height: 1000 }  # opcional, solo playwright (por defecto 1280x720)
+headers:                              # opcional: se envían en TODAS las peticiones del flujo
+  Cookie: "${APP_COOKIE}"             # ${VAR} se toma del entorno; no commitees secretos
 steps:
   - screen: lista-pedidos
     visit: /pedidos                   # ruta para playwright
-    wait_for: "[data-testid=listo]"   # opcional
+    headers: { Accept-Language: es-ES }  # opcional; se mezclan con las del flujo
+    wait_for: "[data-testid=listo]"   # opcional; espera a que el elemento exista (no a que sea visible)
     requests:                         # peticiones equivalentes para el driver http
       pedidos: GET /api/orders?limit=12
       incidencias: GET /api/orders?estado=incidencia
@@ -123,9 +127,25 @@ steps:
 
 Las aserciones del escenario se añaden al paso de su `screen` (por defecto la última de `path`).
 
+### Cabeceras (`headers`)
+
+- A nivel de flujo y/o de paso. Cabeceras efectivas de un paso = las del flujo + las del paso; si se repite un nombre (sin distinguir mayúsculas) gana el paso.
+- Driver `playwright`: `context.setExtraHTTPHeaders()` con las cabeceras efectivas antes de abrir cada `visit` (las recibe toda petición de la página: documento, fetch, RSC…). Driver `http`: las mismas cabeceras en cada `fetch` de `requests`.
+- `${NOMBRE}` en un valor se sustituye por la variable de entorno. Si no está definida, el flujo es inválido (exit 3) en vez de enviar una cabecera vacía.
+- Secretos: `Cookie`, `Authorization`, `Proxy-Authorization`, `X-Api-Key` y cualquier nombre que contenga `token`, `secret`, `session`, `auth`, `password` o `api-key` se muestran como `***` en la tabla, en `--json` y en los mensajes de error. Los valores no se escriben nunca en logs.
+- Valores: texto de una línea (números y booleanos se convierten a texto). Nombres según RFC 7230.
+
+### App real (sin `escenario`)
+
+Si el flujo no declara `escenario`, `verify` no hace `reset` ni compara hashes: verifica la app tal cual está en `base_url` (útil para validar los selectores contra la app de verdad, con su sesión en `headers`). Las aserciones `data` siguen funcionando si la app expone el JSON.
+
+### Navegación con playwright: nunca verde por accidente
+
+Tras abrir `visit`, si la URL final es otra ruta (p. ej. redirect a `/login` por falta de sesión), la respuesta es HTTP ≥ 400 o `wait_for` no aparece en 10 s, **todas las aserciones del paso son KO** aunque el conteo cuadre (un `count: 0` en la pantalla de login no es un OK). El informe dice a dónde redirigió y, con `--diagnose`, añade la hipótesis `navegacion`.
+
 ## Subconjunto YAML soportado
 
 Mapas y listas en bloque (solo espacios), colecciones `{…}` y `[…]` en una línea, comillas simples y dobles, `null`/`~`, booleanos, números, bloques `|` y `>`, comentarios. No se aceptan anclas, alias, etiquetas ni varios documentos: el parser lo dice con número de línea.
 
 ## Códigos de salida
-`0` OK · `1` aserción fallida · `2` no verificable (falta mock, playwright o `data`) · `3` entrada inválida.
+`0` OK · `1` aserción fallida · `2` no verificable (falta mock, playwright/Chromium o `data`) · `3` entrada inválida.

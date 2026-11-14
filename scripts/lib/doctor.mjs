@@ -60,9 +60,9 @@ export function doctor(dir) {
     add('error', `${CONFIG_FILE} inválido`, e.message);
   }
 
-  for (const [mod, why] of [['msw', 'handlers en el navegador/tests (opcional: serve no lo necesita)'], ['playwright', 'driver playwright de verify (opcional)']]) {
-    add(resolvable(dir, mod) ? 'ok' : 'warn', `${mod} ${resolvable(dir, mod) ? 'instalado' : 'no instalado'}`, why);
-  }
+  add(resolvable(dir, 'msw') ? 'ok' : 'warn', `msw ${resolvable(dir, 'msw') ? 'instalado' : 'no instalado'}`, 'handlers en el navegador/tests (opcional: serve no lo necesita)');
+  const pwMod = ['playwright', '@playwright/test', 'playwright-core'].find((m) => resolvable(dir, m));
+  add(pwMod ? 'ok' : 'warn', pwMod ? `${pwMod} instalado` : 'playwright no instalado', `driver playwright de verify (opcional)${pwMod === 'playwright-core' ? `; Chromium: ${process.env.ATREZZO_CHROME || '/usr/bin/chromium'}` : ''}`);
 
   if (cfg && !cfg._missing) {
     const sdir = join(dir, cfg.scenariosDir);

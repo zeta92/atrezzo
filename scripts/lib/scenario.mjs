@@ -5,6 +5,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { parseYaml, YamlError } from './yaml.mjs';
 import { AtrezzoError } from './errors.mjs';
 import { templateFor, entityFields } from './world.mjs';
+import { parseHeaders } from './headers.mjs';
 
 export const DEFAULT_NOW = '2025-01-15T09:00:00.000Z';
 
@@ -302,25 +303,40 @@ export function loadScenario(file) {
 
 // ---------- flow ----------
 
-export function loadFlow(file) {
+/**
+ * @param {string} file
+ * @param {{ env?: Record<string, string|undefined> }} [opts]  env: source for ${VAR} in headers
+ */
+export function loadFlow(file, { env = process.env } = {}) {
   const doc = readYaml(file, 'flujo');
   const issues = new Issues();
   if (!isObj(doc)) throw new AtrezzoError(`${file}: el flujo debe ser un mapa YAML`);
-  issues.unknownKeys(doc, ['escenario', 'base_url', 'steps']);
-  if (typeof doc.escenario !== 'string') issues.add('escenario', 'obligatorio; ruta al YAML del escenario (relativa al flujo)');
+  issues.unknownKeys(doc, ['escenario', 'base_url', 'headers', 'viewport', 'steps']);
+  if (doc.escenario !== undefined && typeof doc.escenario !== 'string') issues.add('escenario', 'ruta al YAML del escenario (relativa al flujo); omítelo solo para verificar una app real sin mock');
   if (doc.base_url !== undefined && typeof doc.base_url !== 'string') issues.add('base_url', 'debe ser una URL');
   if (!Array.isArray(doc.steps) || !doc.steps.length) issues.add('steps', 'obligatorio; lista con al menos un paso');
+  const headers = parseHeaders(doc.headers, 'headers', issues, env);
+  let viewport = null;
+  if (doc.viewport !== undefined) {
+    if (!isObj(doc.viewport)) issues.add('viewport', 'debe ser un mapa { width, height }');
+    else {
+      issues.unknownKeys(doc.viewport, ['width', 'height'], 'viewport');
+      for (const k of ['width', 'height']) if (!isInt(doc.viewport[k]) || doc.viewport[k] < 100 || doc.viewport[k] > 10000) issues.add(`viewport.${k}`, `entero entre 100 y 10000; es ${JSON.stringify(doc.viewport[k])}`);
+      viewport = { width: doc.viewport.width, height: doc.viewport.height };
+    }
+  }
   if (issues.list.length) throw new AtrezzoError(`${file}: flujo inválido`, { issues: issues.list });
 
-  const scenarioFile = resolve(dirname(file), doc.escenario);
-  const scenario = loadScenario(scenarioFile);
+  const scenarioFile = doc.escenario === undefined ? null : resolve(dirname(file), doc.escenario);
+  const scenario = scenarioFile ? loadScenario(scenarioFile) : null;
+  const path = scenario?.path ?? [];
   const steps = [];
   doc.steps.forEach((st, i) => {
     const f = `steps[${i}]`;
     if (!isObj(st)) { issues.add(f, 'debe ser un mapa'); return; }
-    issues.unknownKeys(st, ['screen', 'visit', 'wait_for', 'requests', 'expect'], f);
+    issues.unknownKeys(st, ['screen', 'visit', 'wait_for', 'headers', 'requests', 'expect'], f);
     if (typeof st.screen !== 'string') issues.add(`${f}.screen`, 'obligatorio; nombre de la pantalla');
-    else if (scenario.path.length && !scenario.path.includes(st.screen)) issues.add(`${f}.screen`, `"${st.screen}" no está en el path del escenario (${scenario.path.join(' → ')})`);
+    else if (path.length && !path.includes(st.screen)) issues.add(`${f}.screen`, `"${st.screen}" no está en el path del escenario (${path.join(' → ')})`);
     const requests = {};
     if (st.requests !== undefined) {
       if (!isObj(st.requests)) issues.add(`${f}.requests`, 'debe ser un mapa nombre: "GET /ruta"');
@@ -335,12 +351,13 @@ export function loadFlow(file) {
       const e = normalizeExpect(it, `${f}.expect[${j}]`, issues);
       if (e) expect.push(e);
     });
-    steps.push({ screen: st.screen, visit: st.visit ?? null, waitFor: st.wait_for ?? null, requests, expect });
+    const stepHeaders = parseHeaders(st.headers, `${f}.headers`, issues, env);
+    steps.push({ screen: st.screen, visit: st.visit ?? null, waitFor: st.wait_for ?? null, headers: stepHeaders, requests, expect });
   });
 
   // Scenario-level expectations go to their screen (default: last of path, else last step).
-  const lastScreen = scenario.path.at(-1) ?? steps.at(-1)?.screen;
-  scenario.expect.forEach((e, i) => {
+  const lastScreen = path.at(-1) ?? steps.at(-1)?.screen;
+  (scenario?.expect ?? []).forEach((e, i) => {
     const screen = e.screen ?? lastScreen;
     const step = steps.find((s) => s.screen === screen);
     if (!step) issues.add(`escenario.expect[${i}]`, `la pantalla "${screen}" no tiene paso en el flujo`);
@@ -355,7 +372,7 @@ export function loadFlow(file) {
     } else if (!names.includes(e.data.request)) issues.add(`steps[${i}].expect[${j}].data.request`, `"${e.data.request}" no está en requests del paso (${names.join(', ') || 'ninguna'})`);
   }));
   if (issues.list.length) throw new AtrezzoError(`${file}: flujo inválido`, { issues: issues.list });
-  return { file, scenarioFile, scenario, baseUrl: doc.base_url ?? null, steps };
+  return { file, scenarioFile, scenario, baseUrl: doc.base_url ?? null, headers, viewport, steps };
 }
 
 export function scenarioNameFromFile(file) {

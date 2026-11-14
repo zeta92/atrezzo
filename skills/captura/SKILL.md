@@ -1,9 +1,9 @@
 ---
-name: atrezzo-captura
+name: captura
 description: Captura el contrato de la API (OpenAPI, tipos, HAR) para atrezzo. Úsalo cuando haya que saber qué endpoints y campos consume una pantalla antes de escribir un escenario, o el usuario aporte un OpenAPI, un HAR o una grabación de tráfico.
 ---
 
-# /atrezzo:atrezzo-captura
+# /atrezzo:captura
 
 Objetivo: endpoints, parámetros (filtros, paginación, orden) y campos que **el cliente lee**, con su fuente.
 
