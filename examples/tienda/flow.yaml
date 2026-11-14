@@ -1,0 +1,25 @@
+# Path: dashboard → order list. The scenario assertions run on the last
+# screen (order-list); each step adds its own here.
+scenario: scenarios/orders.yaml
+base_url: http://127.0.0.1:4010
+steps:
+  - screen: dashboard
+    visit: /
+    requests:
+      customers: GET /api/customers
+    expect:
+      - selector: "[data-testid=customer-chip]"
+        count: 3
+        data: { request: customers }
+  - screen: order-list
+    visit: /
+    wait_for: "[data-testid=ready]"
+    requests:
+      orders: GET /api/orders?limit=12
+      issues: GET /api/orders?status=issue
+    expect:
+      - selector: "[data-testid=order-row] [data-testid=amount]"
+        min: 1
+        max: 12
+        label: visible amounts
+        data: { request: orders }

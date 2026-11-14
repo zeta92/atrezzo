@@ -14,27 +14,27 @@ import { ROOT, CLI, tmpProject, cli, cliAsync } from './helpers.mjs';
 const CATALOGO = `name: catalogo
 seed: 3
 world:
-  productos: 5
+  products: 5
 endpoints:
   - path: /api/products
-    entity: productos
+    entity: products
 `;
 const PATCH = `  - path: /api/users
-    entity: usuarios
+    entity: users
 `;
-const PATCH_WORLD = (yaml) => yaml.replace('world:\n', 'world:\n  usuarios: 4\n') + PATCH;
+const PATCH_WORLD = (yaml) => yaml.replace('world:\n', 'world:\n  users: 4\n') + PATCH;
 
 const CONFIG = (extra = {}) => JSON.stringify({
-  version: 1, runtime: 'builtin', scenariosDir: 'escenarios', handlersDir: 'atrezzo/handlers', generatedDir: 'atrezzo/.generated',
+  version: 1, runtime: 'builtin', scenariosDir: 'scenarios', handlersDir: 'atrezzo/handlers', generatedDir: 'atrezzo/.generated',
   mock: { baseUrl: 'http://127.0.0.1:4010', port: 4010, static: '.' }, verify: { driver: 'http' }, ...extra,
 }, null, 2);
 
 const json = async (r) => ({ status: r.status, headers: r.headers, body: await r.json() });
 
 async function startServer(opts = {}) {
-  const dir = tmpProject({ 'escenarios/catalogo.yaml': CATALOGO });
+  const dir = tmpProject({ 'scenarios/catalogo.yaml': CATALOGO });
   const file = join(dir, 'atrezzo/.atrezzo/misses.json');
-  const mock = createMockServer({ scenariosDir: join(dir, 'escenarios'), missesFile: file, ...opts });
+  const mock = createMockServer({ scenariosDir: join(dir, 'scenarios'), missesFile: file, ...opts });
   const url = `http://127.0.0.1:${(await mock.listen(0)).port}`;
   return { dir, file, mock, url };
 }
@@ -75,7 +75,7 @@ test('findInSpec / hintFor: contract has the route ⇒ import; it does not ⇒ s
   assert.equal(findInSpec(spec, 'GET', '/api/invoices'), null);
   const opts = { spec, contract: 'api/openapi.yaml', scenarios: [loadScenario(join(tmpProject({ 'c.yaml': CATALOGO }), 'c.yaml'))] };
   assert.match(hintFor({ method: 'GET', path: '/api/pets' }, opts), /contract has it \(GET \/pets\) → atrezzo import api\/openapi.yaml/);
-  assert.match(hintFor({ method: 'GET', path: '/api/invoices' }, opts), /skill \/atrezzo:hueco/);
+  assert.match(hintFor({ method: 'GET', path: '/api/invoices' }, opts), /skill \/atrezzo:gap/);
   assert.match(hintFor({ method: 'POST', path: '/api/pets' }, opts), /mutation.*--on-miss stub/);
   assert.match(hintFor({ method: 'GET', path: '/api/products/2' }, opts), /already declared by scenario catalogo/);
 });
@@ -132,8 +132,8 @@ test('the 404 and misses.json do not leak query secrets (?token=abc ⇒ "***")',
     assert.doesNotMatch(readFileSync(file, 'utf8'), /abc/);
   } finally { await mock.close(); }
   // and neither does the serve log
-  const dir = tmpProject({ 'escenarios/catalogo.yaml': CATALOGO });
-  const m2 = createMockServer({ scenariosDir: join(dir, 'escenarios'), log: (s) => logs.push(s) });
+  const dir = tmpProject({ 'scenarios/catalogo.yaml': CATALOGO });
+  const m2 = createMockServer({ scenariosDir: join(dir, 'scenarios'), log: (s) => logs.push(s) });
   const u2 = `http://127.0.0.1:${(await m2.listen(0)).port}`;
   await fetch(`${u2}/api/users?token=abc`);
   await fetch(`${u2}/api/products?token=abc`);
@@ -146,12 +146,12 @@ test('POST /__atrezzo/reload picks up the edited YAML without restarting; resolv
   const { dir, file, mock, url } = await startServer();
   try {
     assert.equal((await fetch(`${url}/api/users`)).status, 404);
-    writeFileSync(join(dir, 'escenarios/catalogo.yaml'), PATCH_WORLD(CATALOGO));
+    writeFileSync(join(dir, 'scenarios/catalogo.yaml'), PATCH_WORLD(CATALOGO));
     assert.equal((await fetch(`${url}/api/users`)).status, 404, 'without reload the old scenario stays');
     const rl = await json(await fetch(`${url}/__atrezzo/reload`, { method: 'POST' }));
     assert.equal(rl.status, 200);
     assert.deepEqual(rl.body.endpoints, ['/api/products', '/api/users']);
-    assert.deepEqual(rl.body.counts, { usuarios: 4, productos: 5 });
+    assert.deepEqual(rl.body.counts, { users: 4, products: 5 });
     assert.deepEqual(rl.body.misses, { total: 1, unresolved: 1 }, 'reload marks nothing: serving the route does');
     const ok = await json(await fetch(`${url}/api/users`));
     assert.equal(ok.status, 200);
@@ -161,7 +161,7 @@ test('POST /__atrezzo/reload picks up the edited YAML without restarting; resolv
     assert.equal(m.times, 2);
     assert.deepEqual((await json(await fetch(`${url}/__atrezzo/state`))).body.misses, { total: 1, unresolved: 0 });
     // reload with broken YAML ⇒ 400 and the previous state stays
-    writeFileSync(join(dir, 'escenarios/catalogo.yaml'), 'name: catalogo\nseed: x\n');
+    writeFileSync(join(dir, 'scenarios/catalogo.yaml'), 'name: catalogo\nseed: x\n');
     const bad = await json(await fetch(`${url}/__atrezzo/reload`, { method: 'POST' }));
     assert.equal(bad.status, 400);
     assert.equal((await fetch(`${url}/api/users`)).status, 200);
@@ -194,7 +194,7 @@ test('--on-miss stub: 200, [] for collections, {} for details, x-atrezzo-stub he
 // ---------- CLI ----------
 
 test('atrezzo misses --json with one entry; text with a suggestion; --clear empties; doctor warns', () => {
-  const dir = tmpProject({ 'atrezzo.config.json': CONFIG({ workspace: { contract: 'api/openapi.yaml' } }), 'escenarios/catalogo.yaml': CATALOGO, 'api/openapi.yaml': readFileSync(join(ROOT, 'tests/fixtures/petstore.yaml'), 'utf8') });
+  const dir = tmpProject({ 'atrezzo.config.json': CONFIG({ workspace: { contract: 'api/openapi.yaml' } }), 'scenarios/catalogo.yaml': CATALOGO, 'api/openapi.yaml': readFileSync(join(ROOT, 'tests/fixtures/petstore.yaml'), 'utf8') });
   const store = createMissStore(join(dir, 'atrezzo/.atrezzo/misses.json'));
   store.record({ method: 'GET', pathname: '/api/invoices', query: new URLSearchParams('token=abc'), status: 404 });
   const j = cli(['misses', '--json'], dir);
@@ -210,7 +210,7 @@ test('atrezzo misses --json with one entry; text with a suggestion; --clear empt
   const t = cli(['misses'], dir);
   assert.equal(t.code, 0, t.stderr);
   assert.match(t.stdout, /GET \/api\/pets\s+2 times\s+unresolved.*→ the contract has it \(GET \/pets\) → atrezzo import api\/openapi.yaml/);
-  assert.match(t.stdout, /GET \/api\/invoices\s+1 time\s+unresolved.*→ not in the contract → add the endpoint to the scenario \(skill \/atrezzo:hueco\)/);
+  assert.match(t.stdout, /GET \/api\/invoices\s+1 time\s+unresolved.*→ not in the contract → add the endpoint to the scenario \(skill \/atrezzo:gap\)/);
   assert.match(t.stdout, /2 gaps · 2 unresolved/);
 
   const d = doctor(dir);
@@ -239,7 +239,7 @@ const PAGE = `<!doctype html><meta charset="utf-8"><title>users</title>
     list.after(Object.assign(document.createElement('p'), { textContent: 'Error ' + r.status + ': ' + e.error }));
   } else {
     for (const u of await r.json()) {
-      const li = Object.assign(document.createElement('li'), { textContent: u.nombre + ' · ' + u.email });
+      const li = Object.assign(document.createElement('li'), { textContent: u.name + ' · ' + u.email });
       li.dataset.testid = 'user-row';
       list.append(li);
     }
@@ -250,17 +250,17 @@ const PAGE = `<!doctype html><meta charset="utf-8"><title>users</title>
   document.body.append(ready);
 </script>`;
 
-const FLOW = `scenario: escenarios/catalogo.yaml
+const FLOW = `scenario: scenarios/catalogo.yaml
 steps:
   - screen: users
     visit: /
     wait_for: "[data-testid=ready]"
     requests:
-      usuarios: GET /api/users
+      users: GET /api/users
     expect:
       - selector: "[data-testid=user-row]"
         count: 4
-        data: { request: usuarios }
+        data: { request: users }
 `;
 
 const realPw = await loadPlaywright(ROOT);
@@ -283,14 +283,14 @@ function serveChild(dir) {
 }
 
 test('end-to-end (real Chromium): 404 recorded → scenario patch → world + reload → the page renders and the gap is resolved', { skip: skipReal, timeout: 90_000 }, async (t) => {
-  const dir = tmpProject({ 'atrezzo.config.json': CONFIG(), 'escenarios/catalogo.yaml': CATALOGO, 'index.html': PAGE, 'flujo.yaml': FLOW });
+  const dir = tmpProject({ 'atrezzo.config.json': CONFIG(), 'scenarios/catalogo.yaml': CATALOGO, 'index.html': PAGE, 'flow.yaml': FLOW });
   symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'));
   const srv = await serveChild(dir);
   t.after(() => srv.kill());
   const say = (s) => t.diagnostic(s);
 
   // 1) the page requests /api/users, which does not exist ⇒ red, and the gap is recorded
-  const v1 = await cliAsync(['verify', 'flujo.yaml', '--driver', 'playwright', '--no-reset', '--url', srv.url], dir);
+  const v1 = await cliAsync(['verify', 'flow.yaml', '--driver', 'playwright', '--no-reset', '--url', srv.url], dir);
   say(`verify before the patch: exit ${v1.code}`);
   assert.notEqual(v1.code, 0, v1.stdout);
   const m1 = await cliAsync(['misses'], dir);
@@ -300,8 +300,8 @@ test('end-to-end (real Chromium): 404 recorded → scenario patch → world + re
   assert.equal(j1.misses[0].referer, `${srv.url}/`, 'the page caused the gap (referer)');
 
   // 2) scenario patch (entity + endpoint; the world generates the data) → world → reload
-  writeFileSync(join(dir, 'escenarios/catalogo.yaml'), PATCH_WORLD(CATALOGO));
-  const w = await cliAsync(['world', 'escenarios/catalogo.yaml'], dir);
+  writeFileSync(join(dir, 'scenarios/catalogo.yaml'), PATCH_WORLD(CATALOGO));
+  const w = await cliAsync(['world', 'scenarios/catalogo.yaml'], dir);
   assert.equal(w.code, 0, w.stderr);
   assert.match(w.stdout, /GET \/api\/users/);
   const rl = await fetch(`${srv.url}/__atrezzo/reload`, { method: 'POST' }).then((r) => r.json());
@@ -309,7 +309,7 @@ test('end-to-end (real Chromium): 404 recorded → scenario patch → world + re
   assert.equal(rl.generated, 'up to date');
 
   // 3) the screen renders (no reset: what it shows comes from the reload) and the gap shows as resolved
-  const v2 = await cliAsync(['verify', 'flujo.yaml', '--driver', 'playwright', '--no-reset', '--url', srv.url], dir);
+  const v2 = await cliAsync(['verify', 'flow.yaml', '--driver', 'playwright', '--no-reset', '--url', srv.url], dir);
   say(v2.stdout);
   assert.equal(v2.code, 0, v2.stdout + v2.stderr);
   const j2 = JSON.parse((await cliAsync(['misses', '--json'], dir)).stdout);

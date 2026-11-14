@@ -61,8 +61,8 @@ viewport: { width: 1440, height: 1000 }
 headers:
   Cookie: "\${MY_COOKIE}"
 steps:
-  - screen: clientes
-    visit: /clientes
+  - screen: customers
+    visit: /customers
     headers: { Accept-Language: es-ES }
     expect:
       - selector: "table tbody tr"
@@ -76,8 +76,8 @@ steps:
 });
 
 test('loadFlow: existing flows (without headers) still load the same', () => {
-  const dir = tmpProject({ 'escenarios/conciliacion.yaml': SCENARIO, 'flujo.yaml': FLOW });
-  const f = loadFlow(join(dir, 'flujo.yaml'));
+  const dir = tmpProject({ 'scenarios/conciliacion.yaml': SCENARIO, 'flow.yaml': FLOW });
+  const f = loadFlow(join(dir, 'flow.yaml'));
   assert.deepEqual(f.headers, {});
   assert.equal(f.viewport, null);
   assert.ok(f.steps.every((s) => Object.keys(s.headers).length === 0));

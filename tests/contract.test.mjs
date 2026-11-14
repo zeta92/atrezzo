@@ -47,13 +47,13 @@ test('invalid limit/offset ⇒ 400 with a reason', () => {
 });
 
 test('equality filters and comma-separated lists', () => {
-  const inc = get('/api/orders?estado=incidencia');
+  const inc = get('/api/orders?status=issue');
   assert.equal(inc.body.length, 3);
-  assert.ok(inc.body.every((p) => p.estado === 'incidencia'));
-  assert.equal(get('/api/orders?estado=incidencia,pendiente').body.length, 6);
-  const c1 = get('/api/orders?client_id=1');
-  assert.ok(c1.body.length > 0 && c1.body.every((p) => p.client_id === 1));
-  assert.equal(get('/api/orders?estado=incidencia&limit=2').body.length, 2);
+  assert.ok(inc.body.every((p) => p.status === 'issue'));
+  assert.equal(get('/api/orders?status=issue,pending').body.length, 6);
+  const c1 = get('/api/orders?customer_id=1');
+  assert.ok(c1.body.length > 0 && c1.body.every((p) => p.customer_id === 1));
+  assert.equal(get('/api/orders?status=issue&limit=2').body.length, 2);
 });
 
 test('undeclared parameters are ignored and reported in a header', () => {
@@ -63,32 +63,32 @@ test('undeclared parameters are ignored and reported in a header', () => {
 });
 
 test('stable, deterministic sort', () => {
-  const ds = { ...dataset, endpoints: [{ ...dataset.endpoints[0], sort: [{ field: 'estado', dir: 'asc' }] }] };
+  const ds = { ...dataset, endpoints: [{ ...dataset.endpoints[0], sort: [{ field: 'status', dir: 'asc' }] }] };
   const e = createEngine(ds);
   const run = () => e.handle({ pathname: '/api/orders', query: new URLSearchParams() }).body.map((p) => p.id);
   const a = run();
   assert.deepEqual(a, run());
   // within each status, the original id order is kept (stability)
   const body = e.handle({ pathname: '/api/orders', query: new URLSearchParams() }).body;
-  for (const estado of ['incidencia', 'pagado', 'pendiente']) {
-    const group = body.filter((p) => p.estado === estado).map((p) => p.id);
+  for (const status of ['issue', 'paid', 'pending']) {
+    const group = body.filter((p) => p.status === status).map((p) => p.id);
     assert.deepEqual(group, [...group].sort((x, y) => x - y));
   }
-  assert.deepEqual([...new Set(body.map((p) => p.estado))], ['incidencia', 'pagado', 'pendiente']);
+  assert.deepEqual([...new Set(body.map((p) => p.status))], ['issue', 'paid', 'pending']);
 });
 
 test('descending sort', () => {
-  const ds = { ...dataset, endpoints: [{ ...dataset.endpoints[0], sort: [{ field: 'creado_en', dir: 'desc' }] }] };
+  const ds = { ...dataset, endpoints: [{ ...dataset.endpoints[0], sort: [{ field: 'created_at', dir: 'desc' }] }] };
   const body = createEngine(ds).handle({ pathname: '/api/orders' }).body;
-  for (let i = 1; i < body.length; i++) assert.ok(body[i - 1].creado_en >= body[i].creado_en);
+  for (let i = 1; i < body.length; i++) assert.ok(body[i - 1].created_at >= body[i].created_at);
 });
 
 test('detail /:id exists or 404s; include embeds the parent', () => {
   assert.equal(get('/api/orders/7').body.id, 7);
   assert.equal(get('/api/orders/999').status, 404);
-  const ds = { ...dataset, endpoints: [{ ...dataset.endpoints[0], include: ['clientes'] }] };
+  const ds = { ...dataset, endpoints: [{ ...dataset.endpoints[0], include: ['customers'] }] };
   const row = createEngine(ds).handle({ pathname: '/api/orders/1' }).body;
-  assert.equal(row.cliente.id, row.client_id);
+  assert.equal(row.customer.id, row.customer_id);
 });
 
 test('writes ⇒ 405 (the mock does not implement business rules)', () => {

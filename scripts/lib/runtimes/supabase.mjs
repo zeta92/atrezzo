@@ -177,7 +177,7 @@ docker run --rm -p 3000:3000 -e PGRST_DB_URI=postgresql://postgres:postgres@host
 ${ep}
 
 - The scenario routes (\`${dataset.endpoints[0]?.path ?? '/api/…'}\`) **do not exist** here: supabase-js queries \`/rest/v1/<table>\`.
-- PostgREST, not the atrezzo engine, handles filters, sorting, pagination (\`Range\`, \`limit/offset\`) and joins (\`select=*,cliente:clientes(*)\`).
+- PostgREST, not the atrezzo engine, handles filters, sorting, pagination (\`Range\`, \`limit/offset\`) and joins (\`select=*,customer:customers(*)\`).
   The data is the same (same ids and rows); the projection is not byte-for-byte the one from \`serve\`.
 - RLS: if your migrations enable RLS, the \`anon\` role only sees what your policies allow. atrezzo does not simulate RLS.
 - Auth/Storage/Realtime: out of scope; they come from the local Supabase in option A.

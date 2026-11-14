@@ -16,12 +16,12 @@ A gap is a field where the client assumes more than the contract promises. Traff
 
 1. **Read inventory**: per screen, list the fields the client reads from the JSON. With scripts, not by eye:
    ```bash
-   grep -rnoE '\b(order|pedido|item|row|cliente|user)\??\.[a-zA-Z_]+(\??\.[a-zA-Z_]+)*' src | sort | uniq -c | sort -rn | head -80
+   grep -rnoE '\b(order|item|row|customer|user)\??\.[a-zA-Z_]+(\??\.[a-zA-Z_]+)*' src | sort | uniq -c | sort -rn | head -80
    ```
 2. **For each read, look for the guarantee** in the contract: required? nullable? closed enum? minItems? format/precision?
 3. **Look for the guard in the client**: `?.`, `?? value`, `if (x)`, `.length ?`, `default:` in the switch, `toFixed` with explicit rounding.
 4. **Classify** each read in the matrix below.
-5. **Turn each red cell into a scenario** (or into `nulls:` on an existing one) with its assertion. Write the gap into the scenario as a comment: `# gap: cliente.email can be null and the row uses it unguarded`.
+5. **Turn each red cell into a scenario** (or into `nulls:` on an existing one) with its assertion. Write the gap into the scenario as a comment: `# gap: customer.email can be null and the row uses it unguarded`.
 
 ## Patterns to look for
 
@@ -29,12 +29,12 @@ A gap is a field where the client assumes more than the contract promises. Traff
 |---|---|---|---|
 | Unguarded null field | `x.field.method()`, `x.field.length`, a `{x.field}` template that renders "null" | `nullable: true` or a non-`required` field | `nulls: { field: 1 }` + row assertion |
 | Array assumed non-empty | `items[0].`, `reduce` without an initial value, `Math.max(...arr)` | no `minItems: 1` | entity with `total: 0` (empty state) |
-| Closed enum | `switch` without `default`, an `ICONS[status]` map with no fallback, `'a' \| 'b'` types | open enum or free string | `distribution` with a new value (`en_revision: 1`) |
+| Closed enum | `switch` without `default`, an `ICONS[status]` map with no fallback, `'a' \| 'b'` types | open enum or free string | `distribution` with a new value (`under_review: 1`) |
 | Rounding | client-side sums of amounts, `toFixed(2)` after summing, `===` on decimals | precision, currency, decimal vs. float | `amount` with a range that forces cents; assertion on the rendered total |
 | Id uniqueness | `key={id}`, dedupe with a `Map` | unique ids per page/across pages | paginate with a small `limit` and compare with `X-Total-Count` |
 | Implicit order | "the first one is the most recent" without `sort` in the request | unspecified order | a different `sort:` on the endpoint |
 | Full page | "fewer than limit means no more" | exact page size | `total` an exact multiple of `limit` |
-| Relation always present | `pedido.cliente.nombre` | nullable fk / optional join | `nulls: { client_id: 1 }` with `include` |
+| Relation always present | `order.customer.name` | nullable fk / optional join | `nulls: { customer_id: 1 }` with `include` |
 
 ## Schema-valid × client-assumed matrix
 

@@ -1,0 +1,13 @@
+# Flow that FAILS on purpose to show the diagnosis (--diagnose):
+# it counts the issues inside the first page of 12 instead of requesting them filtered.
+scenario: scenarios/orders.yaml
+steps:
+  - screen: order-list
+    visit: /
+    requests:
+      orders: GET /api/orders?limit=12
+      issues: GET /api/orders?status=issue
+    expect:
+      - selector: "[data-testid=order-row] [data-status=issue]"
+        count: 3
+        data: { request: orders, where: { status: issue } }

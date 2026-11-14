@@ -29,47 +29,57 @@ const company = (rng) => `${rng.pick(COMPANY_A)} ${rng.pick(COMPANY_B)}`;
  * foreign keys of the entity's references.
  */
 export const TEMPLATES = {
-  clientes: {
-    singular: 'cliente', fk: 'client_id',
-    fields: ['id', 'nombre', 'email', 'ciudad', 'creado_en'],
+  customers: {
+    singular: 'customer', fk: 'customer_id',
+    fields: ['id', 'name', 'email', 'city', 'created_at'],
     make: (rng, id) => {
-      const nombre = company(rng);
-      return { nombre, email: `contacto${id}@${slug(nombre)}.example`, ciudad: rng.pick(CITIES) };
+      const name = company(rng);
+      return { name, email: `contact${id}@${slug(name)}.example`, city: rng.pick(CITIES) };
     },
   },
-  usuarios: {
-    singular: 'usuario', fk: 'user_id',
-    fields: ['id', 'nombre', 'email', 'rol', 'creado_en'],
+  users: {
+    singular: 'user', fk: 'user_id',
+    fields: ['id', 'name', 'email', 'role', 'created_at'],
     make: (rng, id) => {
-      const nombre = person(rng);
-      return { nombre, email: `${slug(nombre)}.${id}@example.com`, rol: id === 1 ? 'admin' : 'operador' };
+      const name = person(rng);
+      return { name, email: `${slug(name)}.${id}@example.com`, role: id === 1 ? 'admin' : 'operator' };
     },
   },
-  pedidos: {
-    singular: 'pedido', fk: 'order_id', defaultRef: ['clientes'], statusField: 'estado',
-    defaultStatus: 'pagado', amountField: 'importe',
+  orders: {
+    singular: 'order', fk: 'order_id', defaultRef: ['customers'], statusField: 'status',
+    defaultStatus: 'paid', amountField: 'amount',
     defaultAmount: { min: 10, max: 500, currency: 'EUR' },
-    fields: ['id', 'referencia', '{fk}', 'estado', 'importe', 'moneda', 'creado_en'],
-    make: (rng, id) => ({ referencia: `PED-${String(id).padStart(5, '0')}` }),
+    fields: ['id', 'reference', '{fk}', 'status', 'amount', 'currency', 'created_at'],
+    make: (rng, id) => ({ reference: `ORD-${String(id).padStart(5, '0')}` }),
   },
-  productos: {
-    singular: 'producto', fk: 'product_id', amountField: 'precio',
+  products: {
+    singular: 'product', fk: 'product_id', amountField: 'price',
     defaultAmount: { min: 1, max: 120, currency: 'EUR' },
-    fields: ['id', 'nombre', 'sku', 'precio', 'moneda', 'stock'],
-    make: (rng, id) => ({ nombre: `${rng.pick(PRODUCTS)} ${rng.int(1, 99)}`, sku: `SKU-${String(id).padStart(4, '0')}`, stock: rng.int(0, 250) }),
+    fields: ['id', 'name', 'sku', 'price', 'currency', 'stock'],
+    make: (rng, id) => ({ name: `${rng.pick(PRODUCTS)} ${rng.int(1, 99)}`, sku: `SKU-${String(id).padStart(4, '0')}`, stock: rng.int(0, 250) }),
   },
 };
 
-const ALIASES = { customers: 'clientes', clients: 'clientes', users: 'usuarios', orders: 'pedidos', products: 'productos' };
+/**
+ * Template names used before 0.4. They are rejected (not translated) so a
+ * scenario that still uses them fails loudly instead of becoming a generic entity.
+ */
+export const RENAMED_TEMPLATES = { clientes: 'customers', usuarios: 'users', pedidos: 'orders', productos: 'products' };
+
+/** English singular of a collection name: invoices -> invoice, categories -> category, boxes -> box. */
+function singularize(name) {
+  if (/ies$/.test(name) && name.length > 4) return `${name.slice(0, -3)}y`;
+  if (/(s|x|z|ch|sh)es$/.test(name)) return name.slice(0, -2);
+  return name.replace(/s$/, '');
+}
 
 export function templateFor(name) {
-  const t = TEMPLATES[name] || TEMPLATES[ALIASES[name]];
-  if (t) return t;
-  const singular = name.endsWith('es') && name.length > 4 ? name.slice(0, -2) : name.replace(/s$/, '');
+  if (Object.hasOwn(TEMPLATES, name)) return TEMPLATES[name];
+  const singular = singularize(name);
   return {
     singular, fk: `${singular}_id`, generic: true,
-    fields: ['id', 'nombre', '{fk}', 'creado_en'],
-    make: (rng, id) => ({ nombre: `${singular} ${id}` }),
+    fields: ['id', 'name', '{fk}', 'created_at'],
+    make: (rng, id) => ({ name: `${singular} ${id}` }),
   };
 }
 
@@ -94,9 +104,9 @@ export function entityFields(spec) {
   }
   if (spec.distribution && !out.includes(spec.distribution.field)) out.push(spec.distribution.field);
   if (spec.amount) {
-    const af = t.amountField || 'importe';
+    const af = t.amountField || 'amount';
     if (!out.includes(af)) out.push(af);
-    if (!out.includes('moneda')) out.push('moneda');
+    if (!out.includes('currency')) out.push('currency');
   }
   for (const f of Object.keys(spec.pools || {})) if (!out.includes(f)) out.push(f);
   return out;
@@ -111,7 +121,7 @@ function typedValue(type, field, rng, id, entity, nowMs, days) {
   if (Array.isArray(type)) return rng.pick(type);
   const lower = field.toLowerCase();
   switch (type) {
-    case 'integer': return /price|precio|amount|importe|total/.test(lower) ? rng.int(1, 999) : rng.int(0, 1000);
+    case 'integer': return /price|amount|total/.test(lower) ? rng.int(1, 999) : rng.int(0, 1000);
     case 'number': return rng.int(0, 100_000) / 100;
     case 'boolean': return rng.next() < 0.5;
     case 'date': return new Date(nowMs - rng.int(0, days * 1440) * 60_000).toISOString();
@@ -119,10 +129,10 @@ function typedValue(type, field, rng, id, entity, nowMs, days) {
     case 'uuid': return `${hex(rng, 8)}-${hex(rng, 4)}-4${hex(rng, 3)}-${'89ab'[rng.int(0, 3)]}${hex(rng, 3)}-${hex(rng, 12)}`;
     case 'url': return `https://example.com/${entity}/${id}`;
     default: // string
-      if (/(^|_)(first|last)?_?name$|nombre|^name$|fullname|username/i.test(field)) return /user/i.test(field) ? `${slug(person(rng))}${id}` : person(rng);
-      if (/compan|empresa|org/.test(lower)) return company(rng);
-      if (/city|ciudad/.test(lower)) return rng.pick(CITIES);
-      if (/title|titulo|product/.test(lower)) return `${rng.pick(PRODUCTS)} ${rng.int(1, 99)}`;
+      if (/(^|_)(first|last)?_?name$|^name$|fullname|username/i.test(field)) return /user/i.test(field) ? `${slug(person(rng))}${id}` : person(rng);
+      if (/compan|org/.test(lower)) return company(rng);
+      if (/city/.test(lower)) return rng.pick(CITIES);
+      if (/title|product/.test(lower)) return `${rng.pick(PRODUCTS)} ${rng.int(1, 99)}`;
       return `${field} ${id}`;
   }
 }
@@ -155,7 +165,7 @@ function generateEntity(spec, scenario, counts, built) {
   }
 
   const amount = spec.amount;
-  const amountField = t.amountField || 'importe';
+  const amountField = t.amountField || 'amount';
   const frng = spec.fields ? createRng(scenario.seed, `fields:${spec.name}`) : null;
   const rows = [];
   for (let i = 0; i < n; i++) {
@@ -169,12 +179,13 @@ function generateEntity(spec, scenario, counts, built) {
       else if (f in fkValues) row[f] = fkValues[f][i];
       else if (spec.distribution && f === spec.distribution.field) row[f] = statuses[i];
       else if (amount && f === amountField) row[f] = rng.int(Math.round(amount.min * 100), Math.round(amount.max * 100)) / 100;
-      else if (amount && f === 'moneda') row[f] = amount.moneda;
-      else if (f === 'creado_en') {
-        // A child never predates its parent: its date falls between the parent's and "now".
+      else if (amount && f === 'currency') row[f] = amount.currency;
+      else if (f === 'created_at' && !(f in typed)) {
+        // Template timestamp (a `created_at` declared in `fields` stays a typed date):
+        // a child never predates its parent, its date falls between the parent's and "now".
         const parentMs = Math.max(nowMs - spec.days * DAY_MS, ...spec.refs.map((r) => {
           const p = built[r]?.[(fkValues[templateFor(r).fk][i] ?? 0) - 1];
-          return p?.creado_en ? Date.parse(p.creado_en) : -Infinity;
+          return p?.created_at ? Date.parse(p.created_at) : -Infinity;
         }));
         const spanMin = Math.max(0, Math.floor((nowMs - parentMs) / 60_000));
         row[f] = new Date(nowMs - rng.int(0, spanMin) * 60_000).toISOString();

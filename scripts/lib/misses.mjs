@@ -1,7 +1,7 @@
 // Gaps (misses): requests the mock could not answer because the scenario contract
 // does not declare them. `serve` records them in <atrezzo>/.atrezzo/misses.json
 // (an object keyed by "METHOD /path"), deduplicated, so the plugin can fill them
-// from the app's own context (skill /atrezzo:hueco).
+// from the app's own context (skill /atrezzo:gap).
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -204,10 +204,10 @@ export function hintFor(miss, { spec = null, contract = null, scenarios = [] } =
   if (spec) {
     const hit = findInSpec(spec, miss.method, miss.path);
     if (hit?.method) return `the contract has it (${miss.method} ${hit.path}) → atrezzo import ${contract}`;
-    if (hit) return `the contract has ${hit.path} but not ${miss.method} → add the endpoint to the scenario (skill /atrezzo:hueco)`;
-    return 'not in the contract → add the endpoint to the scenario (skill /atrezzo:hueco)';
+    if (hit) return `the contract has ${hit.path} but not ${miss.method} → add the endpoint to the scenario (skill /atrezzo:gap)`;
+    return 'not in the contract → add the endpoint to the scenario (skill /atrezzo:gap)';
   }
-  return 'add the endpoint to the scenario (skill /atrezzo:hueco)';
+  return 'add the endpoint to the scenario (skill /atrezzo:gap)';
 }
 
 const ago = (iso, now) => {

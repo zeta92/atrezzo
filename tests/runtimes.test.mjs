@@ -123,7 +123,7 @@ test('world always writes JSON + runtime.mjs, then the configured runtime output
 });
 
 test('serve: with a non-servable runtime it prints how to start it and exits with 2', () => {
-  const dir = tmpProject({ 'atrezzo.config.json': JSON.stringify({ ...DEFAULT_CONFIG, runtime: 'wiremock' }), 'atrezzo/escenarios/conciliacion.yaml': SCENARIO });
+  const dir = tmpProject({ 'atrezzo.config.json': JSON.stringify({ ...DEFAULT_CONFIG, runtime: 'wiremock' }), 'atrezzo/scenarios/conciliacion.yaml': SCENARIO });
   const r = cli(['serve', '--scenario', 'conciliacion'], dir);
   assert.equal(r.code, 2);
   assert.match(r.stdout, /wiremock: docker run --rm -p 4010:8080 -v "\$PWD\/atrezzo\/\.generated\/wiremock\/conciliacion:\/home\/wiremock"/);
@@ -138,7 +138,7 @@ test('supabase: seed.sql with as many rows as the world, stable ids and well-for
   const schema = files.find((f) => f.path.endsWith('schema.sql')).content;
   assert.match(seed, /^BEGIN;$/m);
   assert.match(seed, /^COMMIT;$/m);
-  assert.match(seed, /^TRUNCATE TABLE "usuarios", "pedidos", "clientes" RESTART IDENTITY CASCADE;$/m);
+  assert.match(seed, /^TRUNCATE TABLE "users", "orders", "customers" RESTART IDENTITY CASCADE;$/m);
   // Rows: every "(id, ...)" tuple of the INSERTs, per table.
   for (const [name, rows] of Object.entries(dataset.entities)) {
     const block = seed.split(`-- ${name}: `)[1].split(/\nDO \$\$/)[0];
@@ -146,9 +146,9 @@ test('supabase: seed.sql with as many rows as the world, stable ids and well-for
     assert.deepEqual(ids, rows.map((r) => r.id), `${name}: ids`);
   }
   // Parents before children, and the fk declared.
-  assert.ok(seed.indexOf('INSERT INTO "clientes"') < seed.indexOf('INSERT INTO "pedidos"'));
-  assert.match(schema, /"client_id" bigint NOT NULL REFERENCES "clientes" \("id"\)/);
-  assert.match(schema, /"creado_en" timestamptz NOT NULL/);
+  assert.ok(seed.indexOf('INSERT INTO "customers"') < seed.indexOf('INSERT INTO "orders"'));
+  assert.match(schema, /"customer_id" bigint NOT NULL REFERENCES "customers" \("id"\)/);
+  assert.match(schema, /"created_at" timestamptz NOT NULL/);
   // Quotes: text quotes are doubled and the file leaves no open strings.
   const stripped = seed.replace(/'(?:[^']|'')*'/g, '');
   assert.ok(!stripped.includes("'"), 'unterminated quote');
@@ -178,8 +178,8 @@ test('supabase: reset.sh loads the seed into a real Postgres, twice (idempotent)
       assert.equal(r.status, 0, r.stderr);
       assert.match(r.stdout, /restored \(45 rows\)/);
     }
-    const q = spawnSync('psql', [env.DATABASE_URL, '-tAc', "select (select count(*) from clientes)||','||(select count(*) from pedidos)||','||(select count(*) from pedidos where estado='incidencia')||','||(select referencia from pedidos where id=1)"], { encoding: 'utf8' });
-    assert.equal(q.stdout.trim(), `3,40,3,${dataset.entities.pedidos[0].referencia}`);
+    const q = spawnSync('psql', [env.DATABASE_URL, '-tAc', "select (select count(*) from customers)||','||(select count(*) from orders)||','||(select count(*) from orders where status='issue')||','||(select reference from orders where id=1)"], { encoding: 'utf8' });
+    assert.equal(q.stdout.trim(), `3,40,3,${dataset.entities.orders[0].reference}`);
   } finally {
     su(`${PG_BIN}/pg_ctl -D ${pg}/data -m immediate stop`);
     rmSync(pg, { recursive: true, force: true });
@@ -194,11 +194,11 @@ test('prism: parseable OpenAPI 3.1, with the scenario paths and consistent requi
   assert.equal(doc.openapi, '3.1.0');
   assert.deepEqual(Object.keys(doc.paths), ['/api/orders', '/api/orders/{id}', '/api/customers', '/api/customers/{id}']);
   const list = doc.paths['/api/orders'].get;
-  assert.deepEqual(list.parameters.map((p) => p.name), ['estado', 'client_id', 'limit', 'offset']);
+  assert.deepEqual(list.parameters.map((p) => p.name), ['status', 'customer_id', 'limit', 'offset']);
   const media = list.responses['200'].content['application/json'];
   const ex = media.examples.scenario.value;
   assert.deepEqual(ex, createEngine(dataset).handle({ pathname: '/api/orders', query: {} }).body);
-  assert.equal(media.examples['estado-incidencia'].value.length, 3);
+  assert.equal(media.examples['status-issue'].value.length, 3);
   for (const [name, schema] of Object.entries(doc.components.schemas)) {
     for (const f of schema.required) assert.ok(f in schema.properties, `${name}.${f} required without a property`);
     const entity = Object.keys(dataset.schema).find((e) => dataset.schema[e].singular.toLowerCase() === name.toLowerCase());
@@ -216,7 +216,7 @@ test('prism: a standard YAML parser (PyYAML) reads the YAML exactly like ours', 
 // ---------- wiremock ----------
 
 test('wiremock: mappings with urlPath + bodyFileName, templating with transformers and a 501 fallback', () => {
-  const requests = ['/api/orders?limit=12', '/api/orders?estado=incidencia&limit=12'];
+  const requests = ['/api/orders?limit=12', '/api/orders?status=issue&limit=12'];
   const { files, notes } = getAdapter('wiremock').emit({ dataset, scenario, config, dir: '/nada', requests });
   const byPath = Object.fromEntries(files.map((f) => [f.path, f.content]));
   const root = 'atrezzo/.generated/wiremock/conciliacion';
@@ -231,9 +231,9 @@ test('wiremock: mappings with urlPath + bodyFileName, templating with transforme
     const r = engine.handle({ pathname: '/api/orders', query: q });
     assert.deepEqual(JSON.parse(body), r.body, m.name);
     assert.equal(m.response.headers['x-total-count'], r.headers['x-total-count']);
-    for (const k of ['estado', 'client_id', 'limit', 'offset']) assert.ok(k in m.request.queryParameters, `${m.name}: ${k} without equalTo/absent`);
+    for (const k of ['status', 'customer_id', 'limit', 'offset']) assert.ok(k in m.request.queryParameters, `${m.name}: ${k} without equalTo/absent`);
   }
-  assert.ok(lists.some((m) => m.request.queryParameters.estado.equalTo === 'incidencia' && m.request.queryParameters.limit.equalTo === '12'), 'the flow combination');
+  assert.ok(lists.some((m) => m.request.queryParameters.status.equalTo === 'issue' && m.request.queryParameters.limit.equalTo === '12'), 'the flow combination');
   const detail = mappings.find((m) => m.request.urlPathPattern?.includes('(1|2|'));
   assert.deepEqual(detail.response.transformers, ['response-template']);
   assert.match(detail.response.bodyFileName, /\{\{request\.pathSegments\.\[2\]\}\}\.json$/);
@@ -249,12 +249,12 @@ test('wiremock: mappings with urlPath + bodyFileName, templating with transforme
 test('wiremock: world picks up the requests of the scenario flows', () => {
   const dir = tmpProject({
     'atrezzo.config.json': JSON.stringify({ ...DEFAULT_CONFIG, runtime: 'wiremock' }),
-    'atrezzo/escenarios/conciliacion.yaml': SCENARIO,
-    'flujo.yaml': 'scenario: atrezzo/escenarios/conciliacion.yaml\nsteps:\n  - screen: lista\n    requests:\n      p: GET /api/orders?estado=incidencia&limit=2\n',
+    'atrezzo/scenarios/conciliacion.yaml': SCENARIO,
+    'flow.yaml': 'scenario: atrezzo/scenarios/conciliacion.yaml\nsteps:\n  - screen: lista\n    requests:\n      p: GET /api/orders?status=issue&limit=2\n',
   });
-  const r = cli(['world', 'atrezzo/escenarios/conciliacion.yaml'], dir);
+  const r = cli(['world', 'atrezzo/scenarios/conciliacion.yaml'], dir);
   assert.equal(r.code, 0, r.stderr);
-  const body = join(dir, 'atrezzo/.generated/wiremock/conciliacion/__files/conciliacion/api-orders/estado-incidencia__limit-2.json');
+  const body = join(dir, 'atrezzo/.generated/wiremock/conciliacion/__files/conciliacion/api-orders/limit-2__status-issue.json');
   assert.equal(JSON.parse(readFileSync(body, 'utf8')).length, 2);
   assert.match(r.stdout, /Runtime wiremock:/);
 });

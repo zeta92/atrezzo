@@ -6,8 +6,8 @@ import { SCENARIO, SMALL, tmpProject } from './helpers.mjs';
 
 let mock; let url;
 before(async () => {
-  const dir = tmpProject({ 'escenarios/conciliacion.yaml': SCENARIO, 'escenarios/pequeno.yaml': SMALL, 'public/index.html': '<h1>hello</h1>' });
-  mock = createMockServer({ scenariosDir: join(dir, 'escenarios'), scenario: 'conciliacion', staticDir: join(dir, 'public') });
+  const dir = tmpProject({ 'scenarios/conciliacion.yaml': SCENARIO, 'scenarios/pequeno.yaml': SMALL, 'public/index.html': '<h1>hello</h1>' });
+  mock = createMockServer({ scenariosDir: join(dir, 'scenarios'), scenario: 'conciliacion', staticDir: join(dir, 'public') });
   url = `http://127.0.0.1:${(await mock.listen(0)).port}`;
 });
 after(() => mock.close());
@@ -24,21 +24,21 @@ test('real HTTP: limit/offset and X-Total-Count header', async () => {
 
 test('same engine as the handlers: serve == engine', async () => {
   const { createEngine } = await import('../scripts/lib/contract.mjs');
-  const direct = createEngine(mock.state.dataset).handle({ pathname: '/api/orders', query: new URLSearchParams('estado=pendiente') });
-  assert.deepEqual((await getJson('/api/orders?estado=pendiente')).body, direct.body);
+  const direct = createEngine(mock.state.dataset).handle({ pathname: '/api/orders', query: new URLSearchParams('status=pending') });
+  assert.deepEqual((await getJson('/api/orders?status=pending')).body, direct.body);
 });
 
 test('reset switches scenario without restarting and the counts change', async () => {
   const before = await getJson('/__atrezzo/state');
   assert.equal(before.body.scenario, 'conciliacion');
-  assert.equal(before.body.counts.pedidos, 40);
+  assert.equal(before.body.counts.orders, 40);
   const r = await fetch(`${url}/__atrezzo/reset`, { method: 'POST', body: JSON.stringify({ scenario: 'pequeno' }) });
   assert.equal(r.status, 200);
   const after = await getJson('/__atrezzo/state');
   assert.equal(after.body.scenario, 'pequeno');
-  assert.deepEqual(after.body.counts, { clientes: 1, pedidos: 5 });
+  assert.deepEqual(after.body.counts, { customers: 1, orders: 5 });
   assert.equal((await getJson('/api/orders')).body.length, 5);
-  assert.equal((await getJson('/api/orders?estado=incidencia')).body.length, 1);
+  assert.equal((await getJson('/api/orders?status=issue')).body.length, 1);
   // and back
   await fetch(`${url}/__atrezzo/reset?scenario=conciliacion`, { method: 'POST' });
   assert.equal((await getJson('/api/orders?limit=100')).body.length, 40);

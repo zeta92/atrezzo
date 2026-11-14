@@ -73,7 +73,7 @@ export function doctor(dir) {
     if (!existsSync(sdir)) add('error', `${cfg.scenariosDir} is missing`, 'run: atrezzo init');
     else {
       const files = readdirSync(sdir).filter((f) => /\.(ya?ml|json)$/.test(f)).sort();
-      if (!files.length) add('warn', `no scenarios in ${cfg.scenariosDir}`, 'use /atrezzo:escena');
+      if (!files.length) add('warn', `no scenarios in ${cfg.scenariosDir}`, 'use /atrezzo:scene');
       for (const f of files) {
         try {
           const sc = loadScenario(join(sdir, f));
@@ -93,7 +93,7 @@ export function doctor(dir) {
     const open = misses.filter((m) => !m.resolved);
     if (open.length) {
       const top = open.slice(0, 3).map((m) => `${m.method} ${m.path} (${m.times}×)`).join(', ');
-      add('warn', `${open.length} unresolved gap${open.length === 1 ? '' : 's'} (of ${misses.length} recorded)`, `${top}${open.length > 3 ? ', …' : ''} → atrezzo misses · skill /atrezzo:hueco`);
+      add('warn', `${open.length} unresolved gap${open.length === 1 ? '' : 's'} (of ${misses.length} recorded)`, `${top}${open.length > 3 ? ', …' : ''} → atrezzo misses · skill /atrezzo:gap`);
     } else if (misses.length) add('ok', `gaps: ${misses.length} recorded, all resolved`);
   }
   return { checks, ok: !checks.some((c) => c.level === 'error'), info };

@@ -8,7 +8,7 @@ export const CONFIG_FILE = 'atrezzo.config.json';
 export const DEFAULT_CONFIG = {
   version: 1,
   stack: 'other',
-  scenariosDir: 'atrezzo/escenarios',
+  scenariosDir: 'atrezzo/scenarios',
   handlersDir: 'atrezzo/handlers',
   generatedDir: 'atrezzo/.generated',
   // Config files from 0.1 have no "runtime": they got MSW handlers on every

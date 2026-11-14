@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { parseYaml, YamlError } from './yaml.mjs';
 import { AtrezzoError } from './errors.mjs';
-import { templateFor, entityFields } from './world.mjs';
+import { templateFor, entityFields, RENAMED_TEMPLATES } from './world.mjs';
 import { parseHeaders } from './headers.mjs';
 
 export const DEFAULT_NOW = '2025-01-15T09:00:00.000Z';
@@ -90,6 +90,11 @@ function normalizeWorld(world, issues) {
   for (const name of names) {
     const f = `world.${name}`;
     if (!/^[a-z][a-z0-9_]*$/.test(name)) issues.add(f, 'entity names use lowercase letters, digits or "_"');
+    if (Object.hasOwn(RENAMED_TEMPLATES, name)) {
+      const en = RENAMED_TEMPLATES[name];
+      issues.add(f, `"${name}" is no longer a built-in template; use "${en}" (its fields are in English: ${templateFor(en).fields.filter((x) => x !== '{fk}').join(', ')})`);
+      continue;
+    }
     let raw = world[name];
     if (isInt(raw)) raw = { total: raw };
     if (!isObj(raw)) { issues.add(f, `must be an integer or a map with "total"; got ${typeName(raw)}`); continue; }
@@ -102,7 +107,7 @@ function normalizeWorld(world, issues) {
     else spec.count = raw.total;
 
     if (raw.distribution !== undefined) {
-      const field = raw.distribution_field ?? t.statusField ?? 'estado';
+      const field = raw.distribution_field ?? t.statusField ?? 'status';
       if (!isObj(raw.distribution) || !Object.keys(raw.distribution).length) issues.add(`${f}.distribution`, 'must be a non-empty map value: count');
       else {
         let sum = 0;
@@ -126,8 +131,7 @@ function normalizeWorld(world, issues) {
         if (typeof min !== 'number' || typeof max !== 'number') issues.add(`${f}.amount`, '"min" and "max" are required and numeric');
         else if (min > max) issues.add(`${f}.amount`, `min (${min}) is greater than max (${max})`);
         else if (min < 0) issues.add(`${f}.amount.min`, 'cannot be negative');
-        // Normalized key stays `moneda` (the generated data field): renaming it would change every scenario hash.
-        else spec.amount = { min, max, moneda: String(currency) };
+        else spec.amount = { min, max, currency: String(currency) };
       }
     }
 

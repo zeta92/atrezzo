@@ -8,20 +8,20 @@
     .chips span { display: inline-block; padding: .2rem .6rem; margin-right: .4rem; border-radius: 1rem; background: #eef; }
     table { border-collapse: collapse; margin-top: 1rem; }
     td, th { padding: .3rem .8rem; border-bottom: 1px solid #ddd; text-align: left; }
-    [data-estado=incidencia] { color: #b00; font-weight: 600; }
-    .incidencias li { color: #b00; }
+    [data-status=issue] { color: #b00; font-weight: 600; }
+    .issues li { color: #b00; }
   </style>
 </head>
 <body>
   <h1>Orders</h1>
-  <section class="chips" id="clientes"></section>
-  <section class="incidencias">
+  <section class="chips" id="customers"></section>
+  <section class="issues">
     <h2>Issues</h2>
-    <ul id="incidencias"></ul>
+    <ul id="issues"></ul>
   </section>
   <table>
     <thead><tr><th>Reference</th><th>Customer</th><th>Status</th><th>Amount</th></tr></thead>
-    <tbody id="pedidos"></tbody>
+    <tbody id="orders"></tbody>
   </table>
   <script type="module">
     // Minimal app: renders whatever the API returns. It knows nothing about atrezzo.
@@ -29,40 +29,41 @@
     const el = (tag, attrs, text) => Object.assign(document.createElement(tag), attrs, text === undefined ? {} : { textContent: text });
     const fmt = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'EUR' });
 
-    const [clientes, pedidos, incidencias] = await Promise.all([
+    const [customers, orders, issues] = await Promise.all([
       get('/api/customers'),
       get('/api/orders?limit=12'),
-      get('/api/orders?estado=incidencia'),
+      get('/api/orders?status=issue'),
     ]);
+    const customerName = (o) => customers.find((c) => c.id === o.customer_id)?.name;
 
-    for (const c of clientes) {
-      const chip = el('span', {}, c.nombre);
+    for (const c of customers) {
+      const chip = el('span', {}, c.name);
       chip.dataset.testid = 'customer-chip';
-      document.getElementById('clientes').append(chip);
+      document.getElementById('customers').append(chip);
     }
-    for (const p of incidencias) {
-      const li = el('li', {}, `${p.referencia} · ${p.cliente?.nombre ?? 'no customer'}`);
-      li.dataset.testid = 'badge-incidencia';
-      document.getElementById('incidencias').append(li);
+    for (const o of issues) {
+      const li = el('li', {}, `${o.reference} · ${customerName(o) ?? 'no customer'}`);
+      li.dataset.testid = 'issue-badge';
+      document.getElementById('issues').append(li);
     }
-    const tbody = document.getElementById('pedidos');
-    if (!pedidos.length) {
+    const tbody = document.getElementById('orders');
+    if (!orders.length) {
       const empty = el('p', {}, 'No orders yet.');
       empty.dataset.testid = 'empty-state';
       tbody.closest('table').after(empty);
     }
-    for (const p of pedidos) {
+    for (const o of orders) {
       const tr = el('tr');
       tr.dataset.testid = 'order-row';
-      const estado = el('td', {}, p.estado);
-      estado.dataset.estado = p.estado;
-      const importe = el('td', {}, fmt.format(p.importe));
-      importe.dataset.testid = 'importe';
-      tr.append(el('td', {}, p.referencia), el('td', {}, p.cliente?.nombre ?? '—'), estado, importe);
+      const status = el('td', {}, o.status);
+      status.dataset.status = o.status;
+      const amount = el('td', {}, fmt.format(o.amount));
+      amount.dataset.testid = 'amount';
+      tr.append(el('td', {}, o.reference), el('td', {}, customerName(o) ?? '—'), status, amount);
       tbody.append(tr);
     }
     const ready = el('span');
-    ready.dataset.testid = 'listo';
+    ready.dataset.testid = 'ready';
     document.body.append(ready);
   </script>
 </body>

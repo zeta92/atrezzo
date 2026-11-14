@@ -5,44 +5,44 @@ A scenario is a versioned YAML file that describes **one application state**: th
 ## Full example
 
 ```yaml
-name: conciliacion-con-incidencias   # required, kebab-case; the scenario name
+name: reconciliation-with-issues      # required, kebab-case; the scenario name
 description: Free text for humans     # optional
 seed: 7712                            # required, integer >= 0
 now: 2025-03-01T09:00:00Z             # optional; injected "now" (default 2025-01-15T09:00:00Z)
 world:
-  clientes: 3                         # short form: just the total
-  pedidos:
+  customers: 3                        # short form: just the total
+  orders:
     total: 40
-    distribution: { pagado: 34, pendiente: 3, incidencia: 3 }   # sum == total
+    distribution: { paid: 34, pending: 3, issue: 3 }   # sum == total
     amount: { min: 20, max: 900, currency: EUR }
-    ref: clientes                     # optional: pedidos already references clientes by default
-    nulls: { client_id: 0 }           # optional: n records with the field set to null
+    ref: customers                    # optional: orders already references customers by default
+    nulls: { customer_id: 0 }         # optional: n records with the field set to null
     days: 90                          # optional: date window going back from now
-  usuarios:
+  users:
     total: 4
-    values: { rol: [admin, operador, lectura] }   # optional: vocabulary for a field
+    values: { role: [admin, operator, viewer] }   # optional: vocabulary for a field
 endpoints:
   - path: /api/orders
-    entity: pedidos
-    filters: [estado, client_id]      # ?estado=incidencia  ·  ?estado=pendiente,incidencia
+    entity: orders
+    filters: [status, customer_id]    # ?status=issue  ·  ?status=pending,issue
     pagination: { param_limit: limit, param_offset: offset, default_limit: 50, max_limit: 100 }
-    sort: -creado_en                  # or a list: [estado, -importe]; default id
-    include: [clientes]               # embeds the parent as "cliente"
+    sort: -created_at                 # or a list: [status, -amount]; default id
+    include: [customers]              # embeds the parent as "customer"
     shape: array                      # array (default) | envelope → { data, total, limit, offset }
     detail: true                      # also generates /api/orders/:id (default true)
   - path: /api/customers
-    entity: clientes
-entry: dashboard-vacio
-path: [dashboard-vacio, lista-pedidos, conciliacion]
+    entity: customers
+entry: empty-dashboard
+path: [empty-dashboard, order-list, reconciliation]
 expect:
   - selector: "[data-testid=order-row]"
     count: 12
-    data: { request: pedidos }
-  - selector: "[data-testid=badge-incidencia]"
+    data: { request: orders }
+  - selector: "[data-testid=issue-badge]"
     min: 1
     max: 3
-    screen: lista-pedidos             # default: the last screen of path
-    data: { request: incidencias, where: { estado: incidencia } }
+    screen: order-list                # default: the last screen of path
+    data: { request: issues, where: { status: issue } }
 ```
 
 ## Fields
@@ -62,7 +62,7 @@ expect:
 Any other field is an error (`unknown field`). A scenario can also be `.json` with the same structure (`atrezzo import --format json`).
 
 ### Entities (`world.<name>`)
-An integer (= `total`) or a map with: `total` (required), `distribution`, `distribution_field` (default `estado`), `amount`, `ref`, `nulls`, `values`, `days`, `fields`.
+An integer (= `total`) or a map with: `total` (required), `distribution`, `distribution_field` (default `status`), `amount`, `ref`, `nulls`, `values`, `days`, `fields`.
 
 #### `fields`: typed fields (written by `atrezzo import`)
 
@@ -78,23 +78,25 @@ world:
       createdAt: date
 ```
 
-Types: `string`, `integer`, `number`, `boolean`, `date` (ISO, within `days` before `now`), `email`, `uuid`, `url`, or a list of values. With `fields`, the entity has **exactly** `id` + the fks of its `ref` + `fields` (+ the `distribution` field and the `amount` fields if you declare them): the template (`clientes`, `pedidos`…) adds neither its own fields nor its defaults. `id` cannot be declared (always integers 1..n). Values come from a dedicated PRNG stream (`fields:<entity>`): adding `fields` to one entity does not change the others.
+Types: `string`, `integer`, `number`, `boolean`, `date` (ISO, within `days` before `now`), `email`, `uuid`, `url`, or a list of values. With `fields`, the entity has **exactly** `id` + the fks of its `ref` + `fields` (+ the `distribution` field and the `amount` fields if you declare them): the template (`customers`, `orders`…) adds neither its own fields nor its defaults. `id` cannot be declared (always integers 1..n). Values come from a dedicated PRNG stream (`fields:<entity>`): adding `fields` to one entity does not change the others.
 
-Built-in templates and their fields (the field names are generated data, so they stay as they are):
+Built-in templates and their fields:
 
 | entity | fields |
 |---|---|
-| `clientes` (`customers`) | id, nombre, email, ciudad, creado_en |
-| `usuarios` (`users`) | id, nombre, email, rol, creado_en |
-| `pedidos` (`orders`) | id, referencia, client_id, estado, importe, moneda, creado_en |
-| `productos` (`products`) | id, nombre, sku, precio, moneda, stock |
-| any other | id, nombre, `<fk of its refs>`, creado_en |
+| `customers` | id, name, email, city, created_at |
+| `users` | id, name, email, role (`admin` for id 1, else `operator`), created_at |
+| `orders` | id, reference (`ORD-00001`…), customer_id, status (default `paid`), amount (10–500), currency (`EUR`), created_at |
+| `products` | id, name, sku, price (1–120), currency (`EUR`), stock |
+| any other | id, name, `<fk of its refs>`, created_at |
+
+Template names are matched exactly; there are no aliases. A foreign key is the singular of the referenced entity + `_id` (`customers` → `customer_id`, `categories` → `category_id`, `boxes` → `box_id`). The pre-0.4 Spanish template names are rejected with the English name to use instead (e.g. `field "world.<old name>": … use "customers"`).
 
 Generator guarantees:
 - integer ids 1..n.
 - `distribution` is exact (not approximate) and shuffled with the seed.
 - Every fk exists; if there are at least as many children as parents, every parent has a child.
-- A child never predates its parent (`creado_en`).
+- A child never predates its parent (the template's `created_at`; a `created_at` declared in `fields` is a plain typed date).
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
@@ -113,28 +115,28 @@ Projection semantics (identical in `serve` and the MSW handlers, same `runtime.m
 
 ### Filling a gap (an endpoint the app requests and the scenario lacks)
 
-`atrezzo serve` records every request outside the contract (`atrezzo misses`; details in the README, "When a route is missing"). To fill it you add **an entity and an endpoint**, never data (skill `/atrezzo:hueco`):
+`atrezzo serve` records every request outside the contract (`atrezzo misses`; details in the README, "When a route is missing"). To fill it you add **an entity and an endpoint**, never data (skill `/atrezzo:gap`):
 
 ```yaml
 # 404 received: { "atrezzo": { "gap": "GET /api/users", ... } }
-# the front end does: fetch(`/api/users?rol=${rol}&limit=20&offset=${o}`) and reads
-#   res.items[i].nombre · .email · .rol · .avatar_url · .cliente.nombre · res.total
+# the front end does: fetch(`/api/users?role=${role}&limit=20&offset=${o}`) and reads
+#   res.items[i].name · .email · .role · .avatar_url · .customer.name · res.total
 world:
-  clientes: 3
-  usuarios:
+  customers: 3
+  users:
     total: 8
-    ref: clientes                 # → client_id; enables include
+    ref: customers                # → customer_id; enables include
     fields:                       # only what the front end reads (replaces the entity template)
-      nombre: string
+      name: string
       email: email
-      rol: [admin, operador]
+      role: [admin, operator]
       avatar_url: url
 endpoints:
   - path: /api/users              # exactly the gap's `path` (no different prefix, no trailing slash)
-    entity: usuarios
-    filters: [rol]                # only what the front end sends
+    entity: users
+    filters: [role]               # only what the front end sends
     pagination: { param_limit: limit, param_offset: offset }
-    include: [clientes]           # u.cliente.nombre
+    include: [customers]          # u.customer.name
     shape: envelope
     pick: items                   # res.items + total/limit/offset
 ```
@@ -142,9 +144,9 @@ endpoints:
 Rules:
 - `path` is the gap's route as is (the `path` in `misses --json`); if the gap was `GET /api/users/:id`, the collection endpoint is enough (the detail comes with `detail: true`, the default).
 - `filters` and `pagination`: only the parameters in the gap's `query` or in the front end's call. Anything else is ignored and shows up in `X-Atrezzo-Ignored`.
-- Fields: if there is a contract (OpenAPI/types), it rules; `atrezzo import` writes them for you. Without a contract, the ones the front end reads. Without `fields`, the built-in entities (`usuarios`, `clientes`, `pedidos`, `productos`) bring their template.
+- Fields: if there is a contract (OpenAPI/types), it rules; `atrezzo import` writes them for you. Without a contract, the ones the front end reads. Without `fields`, the built-in entities (`users`, `customers`, `orders`, `products`) bring their template.
 - Then: `atrezzo world <scenario.yaml>` and `POST /__atrezzo/reload` (or restart `serve`). The gap turns `resolved: true` as soon as the mock serves the route.
-- Nested routes (`/api/clientes/:id/pedidos`) cannot be declared (`path` without `:param`): use the collection with a filter (`/api/orders?client_id=`) if the front end allows it.
+- Nested routes (`/api/customers/:id/orders`) cannot be declared (`path` without `:param`): use the collection with a filter (`/api/orders?customer_id=`) if the front end allows it.
 - Writes (POST/PUT/PATCH/DELETE): not declared. `serve --on-miss stub` answers 200 `{}` for exploring.
 
 ### Assertions (`expect`)
@@ -161,22 +163,22 @@ Rules:
 
 With `--driver http` an assertion without `data` stays **not verified** (exit 2), never OK.
 
-## Flow file (`flujo.yaml`)
+## Flow file (`flow.yaml`)
 
 ```yaml
-scenario: escenarios/pedidos.yaml     # relative to the flow (optional: see "Real app" below)
+scenario: scenarios/orders.yaml      # relative to the flow (optional: see "Real app" below)
 base_url: http://127.0.0.1:4010       # optional (otherwise --url or the config)
 viewport: { width: 1440, height: 1000 }  # optional, playwright only (default 1280x720)
 headers:                              # optional: sent on EVERY request of the flow
   Cookie: "${APP_COOKIE}"             # ${VAR} comes from the environment; do not commit secrets
 steps:
-  - screen: lista-pedidos
-    visit: /pedidos                   # route for playwright
-    headers: { Accept-Language: es-ES }  # optional; merged with the flow headers
-    wait_for: "[data-testid=listo]"   # optional; waits for the element to exist (not to be visible)
+  - screen: order-list
+    visit: /orders                    # route for playwright
+    headers: { Accept-Language: en-GB }  # optional; merged with the flow headers
+    wait_for: "[data-testid=ready]"   # optional; waits for the element to exist (not to be visible)
     requests:                         # equivalent requests for the http driver
-      pedidos: GET /api/orders?limit=12
-      incidencias: GET /api/orders?estado=incidencia
+      orders: GET /api/orders?limit=12
+      issues: GET /api/orders?status=issue
     expect: [ … ]                     # the step's own assertions
 ```
 

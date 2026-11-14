@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="title desc">
+  <title id="title">How atrezzo works</title>
+  <desc id="desc">Four stages left to right: a versioned scenario, a seeded world, projections served by a runtime adapter, and the app screen counted by Playwright. Two paths return from the screen to the scenario: verify --diagnose names the cause of a mismatch, and a missing route is logged by atrezzo misses so /atrezzo:hueco can patch the scenario with hot reload.</desc>
+
+  <rect width="1200" height="440" rx="24" fill="#111215"/>
+
+  <g transform="translate(56 48)">
+    <rect width="246" height="204" rx="14" fill="#1a1c20" stroke="#3a3d44" stroke-width="2"/>
+    <text x="22" y="40" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#f0b44c">1</text>
+    <text x="22" y="80" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="#f4efe6">Scenario</text>
+    <text x="22" y="114" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" fill="#b9b2a4">world, endpoints and</text>
+    <text x="22" y="140" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" fill="#b9b2a4">assertions, in git</text>
+    <rect x="22" y="160" width="200" height="30" rx="8" fill="#26231c"/>
+    <text x="32" y="181" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#f0b44c">import · escena</text>
+  </g>
+  <g transform="translate(336 48)">
+    <rect width="246" height="204" rx="14" fill="#1a1c20" stroke="#3a3d44" stroke-width="2"/>
+    <text x="22" y="40" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#f0b44c">2</text>
+    <text x="22" y="80" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="#f4efe6">World</text>
+    <text x="22" y="114" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" fill="#b9b2a4">seeded entity graph,</text>
+    <text x="22" y="140" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" fill="#b9b2a4">same seed, same bytes</text>
+    <rect x="22" y="160" width="80" height="30" rx="8" fill="#26231c"/>
+    <text x="32" y="181" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#f0b44c">world</text>
+  </g>
+  <g transform="translate(616 48)">
+    <rect width="246" height="204" rx="14" fill="#1a1c20" stroke="#3a3d44" stroke-width="2"/>
+    <text x="22" y="40" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#f0b44c">3</text>
+    <text x="22" y="80" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="#f4efe6">Projection</text>
+    <text x="22" y="114" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" fill="#b9b2a4">filters, pages, sort,</text>
+    <text x="22" y="140" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" fill="#b9b2a4">envelopes, stable ids</text>
+    <rect x="22" y="160" width="200" height="30" rx="8" fill="#26231c"/>
+    <text x="32" y="181" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#f0b44c">serve · msw · …</text>
+  </g>
+  <g transform="translate(896 48)">
+    <rect width="246" height="204" rx="14" fill="#1a1c20" stroke="#3a3d44" stroke-width="2"/>
+    <text x="22" y="40" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#f0b44c">4</text>
+    <text x="22" y="80" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="30" font-weight="700" fill="#f4efe6">Screen</text>
+    <text x="22" y="114" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" fill="#b9b2a4">your app, real DOM,</text>
+    <text x="22" y="140" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" fill="#b9b2a4">counted by Playwright</text>
+    <rect x="22" y="160" width="92" height="30" rx="8" fill="#26231c"/>
+    <text x="32" y="181" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" fill="#f0b44c">verify</text>
+  </g>
+  <path d="M309 150 H329 M321 142 L329 150 L321 158" fill="none" stroke="#f0b44c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M589 150 H609 M601 142 L609 150 L601 158" fill="none" stroke="#f0b44c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M869 150 H889 M881 142 L889 150 L881 158" fill="none" stroke="#f0b44c" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g id="loops" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M1000 252 V292 H164 V262" stroke="#7fc79b"/>
+    <path d="M156 270 L164 260 L172 270" stroke="#7fc79b"/>
+    <path d="M1070 252 V370 H124 V262" stroke="#e5534b" stroke-dasharray="8 7"/>
+    <path d="M116 270 L124 260 L132 270" stroke="#e5534b"/>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20">
+    <text x="196" y="328"><tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#7fc79b">verify --diagnose</tspan><tspan fill="#b9b2a4">  names the cause: pagination mismatch, client-side filter, dedupe</tspan></text>
+    <text x="196" y="406"><tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#e5534b">atrezzo misses</tspan><tspan fill="#b9b2a4">  logs a route the scenario lacks; </tspan><tspan font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#e5534b">/atrezzo:hueco</tspan><tspan fill="#b9b2a4"> fills it</tspan></text>
+  </g>
+</svg>

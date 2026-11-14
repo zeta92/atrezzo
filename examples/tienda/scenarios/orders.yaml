@@ -1,0 +1,49 @@
+# Reconciliation with issues: 3 customers, 40 orders, 3 with an issue.
+# The entities declare `fields`, so the API keys are exactly the ones listed
+# here (plus `id` and the foreign key `customer_id`), not the full built-in templates.
+name: orders
+description: Order list with 3 issues waiting to be reconciled.
+seed: 7712
+now: 2025-03-01T09:00:00Z
+world:
+  customers:
+    total: 3
+    fields:
+      name: string
+      email: email
+      city: string
+      created_at: date
+  orders:
+    total: 40
+    ref: customers
+    distribution_field: status
+    distribution: { paid: 34, pending: 3, issue: 3 }
+    fields:
+      reference: string
+      amount: number
+      created_at: date
+    values:
+      currency: [EUR]
+  users:
+    total: 2
+    fields:
+      name: string
+      email: email
+      role: [admin, operator]
+endpoints:
+  - path: /api/orders
+    entity: orders
+    filters: [status, customer_id]
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: -created_at
+  - path: /api/customers
+    entity: customers
+entry: dashboard
+path: [dashboard, order-list]
+expect:
+  - selector: "[data-testid=order-row]"
+    count: 12
+    data: { request: orders }
+  - selector: "[data-testid=issue-badge]"
+    count: 3
+    data: { request: issues, where: { status: issue } }

@@ -1,11 +1,11 @@
 ---
-name: hueco
-description: Fills a gap in the atrezzo mock (the app requests a route the scenario does not declare) from the code that consumes it and the contract. Use it when the mock answers 404 with "atrezzo.miss", `atrezzo misses` or `doctor` show unresolved gaps, "the app requests a route that doesn't exist", "mock 404", "incomplete mock", or an endpoint is missing from the scenario.
+name: gap
+description: Fills a gap in the atrezzo mock (the app requests a route the scenario does not declare) from the code that consumes it and the contract. Use it when the mock answers 404 with `atrezzo.miss: true` and the missing route in `atrezzo.gap`, `atrezzo misses` or `doctor` show unresolved gaps, "the app requests a route that doesn't exist", "mock 404", "incomplete mock", or an endpoint is missing from the scenario.
 ---
 
-# /atrezzo:hueco
+# /atrezzo:gap
 
-CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (`atrezzo` below). Scenario format: `${CLAUDE_PLUGIN_ROOT}/references/escenario.md` (section "Filling a gap").
+CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (`atrezzo` below). Scenario format: `${CLAUDE_PLUGIN_ROOT}/references/scenario.md` (section "Filling a gap").
 
 `atrezzo serve` records in `atrezzo/.atrezzo/misses.json` every request that does not match the contract (deduplicated by `METHOD path`, ids collapsed to `:id`, query secrets as `***`) and answers:
 
@@ -28,36 +28,36 @@ CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (`atrezzo` below). Scenario fo
    Also search for the resource name without a prefix (`users`, `"/users"`) and the project's own HTTP client (`api.get(`, `http.get(`, `client.users.list(`). Note:
    - **method** and **route** (with or without `:id`);
    - **the query it sends**: only those parameters become `filters`/`pagination`;
-   - **which fields it reads** from the response (`u.nombre`, `data.items`, `res.total`, destructuring, table columns, the component's TS types). **Those fields define the schema; do not invent any.**
+   - **which fields it reads** from the response (`u.name`, `data.items`, `res.total`, destructuring, table columns, the component's TS types). **Those fields define the schema; do not invent any.**
    - if it reads `res.data` / `res.items` → there is an **envelope** (`shape: envelope` + `pick`).
 
 3. **Contract first.** If there is an OpenAPI spec or backend types (`workspace.contract`, `src/types/database.ts`, DTOs), they are the source of truth for the shape (names, types, enums). The front-end code only adds what the contract does not say (which filters it really uses, how many rows the screen expects). If contract and front end disagree, say so: it is a real bug, not something the mock should paper over.
 
-4. **Patch the scenario** (`atrezzo/escenarios/<scenario>.yaml`, the one the 404 names). Never write the data JSON: the world generates it.
+4. **Patch the scenario** (`atrezzo/scenarios/<scenario>.yaml`, the one the 404 names). Never write the data JSON: the world generates it.
    ```yaml
    world:
-     clientes: 3                       # already there
-     usuarios:                         # new entity (or reuse an existing one)
+     customers: 3                      # already there
+     users:                            # new entity (or reuse an existing one)
        total: 8
-       ref: clientes                   # only if the front end reads u.cliente.*  → client_id + include
+       ref: customers                  # only if the front end reads u.customer.*  → customer_id + include
        fields:                         # ONLY the fields the front end reads (with fields, the entity
-         nombre: string                #   template is replaced entirely; without fields, usuarios
-         email: email                  #   brings nombre, email, rol, creado_en)
-         rol: [admin, operador]        # list = enum (values the front end tells apart)
+         name: string                  #   template is replaced entirely; without fields, users
+         email: email                  #   brings name, email, role, created_at)
+         role: [admin, operator]       # list = enum (values the front end tells apart)
          avatar_url: url
    endpoints:
      - path: /api/users                # exactly the gap's route
-       entity: usuarios
-       filters: [rol]                  # only the parameters the front end SENDS
+       entity: users
+       filters: [role]                 # only the parameters the front end SENDS
        pagination: { param_limit: limit, param_offset: offset }   # only if it sends them
-       include: [clientes]             # embeds "cliente" (requires the ref)
+       include: [customers]            # embeds "customer" (requires the ref)
        shape: envelope                 # if it reads res.items / res.data…
        pick: items                     #   …with that key → { items, total, limit, offset }
    ```
    `fields` types: string, integer, number, boolean, date, email, uuid, url, or a list (enum).
-   The detail route (`/api/users/:id`) is included by default (`detail: true`). Nested route (`/api/clientes/:id/pedidos`): not projected; use the collection with a filter (`/api/orders?client_id=`) if the front end can, or note it as a limitation.
+   The detail route (`/api/users/:id`) is included by default (`detail: true`). Nested route (`/api/customers/:id/orders`): not projected; use the collection with a filter (`/api/orders?customer_id=`) if the front end can, or note it as a limitation.
 
-5. **Generate and reload.** `atrezzo world atrezzo/escenarios/<scenario>.yaml` (check the summary: the entity and `GET /api/users` under "Endpoints covered") and `curl -s -X POST <mock>/__atrezzo/reload` (rereads the YAML without restarting `serve`; returns the same summary as `reset`, with `generated: "up to date"`). If serve is not running, restart it.
+5. **Generate and reload.** `atrezzo world atrezzo/scenarios/<scenario>.yaml` (check the summary: the entity and `GET /api/users` under "Endpoints covered") and `curl -s -X POST <mock>/__atrezzo/reload` (rereads the YAML without restarting `serve`; returns the same summary as `reset`, with `generated: "up to date"`). If serve is not running, restart it.
 
 6. **Check that the gap is gone.** `atrezzo verify <flow.yaml>` (if the flow covers that screen) or reload the screen. Then `atrezzo misses`: the line must say **resolved** (it is marked automatically when the mock serves the route). If it still says "unresolved", the app requests something else (different prefix, trailing slash, another method): compare `example` in `misses --json` with the scenario `path`.
 

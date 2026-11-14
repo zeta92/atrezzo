@@ -1,9 +1,9 @@
 ---
-name: verifica
+name: verify
 description: Verifies a screen against an atrezzo scenario and diagnoses failures. Use it when the user wants to check that a screen renders what it should, when "the rows don't show up" or "badges are missing", or before accepting a change that affects displayed data.
 ---
 
-# /atrezzo:verifica
+# /atrezzo:verify
 
 CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (`atrezzo` below).
 
@@ -14,7 +14,7 @@ CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (`atrezzo` below).
 5. On KO: `atrezzo verify <flow.yaml> --diagnose` and reason about the hypotheses **before** touching the scenario:
    - `render` / `client-side-filter`: the mock delivers what was expected; the failure is in the screen. Do not touch the scenario.
    - `pagination-mismatch`: the data exists outside the page; check the client's or the endpoint's `limit`/`offset`/`sort`.
-   - `dedupe-by-id`, `null-field`: a client assumption; see `${CLAUDE_PLUGIN_ROOT}/references/suposiciones.md`.
+   - `dedupe-by-id`, `null-field`: a client assumption; see `${CLAUDE_PLUGIN_ROOT}/references/assumptions.md`.
    - `undeclared-filter`: the client filters by a parameter the contract does not have.
    - `world-mismatch`: only then fix `world` or the assertion.
 6. Never regenerate with another seed "to make it pass". Report: the table, the hypothesis you chose, the evidence and the proposed change.

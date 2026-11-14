@@ -1,0 +1,489 @@
+{
+  "atrezzo": 1,
+  "scenario": "orders",
+  "seed": 7712,
+  "now": "2025-03-01T09:00:00.000Z",
+  "hash": "6bfc99481e6989ce",
+  "schema": {
+    "customers": {
+      "singular": "customer",
+      "fk": "customer_id",
+      "fields": [
+        "id",
+        "name",
+        "email",
+        "city",
+        "created_at"
+      ],
+      "refs": {}
+    },
+    "orders": {
+      "singular": "order",
+      "fk": "order_id",
+      "fields": [
+        "id",
+        "customer_id",
+        "reference",
+        "amount",
+        "created_at",
+        "status",
+        "currency"
+      ],
+      "refs": {
+        "customer_id": "customers"
+      }
+    },
+    "users": {
+      "singular": "user",
+      "fk": "user_id",
+      "fields": [
+        "id",
+        "name",
+        "email",
+        "role"
+      ],
+      "refs": {}
+    }
+  },
+  "endpoints": [
+    {
+      "path": "/api/orders",
+      "entity": "orders",
+      "filters": [
+        "status",
+        "customer_id"
+      ],
+      "pagination": {
+        "limit": "limit",
+        "offset": "offset",
+        "defaultLimit": null,
+        "maxLimit": null
+      },
+      "sort": [
+        {
+          "field": "created_at",
+          "dir": "desc"
+        }
+      ],
+      "include": [],
+      "shape": "array",
+      "detail": true
+    },
+    {
+      "path": "/api/customers",
+      "entity": "customers",
+      "filters": [],
+      "pagination": null,
+      "sort": [
+        {
+          "field": "id",
+          "dir": "asc"
+        }
+      ],
+      "include": [],
+      "shape": "array",
+      "detail": true
+    }
+  ],
+  "entities": {
+    "customers": [
+      {
+        "id": 1,
+        "name": "Mia Marsh",
+        "email": "emma.marsh.1@example.com",
+        "city": "Amsterdam",
+        "created_at": "2025-01-23T10:54:00.000Z"
+      },
+      {
+        "id": 2,
+        "name": "Felix Costa",
+        "email": "felix.vance.2@example.com",
+        "city": "Ghent",
+        "created_at": "2025-01-16T10:38:00.000Z"
+      },
+      {
+        "id": 3,
+        "name": "Adam Moreau",
+        "email": "noah.quinn.3@example.com",
+        "city": "Lisbon",
+        "created_at": "2025-02-14T02:24:00.000Z"
+      }
+    ],
+    "orders": [
+      {
+        "id": 1,
+        "customer_id": 1,
+        "reference": "reference 1",
+        "amount": 973.44,
+        "created_at": "2025-01-04T05:11:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 2,
+        "customer_id": 1,
+        "reference": "reference 2",
+        "amount": 264.48,
+        "created_at": "2025-02-07T19:53:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 3,
+        "customer_id": 1,
+        "reference": "reference 3",
+        "amount": 211.39,
+        "created_at": "2025-01-25T18:35:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 4,
+        "customer_id": 2,
+        "reference": "reference 4",
+        "amount": 663.11,
+        "created_at": "2025-01-09T04:03:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 5,
+        "customer_id": 2,
+        "reference": "reference 5",
+        "amount": 314.33,
+        "created_at": "2024-12-05T19:32:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 6,
+        "customer_id": 3,
+        "reference": "reference 6",
+        "amount": 310.51,
+        "created_at": "2025-02-21T14:42:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 7,
+        "customer_id": 2,
+        "reference": "reference 7",
+        "amount": 464.84,
+        "created_at": "2025-02-23T20:02:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 8,
+        "customer_id": 1,
+        "reference": "reference 8",
+        "amount": 850.82,
+        "created_at": "2025-02-16T00:05:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 9,
+        "customer_id": 2,
+        "reference": "reference 9",
+        "amount": 835.17,
+        "created_at": "2025-02-24T00:40:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 10,
+        "customer_id": 3,
+        "reference": "reference 10",
+        "amount": 42.81,
+        "created_at": "2024-12-31T07:47:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 11,
+        "customer_id": 1,
+        "reference": "reference 11",
+        "amount": 472.4,
+        "created_at": "2025-02-27T16:36:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 12,
+        "customer_id": 1,
+        "reference": "reference 12",
+        "amount": 821.45,
+        "created_at": "2025-01-13T04:27:00.000Z",
+        "status": "pending",
+        "currency": "EUR"
+      },
+      {
+        "id": 13,
+        "customer_id": 1,
+        "reference": "reference 13",
+        "amount": 238.35,
+        "created_at": "2025-01-17T11:39:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 14,
+        "customer_id": 3,
+        "reference": "reference 14",
+        "amount": 549.59,
+        "created_at": "2025-01-06T21:04:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 15,
+        "customer_id": 1,
+        "reference": "reference 15",
+        "amount": 427.92,
+        "created_at": "2025-01-20T08:07:00.000Z",
+        "status": "pending",
+        "currency": "EUR"
+      },
+      {
+        "id": 16,
+        "customer_id": 1,
+        "reference": "reference 16",
+        "amount": 621.12,
+        "created_at": "2025-02-11T19:24:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 17,
+        "customer_id": 3,
+        "reference": "reference 17",
+        "amount": 658.48,
+        "created_at": "2025-01-10T15:15:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 18,
+        "customer_id": 2,
+        "reference": "reference 18",
+        "amount": 926.85,
+        "created_at": "2024-12-29T19:15:00.000Z",
+        "status": "pending",
+        "currency": "EUR"
+      },
+      {
+        "id": 19,
+        "customer_id": 1,
+        "reference": "reference 19",
+        "amount": 428.17,
+        "created_at": "2025-02-23T01:25:00.000Z",
+        "status": "issue",
+        "currency": "EUR"
+      },
+      {
+        "id": 20,
+        "customer_id": 2,
+        "reference": "reference 20",
+        "amount": 149.6,
+        "created_at": "2025-01-16T12:59:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 21,
+        "customer_id": 3,
+        "reference": "reference 21",
+        "amount": 13.18,
+        "created_at": "2025-02-22T02:24:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 22,
+        "customer_id": 2,
+        "reference": "reference 22",
+        "amount": 711.51,
+        "created_at": "2025-02-27T06:21:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 23,
+        "customer_id": 2,
+        "reference": "reference 23",
+        "amount": 873.77,
+        "created_at": "2025-02-14T14:40:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 24,
+        "customer_id": 3,
+        "reference": "reference 24",
+        "amount": 124,
+        "created_at": "2025-02-15T09:19:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 25,
+        "customer_id": 2,
+        "reference": "reference 25",
+        "amount": 984.23,
+        "created_at": "2024-12-29T23:45:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 26,
+        "customer_id": 3,
+        "reference": "reference 26",
+        "amount": 673.73,
+        "created_at": "2025-01-06T12:33:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 27,
+        "customer_id": 1,
+        "reference": "reference 27",
+        "amount": 3.23,
+        "created_at": "2025-02-16T23:11:00.000Z",
+        "status": "issue",
+        "currency": "EUR"
+      },
+      {
+        "id": 28,
+        "customer_id": 1,
+        "reference": "reference 28",
+        "amount": 62.61,
+        "created_at": "2025-02-22T10:48:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 29,
+        "customer_id": 3,
+        "reference": "reference 29",
+        "amount": 905.87,
+        "created_at": "2024-12-16T18:31:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 30,
+        "customer_id": 3,
+        "reference": "reference 30",
+        "amount": 381.55,
+        "created_at": "2025-02-05T12:43:00.000Z",
+        "status": "issue",
+        "currency": "EUR"
+      },
+      {
+        "id": 31,
+        "customer_id": 2,
+        "reference": "reference 31",
+        "amount": 332.26,
+        "created_at": "2024-12-18T17:10:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 32,
+        "customer_id": 3,
+        "reference": "reference 32",
+        "amount": 6.87,
+        "created_at": "2024-12-28T02:33:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 33,
+        "customer_id": 2,
+        "reference": "reference 33",
+        "amount": 809.38,
+        "created_at": "2024-12-10T23:42:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 34,
+        "customer_id": 2,
+        "reference": "reference 34",
+        "amount": 317.16,
+        "created_at": "2025-01-03T09:13:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 35,
+        "customer_id": 3,
+        "reference": "reference 35",
+        "amount": 210.39,
+        "created_at": "2025-02-20T23:34:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 36,
+        "customer_id": 3,
+        "reference": "reference 36",
+        "amount": 742.72,
+        "created_at": "2025-02-04T17:56:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 37,
+        "customer_id": 1,
+        "reference": "reference 37",
+        "amount": 787.55,
+        "created_at": "2025-01-23T09:51:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 38,
+        "customer_id": 1,
+        "reference": "reference 38",
+        "amount": 6.13,
+        "created_at": "2024-12-11T01:54:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 39,
+        "customer_id": 1,
+        "reference": "reference 39",
+        "amount": 241.32,
+        "created_at": "2025-01-15T07:39:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      },
+      {
+        "id": 40,
+        "customer_id": 1,
+        "reference": "reference 40",
+        "amount": 798.25,
+        "created_at": "2025-01-06T06:21:00.000Z",
+        "status": "paid",
+        "currency": "EUR"
+      }
+    ],
+    "users": [
+      {
+        "id": 1,
+        "name": "Nora Keller",
+        "email": "ava.quinn.1@example.com",
+        "role": "operator"
+      },
+      {
+        "id": 2,
+        "name": "Olivia Hayes",
+        "email": "ethan.novak.2@example.com",
+        "role": "operator"
+      }
+    ]
+  }
+}

@@ -38,4 +38,4 @@ description: Sets up atrezzo in a repo (scenario-based mocks). Use it when the u
 - The mock `baseUrl` comes from the front end (Vite proxy or `*_API_URL`); check it in the output (`mock baseUrl: …`).
 
 3. If MSW or another mock already exists, explain how they coexist: atrezzo's handlers are added as one more (`index.mjs` in `handlersDir`); do not replace the existing ones.
-4. Finish with a summary: layout (workspace), runtime chosen and why, alternatives, baseUrl, files written and the next step (`atrezzo import <spec>` if there is a contract → `/atrezzo:captura`; otherwise `/atrezzo:escena`).
+4. Finish with a summary: layout (workspace), runtime chosen and why, alternatives, baseUrl, files written and the next step (`atrezzo import <spec>` if there is a contract → `/atrezzo:capture`; otherwise `/atrezzo:scene`).

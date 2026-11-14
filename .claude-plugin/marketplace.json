@@ -1,0 +1,17 @@
+{
+  "name": "atrezzo",
+  "owner": {
+    "name": "Luis Tiburcio",
+    "url": "https://github.com/zeta92"
+  },
+  "metadata": {
+    "description": "atrezzo: a Claude Code plugin for API mocks built from application states, with a verification loop against the screen."
+  },
+  "plugins": [
+    {
+      "name": "atrezzo",
+      "source": "./",
+      "description": "API mocks built from application states: one seeded world, every endpoint a deterministic projection of it, and a verification loop that counts the DOM and diagnoses mismatches."
+    }
+  ]
+}

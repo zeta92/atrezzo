@@ -1,23 +1,256 @@
-# atrezzo
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="atrezzo: API mocks built from application states, not from isolated endpoints. A seeded world of 40 orders, 3 with an issue, projected onto a screen as 12 rows and 3 issue badges.">
+</p>
 
-A Claude Code plugin that generates and serves **API mocks from application states**, not from isolated endpoints.
+**atrezzo** is a Claude Code plugin for API mocks. You describe one application state: a seeded world of entities, such as 3 customers and 40 orders, 3 of them with an issue. Every endpoint is a deterministic projection of that world. A versioned YAML scenario ties the world to the screen and to what the screen must show. `verify` opens the screen, counts the DOM and, when the count is wrong, tells you why.
 
-- You declare a **world**: an entity graph with a fixed seed (3 customers, 40 orders, 3 with an issue).
-- Each endpoint is a deterministic **projection** of that world: filters, pagination, sorting, joins.
-- A versioned **scenario** (YAML) bundles world + screen path + assertions (`12 rows`, `3 issue badges`).
-- The output is **code**: `atrezzo world` writes readable modules (JSON + MSW handlers + engine) that you commit and review in the PR.
-- There is a **verification loop**: serve → open the screen → count the DOM → compare → if it does not match, **diagnose** (do not regenerate blindly).
+```text
+/plugin install atrezzo --marketplace zeta92/atrezzo
+```
 
-## Hard rules
+Or load it from a local checkout:
 
-1. **Determinism.** Same seed ⇒ same data, byte for byte. Generation never calls `Math.random()` or `Date.now()` (a test checks this); "now" is injected with `now:` in the scenario. Custom PRNG (xmur3 + sfc32) with one stream per entity: adding an entity does not change the others.
-2. **Referential integrity.** Every fk in a projection exists in the world. Never `user_id: 42` without a 42. `world` checks this before writing.
-3. **The LLM picks distributions and narrative; the code produces the data.** The skills forbid hand-writing data JSON: you change the scenario and regenerate.
-4. **The mock shapes data; it does not implement business rules.** GET only; writes ⇒ 405. No recomputing totals, no simulating RLS.
+```bash
+git clone https://github.com/zeta92/atrezzo
+claude --plugin-dir ./atrezzo
+```
 
-## Breaking changes
+<h2><img src="./assets/readme/section-01-see-it-work.svg" width="100%" alt="01 See it work"></h2>
 
-### Unreleased (after 0.3.0): English DSL, CLI and output
+All output below is literal, cut only where a block says so. It comes from [`examples/tienda`](examples/tienda/README.md) unless a block says otherwise. In this README, `atrezzo` is short for `node <plugin>/scripts/cli.mjs`. Inside Claude Code, the skills run it for you.
+
+### The screen matches the scenario
+
+```text
+$ atrezzo verify flow.yaml --driver http
+Scenario: orders (seed 7712) · driver: http · http://127.0.0.1:4010
+
+#  screen      selector                                                        expected  obtained  result
+-  ----------  --------------------------------------------------------------  --------  --------  ------
+1  dashboard   [data-testid=customer-chip]                                     =3        3         OK
+2  order-list  [data-testid=order-row] [data-testid=amount] (visible amounts)  1..12     12        OK
+3  order-list  [data-testid=order-row]                                         =12       12        OK
+4  order-list  [data-testid=issue-badge]                                       =3        3         OK
+
+4 OK · 0 KO · 0 not verified → GREEN
+```
+
+### When it does not match, it says why
+
+`flow-broken.yaml` is wrong on purpose. It counts the issues inside the first page of 12 instead of asking the API for them. Output abridged to the result table:
+
+```text
+$ atrezzo verify flow-broken.yaml --diagnose
+1  order-list  [data-testid=order-row] [data-status=issue]  =3        2         KO
+2  order-list  [data-testid=order-row]                      =12       12        OK
+3  order-list  [data-testid=issue-badge]                    =3        3         OK
+  #1 hypothesis [high] pagination-mismatch: the response has 12 of 40 items; unpaginated, 3 match the condition, but this page has only 2. Check the client's limit/offset or the endpoint's sort.
+
+2 OK · 1 KO · 0 not verified → RED
+```
+
+`verify` compares the DOM with the JSON the request returned. It does not regenerate data until the numbers happen to match.
+
+### No session means red, never green
+
+One flow, run twice with the Playwright driver (real Chromium) against a small cookie-protected app. That app is a scratch server, not part of this repo. The flow sends `Cookie: "${APP_COOKIE}"`. Abridged: the table headers are cut.
+
+```text
+$ APP_COOKIE="session=valid" atrezzo verify flow.yaml --driver playwright
+Headers: Cookie: ***
+1  customers  table tbody tr (customer rows)  =6        6         OK
+1 OK · 0 KO · 0 not verified → GREEN
+
+$ APP_COOKIE="session=expired" atrezzo verify flow.yaml --driver playwright
+Headers: Cookie: ***
+1  customers  table tbody tr (customer rows)  =6        0         KO
+  #1: the app redirected /customers → /login?next=%2Fcustomers (login screen: no session or session expired; check the flow headers/Cookie)
+0 OK · 1 KO · 0 not verified → RED
+```
+
+If the final URL is not the one the step asked for, the step fails even when the count would match. Secrets in `Cookie` and `Authorization` print as `***`.
+
+### A scenario from an OpenAPI spec
+
+Run on `tests/fixtures/petstore.yaml`, copied to `api/openapi.yaml` (abridged):
+
+```text
+$ atrezzo import api/openapi.yaml --name shop
+Inferred endpoints (2):
+  GET /api/pets → pets · array
+      filters: status · pagination: param_limit=limit param_offset=offset default_limit=20 max_limit=100 · detail: /api/pets/:id (from /pets/{petId})
+  GET /api/owners → owners · envelope {data: [...]} → pick: data
+Ignored (3):
+  POST /pets: mutation not supported: atrezzo only projects reads (GET)
+  GET /health: 200 without schema (no content)
+  GET /pets/{petId}/photo: binary/non-JSON response (image/png)
+Written: atrezzo/scenarios/shop.yaml (valid scenario)
+```
+
+### A missing route becomes a task
+
+The app asks for a route the scenario does not declare. The mock answers with a 404 that says what to do, and records the request:
+
+```text
+$ curl -s "localhost:4010/api/users?limit=5"
+{"error":"GET /api/users is not in the contract of scenario \"orders\"","atrezzo":{"miss":true,"gap":"GET /api/users","times":1,"next":"atrezzo misses","endpoints":["/api/orders","/api/customers"]}}
+
+$ atrezzo misses
+atrezzo misses · atrezzo/.atrezzo/misses.json · no workspace.contract
+GET /api/users   1 time     unresolved  0 s ago       → add the endpoint to the scenario (skill /atrezzo:gap)
+1 gap · 1 unresolved
+Details per gap (query, referer, accept): atrezzo misses --json · clear: atrezzo misses --clear
+```
+
+`/atrezzo:gap` finds the front-end code that makes the call and the fields it reads, then adds the endpoint to the scenario. Here the patch is two lines (`- path: /api/users`, `entity: users`). After a hot reload, with no restart, the next request is served and the gap closes:
+
+```text
+$ curl -s -o /dev/null -X POST localhost:4010/__atrezzo/reload    # rereads the scenario YAML
+$ atrezzo misses
+atrezzo misses · atrezzo/.atrezzo/misses.json · no workspace.contract
+GET /api/users   1 time     resolved    5 s ago
+1 gap · 0 unresolved
+```
+
+Run `atrezzo world` afterwards so the committed `.generated/` files match the new scenario. `doctor` flags them as stale until you do.
+
+<h2><img src="./assets/readme/section-02-how-it-works.svg" width="100%" alt="02 How it works"></h2>
+
+<p align="center">
+  <img src="./assets/readme/how-it-works.svg" width="100%" alt="Four stages: scenario, world, projection, screen. verify --diagnose and atrezzo misses lead back from the screen to the scenario.">
+</p>
+
+A mock built endpoint by endpoint is a set of canned responses. They drift apart, ids point nowhere, and a list of 40 orders has no reason to agree with a badge that says 3 issues. atrezzo starts from the state instead:
+
+- **A world, not responses.** The scenario declares entities and their distribution. A seeded PRNG builds the world with one stream per entity. The same seed gives the same bytes. Generation never calls `Math.random()` or `Date.now()`, and a test checks this. Every foreign key points to a row that exists.
+- **Endpoints are projections.** An endpoint declares filters, pagination, sort order, joins and envelopes over the world. `serve` and the MSW handlers use the same engine. `world` copies it next to the data as `runtime.mjs`, and you commit and review it like any other code.
+- **The scenario carries its assertions.** `expect` says what the screen must show (`=12` rows, `3` badges) and which request feeds each count. That link lets `verify` tell a data problem from a rendering problem.
+- **Diagnosis, not regeneration.** A failed count produces typed hypotheses: `pagination-mismatch`, `client-side-filter`, `dedupe-by-id`, `undeclared-filter`, `null-field`, `navigation` and others. The skills forbid hand-writing data JSON: you change the scenario and regenerate.
+
+### Five commands
+
+| command | what it does |
+|---|---|
+| `atrezzo init` | detects the project, monorepo layout and API base URL; picks an adapter and prints why, with the alternatives |
+| `atrezzo import` | infers a scenario from an OpenAPI spec and reports what it could not infer |
+| `atrezzo world` | builds the world and writes the files each adapter needs |
+| `atrezzo serve` | serves the projections over HTTP, switches scenarios without a restart, records gaps |
+| `atrezzo verify` | runs a flow against the screen, compares counts, diagnoses failures |
+
+Helpers: `atrezzo misses` (recorded gaps), `atrezzo runtimes` (adapter scores for this project), `atrezzo doctor` (what is installed, valid or stale).
+
+### Seven skills
+
+| skill | use it when |
+|---|---|
+| `/atrezzo:atrezzo` | you are not sure which skill applies; it routes and explains the loop |
+| `/atrezzo:init` | setting atrezzo up in a repo; installs nothing without saying so |
+| `/atrezzo:capture` | you need the contract first: OpenAPI or types, then HAR, then code |
+| `/atrezzo:scene` | you have an intent ("12 rows, 3 with an issue") and need a scenario |
+| `/atrezzo:verify` | a screen does not show what it should |
+| `/atrezzo:from-intent` | you describe a journey ("I'm on X, I want Y") and need one scenario per step |
+| `/atrezzo:gap` | the app calls a route the scenario lacks |
+
+Only the skill descriptions load at session start: about 2 KB of frontmatter for all seven.
+
+<h2><img src="./assets/readme/section-03-install.svg" width="100%" alt="03 Install"></h2>
+
+```text
+/plugin install atrezzo --marketplace zeta92/atrezzo
+```
+
+Or load it from a local checkout:
+
+```bash
+git clone https://github.com/zeta92/atrezzo
+claude --plugin-dir ./atrezzo
+```
+
+Requirements: Node 22 or newer. No runtime dependencies: atrezzo has its own YAML parser and HTTP server. Optional in your project: `msw` for in-browser or test handlers, and `playwright` or `playwright-core` for the DOM driver. With `playwright-core`, atrezzo uses the system Chromium (`/usr/bin/chromium`, or set `ATREZZO_CHROME=/path`).
+
+### First run
+
+Get a scenario first: ask `/atrezzo:scene` for one, or run `atrezzo import api/openapi.yaml`. Then:
+
+```bash
+atrezzo init                                             # detects the project, picks an adapter, says why
+atrezzo world atrezzo/scenarios/orders.yaml              # world + files for the chosen adapter
+atrezzo serve --scenario orders &                        # builtin adapter on http://127.0.0.1:4010
+atrezzo verify atrezzo/flujos/orders.yaml --diagnose     # count the screen, compare, diagnose
+```
+
+### Or run the example
+
+```bash
+cd examples/tienda
+node ../../scripts/cli.mjs world scenarios/orders.yaml
+node ../../scripts/cli.mjs serve --scenario orders &
+node ../../scripts/cli.mjs verify flow.yaml --driver http          # green, exit 0
+node ../../scripts/cli.mjs verify flow-broken.yaml --diagnose        # red on purpose, exit 1
+```
+
+Exit codes: `0` OK · `1` assertion failed · `2` not verifiable (no mock, no Playwright, or an assertion without data; never reported as OK) · `3` invalid input.
+
+<h2><img src="./assets/readme/section-04-adapters.svg" width="100%" alt="04 Adapters"></h2>
+
+The scenario does not depend on where it is served. `world` always writes the world (`<scenario>.json`) and the engine (`runtime.mjs`), then whatever each configured adapter needs. `init` chooses from what it finds in the repo and prints its reasons. You can override it with `--runtime`, and you can combine adapters, as in `--runtime msw,supabase`.
+
+| adapter | picked when the repo has | does | does not |
+|---|---|---|---|
+| `builtin` | nothing more specific; any backend or language | real HTTP via `atrezzo serve`: filters, pagination, envelopes, detail routes, scenario reset, hot reload, gap log | writes (405), injected latency or errors |
+| `msw` | `msw` in dependencies | handlers that run the same engine as `serve`, in the browser or in Node tests | install msw or register the worker for you; record gaps |
+| `supabase` | `supabase/config.toml`, `@supabase/supabase-js`, `*SUPABASE_URL` | `schema.sql`, `seed.sql` with the world's ids, and an idempotent `reset.sh` that refuses a non-local database | simulate RLS or auth; filtering and pagination are PostgREST's, not atrezzo's |
+| `prism` | `@stoplight/prism-cli` (a spec alone is not enough) | an OpenAPI 3.1 file whose examples come from the world | filter or paginate: any query gets the default example |
+| `wiremock` | a WireMock dependency, `mappings/` + `__files/`, or docker-compose | mappings for every enumerable combination: each filter value, pages, and the exact requests in your flows | combined filters or unlisted pages: those get a **501** with the list of combinations it did generate, never a wrong page |
+
+Full detail, including how `auto` scores each adapter and what each one does with a missing route, is in [`references/runtimes.md`](references/runtimes.md).
+
+### Monorepos and separate front end and backend
+
+`init` reads `pnpm-workspace.yaml`, `workspaces` in `package.json`, `lerna.json`, `turbo.json` or `nx.json`. It also recognizes sibling folders such as `client/` + `server/`, `web/` + `api/` or `frontend/` + `backend/`. It classifies each package as front end or backend and writes:
+
+```json
+"workspace": { "front": "apps/web", "backend": "services/api", "contract": "services/api/openapi.yaml" }
+```
+
+MSW handlers then go to the front end, and the Supabase seed goes to the backend. With two candidate front ends, or none, `init` does not guess: it prints the candidates and exits with 2, and you pass `--front <path> --backend <path>`.
+
+<h2><img src="./assets/readme/section-05-limits.svg" width="100%" alt="05 Limits"></h2>
+
+- **Reads only.** The mock shapes data. It does not implement business rules: no writes (they return 405), no recomputed totals, no RLS. HTTP errors and latency are not part of the world; inject them in the runtime.
+- **Only `builtin` and `msw` run the projection.** Prism returns examples without filtering or paginating. WireMock serves pre-generated combinations and answers 501 to the rest. Supabase responses take PostgREST's shape.
+- **Gaps are recorded by `atrezzo serve` only**, not by MSW, Prism, WireMock or Supabase. The same route under two prefixes (`/api/users`, `/users`) counts as two gaps. Nested routes such as `/api/customers/:id/orders` are recorded but not projected.
+- **`import` covers GET collections only:** an array of objects, or a `data`/`items`/`results`/`records`/`content` envelope. Nested fields are skipped and reported. Ids are always integers 1..n. No external `$ref`.
+- **YAML is a subset:** no anchors, aliases or multiple documents. The parser rejects them with the line and the reason.
+
+<details>
+<summary><b>CLI reference</b></summary>
+
+```
+node scripts/cli.mjs init [--dir .] [--runtime auto|builtin|msw|supabase|prism|wiremock] [--front <path> --backend <path>] [--contract <spec>] [--install] [--force]
+node scripts/cli.mjs runtimes
+node scripts/cli.mjs import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
+node scripts/cli.mjs world <scenario.yaml> [--out dir]
+node scripts/cli.mjs serve [--scenario demo] [--port 4010] [--static dir] [--runtime builtin] [--on-miss log|stub]
+node scripts/cli.mjs misses [--json] [--clear]
+node scripts/cli.mjs verify <flow.yaml> [--url …] [--driver http|playwright] [--diagnose] [--no-reset] [--json]
+node scripts/cli.mjs doctor
+```
+
+- `init` detects a monorepo (pnpm/npm/yarn workspaces, turbo, nx, lerna) or `client/`+`server/` folders, the runtime, and the `baseUrl` the front end calls, and **prints what it found, why, and which alternatives there were**. With two front ends or none, it does not guess: candidate table and exit 2.
+- `world` always writes `<scenario>.json` + `runtime.mjs` (source of truth), then the runtime output: MSW handlers, `seed.sql`/`reset.sh`, OpenAPI for Prism or WireMock mappings. See [`references/runtimes.md`](references/runtimes.md).
+- `import` infers a scenario from an OpenAPI spec (entities, typed fields, `{data: […]}` envelopes → `pick`, enum filters, pagination) with a report of what it could not infer.
+
+Exit codes: `0` OK · `1` assertion failed · `2` not verifiable (no mock, no playwright, or an assertion without data; **never** reported as OK) · `3` invalid input.
+
+`serve` exposes `GET /api/<resource>?limit=&offset=&<filters>`, the `/<resource>/:id` detail, `POST /__atrezzo/reset {"scenario":"x"}`, `POST /__atrezzo/reload` (rereads the current scenario's YAML), `GET /__atrezzo/state` and `GET|DELETE /__atrezzo/misses`. It uses the same engine (`scripts/lib/contract.mjs`) as the MSW handlers: `world` copies it byte for byte as `runtime.mjs`.
+
+</details>
+
+<details>
+<summary><b>Upgrading from 0.3: breaking changes</b></summary>
+
+### 0.4.0: English DSL, CLI and output
 
 The whole user surface is now in English. There is no backward compatibility (pre-1.0): Spanish keys are rejected as `unknown field`. Rename them in your scenarios and flows:
 
@@ -45,171 +278,37 @@ The whole user surface is now in English. There is no backward compatibility (pr
 | Prism operationIds | `listar_*`, `detalle_*` | `list_*`, `detail_*` |
 | WireMock 501 body | `generadas` | `generated` |
 | config `stack` default | `otro` | `other` |
+| config `scenariosDir` default (new configs only) | `atrezzo/escenarios` | `atrezzo/scenarios` |
+| built-in entity templates | `clientes`, `usuarios`, `pedidos`, `productos` | `customers`, `users`, `orders`, `products` (no aliases; the old names are rejected with an error that names the new one) |
+| template fields | `nombre`, `ciudad`, `rol`, `referencia`, `estado`, `importe`, `precio`, `moneda`, `creado_en` | `name`, `city`, `role`, `reference`, `status`, `amount`, `price`, `currency`, `created_at` |
+| template values | `pagado`, `operador`, `PED-00001` | `paid`, `operator`, `ORD-00001` |
+| foreign keys | `client_id` (for `clientes`); generic entities drop a trailing `-es` (`categories` → `categori_id`) | `customer_id` (for `customers`); English singular (`categories` → `category_id`, `boxes` → `box_id`) |
+| `include` embed key | `cliente`, `pedido`… | `customer`, `order`… (the template's singular) |
+| `distribution_field` default (generic entities) | `estado` | `status` |
+| `fields` value heuristics | also matched `nombre`, `empresa`, `ciudad`, `titulo`, `precio`, `importe` | English names only (`name`, `company`, `city`, `title`, `price`, `amount`, `total`…) |
+| references | `references/escenario.md`, `references/suposiciones.md` | `references/scenario.md`, `references/assumptions.md` |
 
-Unchanged: directory and file names (`atrezzo/escenarios/`, `atrezzo/flujos/`, skill commands such as `/atrezzo:escena`), the built-in entity templates (`clientes`, `pedidos`… and their fields `nombre`, `estado`, `importe`, `creado_en`), and generated data. A scenario rewritten with the new keys keeps its hash, so committed `.generated/` files stay up to date. The exception is scenarios with `fields`: the type names are part of the normalized scenario, so their hash changes; run `atrezzo world` once (`doctor` flags them as stale).
+Unchanged: the `atrezzo/flujos/` directory and flow file names, skill commands such as `/atrezzo:scene`, an existing `atrezzo.config.json` (its `scenariosDir` is written explicitly, so the old directory keeps working until you move it), and the generated sample values (names, companies, cities were already English). Scenario hashes change: the template and field names are part of the normalized scenario, and so is the `amount` currency key. Run `atrezzo world` once per scenario (`doctor` flags the stale ones). For a scenario that already declared `fields` for every entity, like `examples/tienda`, the regenerated data is the same row for row, apart from the renamed foreign key.
 
-## Installation
+</details>
 
-```bash
-claude --plugin-dir /path/to/atrezzo          # for one session
-# or publish it to a marketplace and: claude plugin install atrezzo@<marketplace>
-```
-
-Requirements: Node ≥ 22. No runtime dependencies (own YAML parser and server). Optional in the project: `msw` (browser/test handlers) and `playwright` or `playwright-core` (DOM driver). With `playwright-core` the system Chromium is used (`/usr/bin/chromium`; another binary with `ATREZZO_CHROME=/path`); the package is loaded lazily and, if missing, `verify --driver playwright` exits with 2.
-
-## Skills
-
-| command | what for |
-|---|---|
-| `/atrezzo:atrezzo` | router: picks the right skill and explains the loop |
-| `/atrezzo:init` | inspects the repo and runs `init` (installs nothing without saying so) |
-| `/atrezzo:captura` | contract: OpenAPI/types → HAR (with scripts) → code; flags gaps |
-| `/atrezzo:escena` | intent ("12 rows, 3 with an issue") → versioned scenario |
-| `/atrezzo:verifica` | serves, verifies and diagnoses before touching the scenario |
-| `/atrezzo:desde-intencion` | "I'm on X, I want Y" → state path, scenarios per step, gaps |
-| `/atrezzo:hueco` | the app requests a route the scenario lacks → finds the consumer and the contract, patches the scenario, reloads and checks |
-
-> In Claude Code 2.1.319 a plugin skill's command is `/<plugin>:<directory>`; the frontmatter `name:` does not change it. That is why the commands carry the directory name.
-
-## CLI
+<details>
+<summary><b>Repository layout</b></summary>
 
 ```
-node scripts/cli.mjs init [--dir .] [--runtime auto|builtin|msw|supabase|prism|wiremock] [--front <path> --backend <path>] [--contract <spec>] [--install] [--force]
-node scripts/cli.mjs runtimes
-node scripts/cli.mjs import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
-node scripts/cli.mjs world <scenario.yaml> [--out dir]
-node scripts/cli.mjs serve [--scenario demo] [--port 4010] [--static dir] [--runtime builtin] [--on-miss log|stub]
-node scripts/cli.mjs misses [--json] [--clear]
-node scripts/cli.mjs verify <flow.yaml> [--url …] [--driver http|playwright] [--diagnose] [--no-reset] [--json]
-node scripts/cli.mjs doctor
-```
-
-- `init` detects a monorepo (pnpm/npm/yarn workspaces, turbo, nx, lerna) or `client/`+`server/` folders, the runtime, and the `baseUrl` the front end calls, and **prints what it found, why, and which alternatives there were**. With two front ends or none, it does not guess: candidate table and exit 2.
-- `world` always writes `<scenario>.json` + `runtime.mjs` (source of truth), then the runtime output: MSW handlers, `seed.sql`/`reset.sh`, OpenAPI for Prism or WireMock mappings. See [`references/runtimes.md`](references/runtimes.md).
-- `import` infers a scenario from an OpenAPI spec (entities, typed fields, `{data: […]}` envelopes → `pick`, enum filters, pagination) with a report of what it could not infer.
-
-Exit codes: `0` OK · `1` assertion failed · `2` not verifiable (no mock, no playwright, or an assertion without data; **never** reported as OK) · `3` invalid input.
-
-`serve` exposes `GET /api/<resource>?limit=&offset=&<filters>`, the `/<resource>/:id` detail, `POST /__atrezzo/reset {"scenario":"x"}`, `POST /__atrezzo/reload` (rereads the current scenario's YAML), `GET /__atrezzo/state` and `GET|DELETE /__atrezzo/misses`. It uses the same engine (`scripts/lib/contract.mjs`) as the MSW handlers: `world` copies it byte for byte as `runtime.mjs`.
-
-## When a route is missing
-
-If the app requests something the scenario does not declare, `serve` does more than return 404: it **records the gap** and says what to do.
-
-```
-$ curl -s localhost:4010/api/users
-{"error":"GET /api/users is not in the contract of scenario \"catalogo\"",
- "atrezzo":{"miss":true,"gap":"GET /api/users","times":3,"next":"atrezzo misses","endpoints":["/api/products"]}}
-
-$ atrezzo misses
-GET /api/users      3 times    unresolved  12 s ago    → the contract has it (GET /users) → atrezzo import api/openapi.yaml
-GET /api/invoices   1 time     unresolved  40 s ago    → not in the contract → add the endpoint to the scenario (skill /atrezzo:hueco)
-POST /api/orders    2 times    unresolved  1 min ago   → mutation: atrezzo only projects reads → serve --on-miss stub (or leave it unresolved)
-```
-
-- Stored in `atrezzo/.atrezzo/misses.json` (next to `.generated/`; the folder has its own `.gitignore`): an object keyed by `METHOD path` with `method`, `path`, `example`, `query`, `times`, `first_seen`, `last_seen`, `referer`, `accept`, `resolved`. The same route only increments `times`; id-like segments (`/users/42`, UUID, long hex) collapse to `:id`, and there is a cap of 200 entries (the oldest resolved ones go first).
-- `query` and `referer` are stored without secrets: parameters such as `token`, `api_key`, `password`, `session`, `auth`, `signature`… and values shaped like a JWT or a long key come out as `***`; the referer, without its query. The `serve` log masks them too.
-- Not gaps: static files (`/favicon.ico`, `.js`, `.css`, images, fonts) and `/__atrezzo/*` routes. Writes to a contract route are gaps (`POST /api/orders` → 405 with the same body).
-- Once you add the endpoint, run `atrezzo world` and `POST /__atrezzo/reload`; the next request served marks the gap `resolved: true`. `doctor` warns about the unresolved ones.
-- `atrezzo serve --on-miss stub` answers 200 with `[]` (collection-looking route) or `{}` (detail, singular or write) and `x-atrezzo-stub: true`, so you can explore without the screen crashing. It is still recorded and does **not** count as resolved. It is never the default.
-
-To fill it, the `/atrezzo:hueco` skill finds who makes the call in the front end and which fields it reads, uses the contract as the source of truth for the shape, and adds entity + endpoint to the scenario (the world still generates the data). Only `serve` records gaps; what happens in the other runtimes is in [`references/runtimes.md`](references/runtimes.md#gaps-in-each-runtime).
-
-## Projects with and without Supabase
-
-The scenario is the same in both cases; what changes is **where it is served**.
-
-### Without Supabase: Vite front end + own API with OpenAPI
-
-```
-tienda/
-  package.json          react, vite, msw (dev)
-  vite.config.ts        server.proxy['/api'] → { target: 'http://localhost:3000' }
-  api/openapi.yaml      (the one in tests/fixtures/petstore.yaml: GET/POST /pets, /pets/{petId}, /owners → {data: [...]}, /health, PNG photo)
-```
-
-```bash
-cd tienda
-atrezzo init
-#   Layout:
-#     single project (no monorepo or front/back folders): everything lives at the root
-#     contract found: api/openapi.yaml (use it with: atrezzo import)
-#     mock baseUrl: http://localhost:3000 (Vite proxy "/api" → http://localhost:3000 in vite.config.ts)
-#   Runtime: msw — score 3/3: msw in package.json
-#     → msw       3/3  msw in package.json
-#       builtin   1/3  universal fallback: real HTTP with no dependencies, works with any backend or language
-#       prism     1/3  contract api/openapi.yaml (weak signal: prefer `atrezzo import api/openapi.yaml`; prism is not needed to use it)
-atrezzo import api/openapi.yaml --name tienda
-#   Inferred endpoints (2):
-#     GET /api/pets → pets · array            filters: status · pagination: limit/offset · detail: /api/pets/:id
-#     GET /api/owners → owners · envelope {data: [...]} → pick: data · pagination: page/per_page
-#   Ignored (3): POST /pets (mutation) · GET /health (200 without schema) · GET /pets/{petId}/photo (binary response)
-#   Written: atrezzo/escenarios/tienda.yaml (valid scenario)
-# adjust counts/distribution/expect (skill /atrezzo:escena) and generate:
-atrezzo world atrezzo/escenarios/tienda.yaml
-#   atrezzo/.generated/tienda.json · runtime.mjs · tienda.handlers.mjs
-```
-
-In `src/main.tsx` (development only): `setupWorker(...handlers).start({ onUnhandledRequest: 'bypass' })` with `handlers` from `atrezzo/.generated/tienda.handlers.mjs`. For E2E or an API in another language: `atrezzo serve --scenario tienda --port 3000` (the Vite proxy points there) and `atrezzo verify flujo.yaml`. If the team already runs WireMock or Prism, `atrezzo init --force --runtime wiremock` (or `prism`) and `world` emits their files; what they do not do is in `references/runtimes.md`.
-
-### With Supabase: Next + supabase-js + Supabase CLI
-
-```
-app/
-  package.json          next, @supabase/supabase-js
-  supabase/config.toml  (supabase init)
-  .env.local            NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
-```
-
-A scenario with the table names the app queries (`supabase.from('pedidos')`):
-
-```yaml
-name: pedidos-incidencias
-seed: 7712
-world:
-  clientes: 3
-  pedidos: { total: 40, distribution: { pagado: 34, pendiente: 3, incidencia: 3 } }
-endpoints:
-  - path: /rest/v1/pedidos
-    entity: pedidos
-    filters: [estado]
-```
-
-```bash
-atrezzo init
-#   Runtime: supabase — score 3/3: supabase/config.toml (Supabase CLI project); @supabase/supabase-js in package.json; NEXT_PUBLIC_SUPABASE_URL in .env.local
-atrezzo world atrezzo/escenarios/pedidos-incidencias.yaml
-#   supabase/atrezzo/pedidos-incidencias/{schema.sql, seed.sql, reset.sh, README.md}
-supabase start
-DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres supabase/atrezzo/pedidos-incidencias/reset.sh
-#   atrezzo: scenario pedidos-incidencias restored (43 rows)
-```
-
-The app talks to its usual local Supabase; `pedidos` has exactly 40 rows, 3 with `estado = 'incidencia'`, with the same ids you would see in `serve`. `reset.sh` is idempotent (truncate + inserts) and refuses to touch a non-local `DATABASE_URL`. What it does **not** do: simulate RLS or auth, or use the atrezzo engine (filters and pagination are PostgREST's). For component tests without a database, add MSW with a facade (`--runtime supabase,msw`; see `references/runtimes.md`).
-
-## Layout
-
-```
-.claude-plugin/plugin.json   manifest
+.claude-plugin/              plugin.json (manifest) · marketplace.json (zeta92/atrezzo) · icon.png
+assets/readme/               README images (SVG)
 skills/                      router + 6 skills
 scripts/cli.mjs              CLI (bin: atrezzo)
-scripts/lib/                 prng, yaml, yaml-emit, world, scenario, contract, codegen, serve, verify, doctor, init, config,
-                             project (monorepo/front/back), openapi (import), flows, misses (gaps)
-scripts/lib/runtimes/        builtin, msw, supabase, prism, wiremock + registry (index.mjs)
-references/                  escenario.md (scenario spec) · suposiciones.md (client assumptions) · runtimes.md (runtimes, monorepo)
+scripts/lib/                 world, scenario, contract (engine), codegen, serve, verify, init, project (monorepo), openapi (import), misses (gaps)…
+scripts/lib/runtimes/        builtin, msw, supabase, prism, wiremock
+references/                  scenario.md (scenario spec) · assumptions.md (client assumptions) · runtimes.md (adapters, monorepo)
 examples/tienda/             runnable end-to-end example
-tests/                       node --test tests/ (fixtures/petstore.yaml for import)
+tests/                       node --test tests/  (113 tests; the Playwright ones launch real Chromium and skip without it)
 ```
 
-## Example
+</details>
 
-See [`examples/tienda`](examples/tienda/README.md): `world` → `serve` → `verify --driver http` green, and `reset` between scenarios without restarting.
+## License
 
-## Known limits
-
-- YAML: a subset (no anchors/aliases/multi-document); the parser rejects them with line and reason.
-- The `playwright` driver is tested with a fake `page` and with real Chromium (`tests/headers.test.mjs`; skipped without `playwright-core` + Chromium). For apps with a session, the flow can declare `headers` (e.g. `Cookie: "${APP_COOKIE}"`); see `references/escenario.md`.
-- HTTP errors, latency and writes are not part of the world: inject them in the runtime (see `references/runtimes.md`).
-- Runtimes: only `builtin` and `msw` run the projection. **Prism** returns examples (no filtering or pagination); **WireMock** serves pre-generated combinations and answers 501 to the rest; **Supabase** loads the world into Postgres and responses take PostgREST's shape. Details in `references/runtimes.md`.
-- Gaps: only `atrezzo serve` records them (not MSW, Prism, WireMock or Supabase). A route requested with different prefixes (`/api/users` and `/users`) counts as two gaps. Nested routes (`/api/clientes/:id/pedidos`) are recorded but the engine does not project them. `--on-miss stub` does not persist writes.
-- `import`: GET collections only (array of objects or a `data`/`items`/`results`/`records`/`content` envelope); nested fields are skipped (the report says so); ids are always integers 1..n; no external `$ref`; YAML specs with anchors or multi-line `{…}` collections → convert them to JSON.
+MIT. See [`LICENSE`](LICENSE).

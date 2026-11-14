@@ -19,7 +19,7 @@ function pnpmMonorepo() {
     'services/api/openapi.yaml': SPEC,
     'services/api/supabase/config.toml': 'project_id = "api"\n',
     'packages/ui-utils/package.json': pkg('utils', { lodash: '4' }),
-    'atrezzo/escenarios/conciliacion.yaml': SCENARIO,
+    'atrezzo/scenarios/conciliacion.yaml': SCENARIO,
   });
 }
 
@@ -43,7 +43,7 @@ test('pnpm monorepo: apps/web is the front end, services/api the backend; MSW in
   assert.equal(cfg.mock.apiPrefix, '/api');
   assert.equal(cfg.handlersDir, 'apps/web/src/mocks/atrezzo');
 
-  const w = cli(['world', 'atrezzo/escenarios/conciliacion.yaml'], dir);
+  const w = cli(['world', 'atrezzo/scenarios/conciliacion.yaml'], dir);
   assert.equal(w.code, 0, w.stderr);
   const handlers = join(dir, 'apps/web/src/mocks/atrezzo/conciliacion.handlers.mjs');
   assert.ok(existsSync(handlers), 'MSW handlers in the front end');
@@ -57,7 +57,7 @@ test('pnpm monorepo: apps/web is the front end, services/api the backend; MSW in
   writeFileSync(join(dir, 'apps/web/node_modules/msw/package.json'), JSON.stringify({ name: 'msw', type: 'module', exports: './index.js' }));
   writeFileSync(join(dir, 'apps/web/node_modules/msw/index.js'), 'export const http = { get: (p, r) => ({ p, r }) }; export const HttpResponse = { json: (b, i) => ({ b, ...i }) };\n');
   const mod = await import(pathToFileURL(handlers).href);
-  assert.equal(mod.dataset.entities.pedidos.length, 40);
+  assert.equal(mod.dataset.entities.orders.length, 40);
   const idx = readFileSync(join(dir, 'apps/web/src/mocks/atrezzo/index.mjs'), 'utf8');
   assert.match(idx, /import\(`\.\/\$\{name\}\.handlers\.mjs`\)/);
 

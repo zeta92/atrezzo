@@ -14,20 +14,20 @@ CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs <command>` (`atrezzo` below).
 | The user says… | Use |
 |---|---|
 | "set up atrezzo", "configure mocks in this repo", there is no `atrezzo.config.json` | `/atrezzo:init` |
-| "get the contract", "I have an OpenAPI/HAR", "what does the API return" | `/atrezzo:captura` |
-| "I want 12 orders, 3 with an issue", "an empty state", "data for this screen" | `/atrezzo:escena` |
-| "check the screen", "the rows don't show up", "does it match?" | `/atrezzo:verifica` |
-| "I'm on X and want to get to Y", "which states do I need for this flow" | `/atrezzo:desde-intencion` |
-| "the app requests a route that doesn't exist", "mock 404", "incomplete mock", a response with `atrezzo.miss`, `doctor`/`atrezzo misses` with unresolved gaps | `/atrezzo:hueco` |
+| "get the contract", "I have an OpenAPI/HAR", "what does the API return" | `/atrezzo:capture` |
+| "I want 12 orders, 3 with an issue", "an empty state", "data for this screen" | `/atrezzo:scene` |
+| "check the screen", "the rows don't show up", "does it match?" | `/atrezzo:verify` |
+| "I'm on X and want to get to Y", "which states do I need for this flow" | `/atrezzo:from-intent` |
+| "the app requests a route that doesn't exist", "mock 404", "incomplete mock", a 404 whose body has `atrezzo.miss: true` and the route in `atrezzo.gap`, `doctor`/`atrezzo misses` with unresolved gaps | `/atrezzo:gap` |
 
-With no config, always start with `/atrezzo:init`. With no contract, run `/atrezzo:captura` before `/atrezzo:escena`.
+With no config, always start with `/atrezzo:init`. With no contract, run `/atrezzo:capture` before `/atrezzo:scene`.
 
 ## The loop
 
 1. **World** — entities, counts, distributions and seed (`world:` in the scenario).
-2. **Scenario** — endpoints as projections + a `path` of screens + `expect`. See `${CLAUDE_PLUGIN_ROOT}/references/escenario.md`.
+2. **Scenario** — endpoints as projections + a `path` of screens + `expect`. See `${CLAUDE_PLUGIN_ROOT}/references/scenario.md`.
 3. **Generate** — `atrezzo world <scenario.yaml>` writes JSON + `runtime.mjs` and the configured runtime's output (MSW handlers, Supabase seed.sql, OpenAPI for Prism or WireMock mappings); `atrezzo runtimes` says which and why.
-4. **Serve** — `atrezzo serve --scenario <name>` (real HTTP; `POST /__atrezzo/reset` switches scenario, `POST /__atrezzo/reload` rereads the YAML). Whatever the app requests and the scenario does not declare is recorded as a gap (`atrezzo misses`) → `/atrezzo:hueco`.
+4. **Serve** — `atrezzo serve --scenario <name>` (real HTTP; `POST /__atrezzo/reset` switches scenario, `POST /__atrezzo/reload` rereads the YAML). Whatever the app requests and the scenario does not declare is recorded as a gap (`atrezzo misses`) → `/atrezzo:gap`.
 5. **Verify** — `atrezzo verify <flow.yaml>`; if it fails, `--diagnose` and diagnose before touching anything.
 
 ## Hard rules

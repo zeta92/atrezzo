@@ -1,9 +1,9 @@
 ---
-name: captura
+name: capture
 description: Captures the API contract (OpenAPI, types, HAR) for atrezzo. Use it when you need to know which endpoints and fields a screen consumes before writing a scenario, or when the user provides an OpenAPI spec, a HAR or a traffic recording.
 ---
 
-# /atrezzo:captura
+# /atrezzo:capture
 
 Goal: the endpoints, parameters (filters, pagination, sorting) and fields **the client reads**, each with its source.
 
@@ -14,10 +14,10 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs import <openapi.yaml|json> --name <sc
 # no argument: uses workspace.contract from atrezzo.config.json
 ```
 
-- Writes `atrezzo/escenarios/<scenario>.yaml` with `world` (entities with typed `fields`, default counts), `endpoints` (path with the `servers[0].url` base, filters = query enums, `limit/offset` or `page` pagination, `pick` if the response is `{data: […]}`/`{items: […]}`) and `expect: []`.
+- Writes `atrezzo/scenarios/<scenario>.yaml` with `world` (entities with typed `fields`, default counts), `endpoints` (path with the `servers[0].url` base, filters = query enums, `limit/offset` or `page` pagination, `pick` if the response is `{data: […]}`/`{items: […]}`) and `expect: []`.
 - **Read the whole report and bring it to the user**: inferred endpoints, envelopes, `# TODO`s (GETs that do not return a collection), ignored routes with their reason (mutations, no schema, binary, nested) and notes (non-integer ids, a spec base that differs from the front-end prefix → `--base`).
 - Exit 3 = the scenario is not valid yet (e.g. no inferable collection): complete the `# TODO`s by hand before `world`.
-- Do not edit the data: adjust counts, distributions and `expect` (skill `/atrezzo:escena`) and regenerate with `world`.
+- Do not edit the data: adjust counts, distributions and `expect` (skill `/atrezzo:scene`) and regenerate with `world`.
 - Then check against the client code (level 3 below): which fields it actually reads and which filters it sends. The spec says what the server promises, not what the screen uses.
 
 Without an OpenAPI spec, follow the source order.
@@ -49,6 +49,6 @@ Strip tokens, cookies and personal data from anything you save.
 
 ## Output
 
-- Write or update `atrezzo/escenarios/<name>.yaml` (format: `${CLAUDE_PLUGIN_ROOT}/references/escenario.md`) with `endpoints:` (path, entity, filters, pagination, sort, include). `world` generates the data; do not copy HAR responses as fixtures.
+- Write or update `atrezzo/scenarios/<name>.yaml` (format: `${CLAUDE_PLUGIN_ROOT}/references/scenario.md`) with `endpoints:` (path, entity, filters, pagination, sort, include). `world` generates the data; do not copy HAR responses as fixtures.
 - Validate: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs world <file>` (exit 3 = invalid; the message names the field and the reason).
-- **Flag gaps**: list the fields the client reads that the contract does not guarantee (nullable, optional, open enums, possibly empty arrays). Method and matrix in `${CLAUDE_PLUGIN_ROOT}/references/suposiciones.md`. Propose a scenario with `nulls:` for each relevant gap.
+- **Flag gaps**: list the fields the client reads that the contract does not guarantee (nullable, optional, open enums, possibly empty arrays). Method and matrix in `${CLAUDE_PLUGIN_ROOT}/references/assumptions.md`. Propose a scenario with `nulls:` for each relevant gap.

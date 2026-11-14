@@ -11,58 +11,58 @@ export const SCENARIO = `name: conciliacion
 seed: 7712
 now: 2025-03-01T09:00:00Z
 world:
-  clientes: 3
-  pedidos:
+  customers: 3
+  orders:
     total: 40
-    distribution: { pagado: 34, pendiente: 3, incidencia: 3 }
+    distribution: { paid: 34, pending: 3, issue: 3 }
     amount: { min: 20, max: 900, currency: EUR }
-  usuarios: 2
+  users: 2
 endpoints:
   - path: /api/orders
-    entity: pedidos
-    filters: [estado, client_id]
+    entity: orders
+    filters: [status, customer_id]
     pagination: { param_limit: limit, param_offset: offset }
   - path: /api/customers
-    entity: clientes
+    entity: customers
 entry: dashboard
 path: [dashboard, lista]
 expect:
   - selector: "[data-testid=order-row]"
     count: 12
-    data: { request: pedidos }
-  - selector: "[data-testid=badge-incidencia]"
+    data: { request: orders }
+  - selector: "[data-testid=badge-issue]"
     count: 3
-    data: { request: incidencias, where: { estado: incidencia } }
+    data: { request: issues, where: { status: issue } }
 `;
 
 export const SMALL = `name: pequeno
 seed: 99
 world:
-  clientes: 1
-  pedidos: { total: 5, distribution: { pagado: 4, incidencia: 1 } }
+  customers: 1
+  orders: { total: 5, distribution: { paid: 4, issue: 1 } }
 endpoints:
   - path: /api/orders
-    entity: pedidos
-    filters: [estado]
+    entity: orders
+    filters: [status]
     pagination: { param_limit: limit, param_offset: offset }
   - path: /api/customers
-    entity: clientes
+    entity: customers
 `;
 
-export const FLOW = `scenario: escenarios/conciliacion.yaml
+export const FLOW = `scenario: scenarios/conciliacion.yaml
 steps:
   - screen: dashboard
     visit: /
     requests:
-      clientes: GET /api/customers
+      customers: GET /api/customers
     expect:
       - selector: "[data-testid=customer-chip]"
         count: 3
   - screen: lista
     visit: /lista
     requests:
-      pedidos: GET /api/orders?limit=12
-      incidencias: GET /api/orders?estado=incidencia
+      orders: GET /api/orders?limit=12
+      issues: GET /api/orders?status=issue
 `;
 
 /** Temp project with the given files. */

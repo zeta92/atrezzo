@@ -6,7 +6,7 @@ The scenario (world + endpoints + expect) **does not depend on the runtime**. `a
 atrezzo init                       # detects and chooses (prints what it found, why, and the alternatives)
 atrezzo init --runtime wiremock    # or you choose (several: --runtime msw,supabase)
 atrezzo runtimes                   # each adapter's score in this project and how to start it
-atrezzo world atrezzo/escenarios/pedidos.yaml
+atrezzo world atrezzo/scenarios/orders.yaml
 ```
 
 A 0.1 config without a `runtime` field means `msw` (the old behavior: handlers on every `world`).
@@ -43,7 +43,7 @@ In a monorepo the signals of the root, the front end and the backend add up (e.g
 
 - **Does**: serves the projections over HTTP (`GET /api/x?filter=&limit=&offset=`, `/:id` detail, envelopes, `X-Total-Count`), switches scenarios without restarting (`POST /__atrezzo/reset {"scenario":"x"}`), rereads the YAML (`POST /__atrezzo/reload`), serves static files with `--static`, and records gaps (`atrezzo misses`).
 - **Does not**: writes (405, recorded as a gap), injected latency or errors.
-- **Start**: `atrezzo serve --scenario pedidos --port 4010`.
+- **Start**: `atrezzo serve --scenario orders --port 4010`.
 
 ### msw
 
@@ -52,7 +52,7 @@ In a monorepo the signals of the root, the front end and the backend add up (e.g
 - **Start**:
   ```js
   import { setupWorker } from 'msw/browser';           // browser, development only
-  import { handlers } from './mocks/atrezzo/pedidos.handlers.mjs';
+  import { handlers } from './mocks/atrezzo/orders.handlers.mjs';
   await setupWorker(...handlers).start({ onUnhandledRequest: 'bypass' });
   // Node tests: import { setupServer } from 'msw/node'; setupServer(...handlers).listen();
   ```
@@ -72,24 +72,24 @@ Supabase has no mock layer: its API is PostgREST over Postgres. The "runtime" is
 - **Start**:
   ```bash
   supabase start
-  DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres services/api/supabase/atrezzo/pedidos/reset.sh
+  DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres services/api/supabase/atrezzo/orders/reset.sh
   ```
-  Or with `supabase db reset`: in `config.toml`, `[db.seed] sql_paths = ["./atrezzo/pedidos/seed.sql"]` (if your CLI version supports `sql_paths`).
+  Or with `supabase db reset`: in `config.toml`, `[db.seed] sql_paths = ["./atrezzo/orders/seed.sql"]` (if your CLI version supports `sql_paths`).
 
 Tested against a real PostgreSQL 17 (test `supabase: reset.sh …`, skipped without `initdb`): two runs in a row, counts and ids equal to the JSON, and a pre-existing table with `id GENERATED ALWAYS AS IDENTITY`.
 
 #### Alternative: a PostgREST facade over `serve`/MSW
 
-If you do not want to run Postgres, you can point `SUPABASE_URL` at the mock and translate what the app uses in front of `engine.handle`: `estado=eq.x` → `estado=x`, `in.(a,b)` → `a,b`, `Range: 0-11` → `offset=0&limit=12` (and answer `Content-Range`), `Accept: application/vnd.pgrst.object+json` → detail. GoTrue: `POST /auth/v1/token` with a fixed session for a world user. Do not reimplement PostgREST: only what the screen uses.
+If you do not want to run Postgres, you can point `SUPABASE_URL` at the mock and translate what the app uses in front of `engine.handle`: `status=eq.x` → `status=x`, `in.(a,b)` → `a,b`, `Range: 0-11` → `offset=0&limit=12` (and answer `Content-Range`), `Accept: application/vnd.pgrst.object+json` → detail. GoTrue: `POST /auth/v1/token` with a fixed session for a world user. Do not reimplement PostgREST: only what the screen uses.
 
 ### prism
 
-- **Does**: `world` writes `<generatedDir>/<scenario>.openapi.yaml` (OpenAPI 3.1) from the scenario endpoints: one schema per entity with `required` = fields never null in the world, filter and pagination parameters, `X-Total-Count`, `/{id}` detail with 404, and `examples` computed by the engine (the projection without a query, plus one per value of the first filter with ≤ 10 values, e.g. `estado-incidencia`).
-- **Does not**: filter or paginate. Prism returns the default example for **any** query (`?estado=incidencia` returns all 40 orders); another example only with the `Prefer: example=estado-incidencia` header. The detail always returns the first id (`/api/orders/999` → 200 with id 1) unless you send `Prefer: code=404`. With `-d` (dynamic) it generates data that is not the world. Filters are declared as `string` without `enum` because with an enum Prism would reject the `a,b` lists the engine accepts.
+- **Does**: `world` writes `<generatedDir>/<scenario>.openapi.yaml` (OpenAPI 3.1) from the scenario endpoints: one schema per entity with `required` = fields never null in the world, filter and pagination parameters, `X-Total-Count`, `/{id}` detail with 404, and `examples` computed by the engine (the projection without a query, plus one per value of the first filter with ≤ 10 values, e.g. `status-issue`).
+- **Does not**: filter or paginate. Prism returns the default example for **any** query (`?status=issue` returns all 40 orders); another example only with the `Prefer: example=status-issue` header. The detail always returns the first id (`/api/orders/999` → 200 with id 1) unless you send `Prefer: code=404`. With `-d` (dynamic) it generates data that is not the world. Filters are declared as `string` without `enum` because with an enum Prism would reject the `a,b` lists the engine accepts.
 - **Does (Prism's own)**: validate requests against the parameters: `?limit=abc` → 400.
-- **Start**: `npx @stoplight/prism-cli mock atrezzo/.generated/pedidos.openapi.yaml --port 4010`.
+- **Start**: `npx @stoplight/prism-cli mock atrezzo/.generated/orders.openapi.yaml --port 4010`.
 
-Checked with `@stoplight/prism-cli` 5.16.0 on the example's `pedidos` (everything above).
+The generated OpenAPI is covered by the automated `prism: …` tests (parseable OpenAPI 3.1, paths, `required`, and read identically by PyYAML). The Prism behavior described above was checked by hand with `@stoplight/prism-cli` 5.16.0 on an earlier version of the example (0.3, built on the old Spanish templates); it has not been re-run against the current `orders` scenario.
 
 ### wiremock
 
@@ -99,17 +99,17 @@ WireMock cannot run the projection: Handlebars has no sane way to filter + sort 
   - no query;
   - each value of each filter, one at a time (if the field has ≤ 20 distinct values; `null` included);
   - pages of `default_limit`/`max_limit` (`limit=N` and `limit=N&offset=k`, up to 50 pages);
-  - **the exact requests of the flows** (`flujo.yaml` files whose `scenario` points here), e.g. `?estado=incidencia&limit=12`.
+  - **the exact requests of the flows** (`flow.yaml` files whose `scenario` points here), e.g. `?status=issue&limit=12`.
   Body and `X-Total-Count` come from the engine: the same bytes as `serve`. The `/{id}` detail uses **response templating**: `bodyFileName: "<scenario>/<endpoint>/id/{{request.pathSegments.[n]}}.json"` with `transformers: ["response-template"]` declared in the mapping; unknown ids return 404.
 - **Does not**: combined filters, `a,b` lists, other sort orders or pages not enumerated. Those requests fall into a low-priority mapping that answers **501** with `{"error": …, "generated": [...]}`: never a wrong page. If a screen requests a new combination, add it to a flow and run `world` again. It does not emit `X-Atrezzo-Ignored` either. Do not mix two scenarios in the same `mappings/` folder (routes clash): each scenario is its own root.
 - **Start**:
   ```bash
-  docker run --rm -p 4010:8080 -v "$PWD/atrezzo/.generated/wiremock/pedidos:/home/wiremock" wiremock/wiremock:3.13.2
-  # or: java -jar wiremock-standalone-3.13.2.jar --root-dir atrezzo/.generated/wiremock/pedidos --port 4010
+  docker run --rm -p 4010:8080 -v "$PWD/atrezzo/.generated/wiremock/orders:/home/wiremock" wiremock/wiremock:3.13.2
+  # or: java -jar wiremock-standalone-3.13.2.jar --root-dir atrezzo/.generated/wiremock/orders --port 4010
   ```
   To switch scenarios without restarting: `POST /__admin/mappings/reset` + `POST /__admin/mappings/import` with the other scenario's mappings.
 
-Checked with WireMock standalone 3.13.2 (Java 21) on the example's `pedidos`: 15 stubs loaded; `/api/orders`, `?estado=incidencia` and `?limit=12` return 40/3/12 rows with their `X-Total-Count`; `/api/orders/7` comes out via the template; `/api/orders/999` → 404; `?estado=incidencia&limit=12` (not pre-generated) → 501.
+The mappings are covered by the automated `wiremock: …` tests (`urlPath` + `bodyFileName`, templating with `transformers`, the 501 fallback, and the flow requests picked up by `world`). The run against a real server was done by hand with WireMock standalone 3.13.2 (Java 21) on an earlier version of the example (0.3, built on the old Spanish templates): 15 stubs loaded; the unfiltered list, one filter value and `?limit=12` returned 40/3/12 rows with their `X-Total-Count`; `/api/orders/7` came out via the template; `/api/orders/999` → 404; a filter + `limit` combination that was not pre-generated → 501. It has not been re-run against the current `orders` scenario.
 
 ## Gaps in each runtime
 
@@ -128,12 +128,12 @@ To catch gaps with MSW without switching runtimes, run the screen once against `
 ```js
 await setupWorker(...handlers).start({
   onUnhandledRequest(req, print) {
-    if (new URL(req.url).pathname.startsWith('/api/')) print.warning(); // gap: /atrezzo:hueco
+    if (new URL(req.url).pathname.startsWith('/api/')) print.warning(); // gap: /atrezzo:gap
   },
 });
 ```
 
-Filling the gap is the same everywhere: entity + endpoint in the scenario (`/atrezzo:hueco`) and `atrezzo world`, which regenerates handlers, OpenAPI, mappings or `seed.sql`.
+Filling the gap is the same everywhere: entity + endpoint in the scenario (`/atrezzo:gap`) and `atrezzo world`, which regenerates handlers, OpenAPI, mappings or `seed.sql`.
 
 Latency, 5xx errors and timeouts are not part of the world: inject them in the runtime (MSW `delay()`/`HttpResponse.error()`, WireMock `fixedDelayMilliseconds`/`fault`), not in the scenario.
 
@@ -167,7 +167,7 @@ cd my-monorepo
 atrezzo init                              # detects apps/web (front end) and services/api (backend)
 atrezzo init --runtime msw,supabase       # handlers in apps/web and seed in services/api/supabase/atrezzo/
 atrezzo import                            # uses workspace.contract
-atrezzo world atrezzo/escenarios/api.yaml
+atrezzo world atrezzo/scenarios/api.yaml
 ```
 
 ### Case 2: two folders without a manifest
@@ -178,7 +178,7 @@ Sibling folders `client/`+`server/`, `web/`+`api/`, `frontend/`+`backend/` (and 
 cd project                                # client/ (Vue + Vite)  server/ (FastAPI + openapi.json)
 atrezzo init                              # front=client, backend=server, contract=server/openapi.json
 atrezzo import                            # endpoints from server/openapi.json
-atrezzo world atrezzo/escenarios/api.yaml
+atrezzo world atrezzo/scenarios/api.yaml
 atrezzo serve --scenario api              # builtin: the backend is not JS; real HTTP on the front end's port
 ```
 
@@ -190,7 +190,7 @@ Run `init` in the front-end repo and point to the other one with relative paths:
 cd ~/code/web
 atrezzo init --front . --backend ../api --contract ../api/openapi.yaml
 atrezzo import                            # reads ../api/openapi.yaml
-atrezzo world atrezzo/escenarios/api.yaml
+atrezzo world atrezzo/scenarios/api.yaml
 ```
 
 If the backend is Supabase in the other repo, `--backend ../api` makes `supabase` write to `../api/supabase/atrezzo/<scenario>/` (outside this repo: commit there, or point `--backend` at a folder of your own).

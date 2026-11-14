@@ -59,8 +59,8 @@ test('import CLI: writes a valid scenario that world generates and the engine se
   const dir = tmpProject({});
   const r = cli(['import', PETSTORE], dir);
   assert.equal(r.code, 0, r.stderr);
-  for (const s of [/Inferred endpoints \(2\)/, /envelope \{data: \[\.\.\.\]\} → pick: data/, /Ignored \(3\):/, /POST \/pets: mutation/, /GET \/health: 200 without schema/, /binary\/non-JSON response/, /Written: atrezzo\/escenarios\/api\.yaml \(valid scenario\)/]) assert.match(r.stdout, s);
-  const file = join(dir, 'atrezzo/escenarios/api.yaml');
+  for (const s of [/Inferred endpoints \(2\)/, /envelope \{data: \[\.\.\.\]\} → pick: data/, /Ignored \(3\):/, /POST \/pets: mutation/, /GET \/health: 200 without schema/, /binary\/non-JSON response/, /Written: atrezzo\/scenarios\/api\.yaml \(valid scenario\)/]) assert.match(r.stdout, s);
+  const file = join(dir, 'atrezzo/scenarios/api.yaml');
   const yaml = readFileSync(file, 'utf8');
   assert.match(yaml, /^expect: \[\]$/m);
   assert.match(yaml, /^ {4}pick: data/m);
@@ -74,14 +74,14 @@ test('import CLI: writes a valid scenario that world generates and the engine se
   assert.equal(engine.handle({ pathname: '/api/owners', query: { page: '0' } }).status, 400);
   const avail = engine.handle({ pathname: '/api/pets', query: { status: 'available', limit: '100' } });
   assert.equal(avail.body.length, 10);
-  assert.ok(avail.body.every((p) => p.status === 'available' && typeof p.name === 'string' && !('nombre' in p)));
+  assert.ok(avail.body.every((p) => p.status === 'available' && typeof p.name === 'string' && !('created_at' in p)));
   // Deterministic, and never overwrites silently.
   const again = cli(['import', PETSTORE], dir);
   assert.equal(again.code, 3);
   assert.match(again.stderr, /already exists; use --force/);
   cli(['import', PETSTORE, '--force'], dir);
   assert.equal(readFileSync(file, 'utf8'), yaml);
-  const w = cli(['world', 'atrezzo/escenarios/api.yaml'], dir);
+  const w = cli(['world', 'atrezzo/scenarios/api.yaml'], dir);
   assert.equal(w.code, 0, w.stderr);
   assert.match(w.stdout, /GET \/api\/owners {2}owners · pagination: per_page\/page \(by page\) · sort: id · envelope: data/);
 });
@@ -102,11 +102,11 @@ test('import: --base overrides servers, --format json, and TODO when there is no
   assert.match(r.stdout, /GET \/v2\/stock: returns a key→value map/);
   assert.match(r.stdout, /GET \/v2\/tags: array of string values/);
   assert.match(r.stdout, /\?kind \(enum\) has no field with the same name/);
-  const doc = JSON.parse(readFileSync(join(dir, 'atrezzo/escenarios/inv.json'), 'utf8'));
+  const doc = JSON.parse(readFileSync(join(dir, 'atrezzo/scenarios/inv.json'), 'utf8'));
   assert.deepEqual(doc.endpoints, [{ path: '/v2/products', entity: 'products', pick: 'items', detail: false }]);
   const b = cli(['import', 'inv.json', '--name', 'inv2', '--base', '/api/'], dir);
   assert.match(b.stdout, /GET \/api\/products → products/);
-  const yaml = readFileSync(join(dir, 'atrezzo/escenarios/inv2.yaml'), 'utf8');
+  const yaml = readFileSync(join(dir, 'atrezzo/scenarios/inv2.yaml'), 'utf8');
   assert.match(yaml, /# TODO: GET \/api\/stock — returns a key→value map/);
   assert.match(yaml, /# TODO: GET \/api\/tags — array of string values/);
 });
@@ -116,12 +116,12 @@ test('import: with no collection the scenario is marked and invalid (exit 3), ne
   const r = cli(['import', 's.json', '--name', 'yo'], dir);
   assert.equal(r.code, 3);
   assert.match(r.stdout, /scenario still INVALID: complete the TODOs/);
-  assert.match(readFileSync(join(dir, 'atrezzo/escenarios/yo.yaml'), 'utf8'), /# TODO: no entity could be inferred/);
+  assert.match(readFileSync(join(dir, 'atrezzo/scenarios/yo.yaml'), 'utf8'), /# TODO: no entity could be inferred/);
 });
 
 test('import without an argument uses workspace.contract from the config', () => {
   const dir = tmpProject({ 'api/openapi.yaml': readFileSync(PETSTORE, 'utf8') });
-  writeFileSync(join(dir, 'atrezzo.config.json'), JSON.stringify({ version: 1, scenariosDir: 'atrezzo/escenarios', handlersDir: 'atrezzo/handlers', generatedDir: 'atrezzo/.generated', workspace: { contract: 'api/openapi.yaml' } }));
+  writeFileSync(join(dir, 'atrezzo.config.json'), JSON.stringify({ version: 1, scenariosDir: 'atrezzo/scenarios', handlersDir: 'atrezzo/handlers', generatedDir: 'atrezzo/.generated', workspace: { contract: 'api/openapi.yaml' } }));
   const r = cli(['import'], dir);
   assert.equal(r.code, 0, r.stderr);
   assert.match(r.stdout, /Imported api\/openapi\.yaml/);

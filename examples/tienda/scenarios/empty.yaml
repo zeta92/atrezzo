@@ -1,0 +1,39 @@
+# Day one: one customer, no orders. The screen must show its empty state.
+name: empty
+seed: 1
+now: 2025-03-01T09:00:00Z
+world:
+  customers:
+    total: 1
+    fields:
+      name: string
+      email: email
+      city: string
+      created_at: date
+  orders:
+    total: 0
+    ref: customers
+    distribution_field: status
+    distribution: { paid: 0 }
+    fields:
+      reference: string
+      amount: number
+      created_at: date
+    values:
+      currency: [EUR]
+endpoints:
+  - path: /api/orders
+    entity: orders
+    filters: [status, customer_id]
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: -created_at
+  - path: /api/customers
+    entity: customers
+entry: dashboard
+path: [dashboard, order-list]
+expect:
+  - selector: "[data-testid=order-row]"
+    count: 0
+    data: { request: orders }
+  - selector: "[data-testid=empty-state]"
+    count: 1

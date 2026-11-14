@@ -18,8 +18,8 @@ test('different seeds ⇒ different sequences', () => {
 });
 
 test('independent streams with the same seed', () => {
-  assert.notDeepEqual(seq(7712, 20, 'entity:pedidos'), seq(7712, 20, 'entity:clientes'));
-  assert.deepEqual(seq(7712, 20, 'entity:pedidos'), seq(7712, 20, 'entity:pedidos'));
+  assert.notDeepEqual(seq(7712, 20, 'entity:orders'), seq(7712, 20, 'entity:customers'));
+  assert.deepEqual(seq(7712, 20, 'entity:orders'), seq(7712, 20, 'entity:orders'));
 });
 
 test('golden values: the algorithm does not change between versions', () => {

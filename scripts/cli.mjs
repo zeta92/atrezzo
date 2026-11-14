@@ -39,7 +39,7 @@ Commands:
       as a gap; --on-miss stub answers an empty 200 ([] or {}) with x-atrezzo-stub instead of 404.
   misses [--json] [--clear] [--dir .]
       Gaps seen by serve (routes the app requested that no scenario declares), with counts, state and
-      what to do: import if the contract has the route, or the /atrezzo:hueco skill.
+      what to do: import if the contract has the route, or the /atrezzo:gap skill.
   runtimes [--dir .]
       Lists the adapters, their score in this project, the reason and how to start each one.
   import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
@@ -111,7 +111,7 @@ function cmdInit({ flags }) {
   if (r.installed.length) out(`  installed: ${r.installed.join(', ')}`);
   else if (!flags.install) out('  dependencies: nothing installed (use --install for msw and yaml; serve does not need them)');
   if (r.workspace?.contract) out(`Next step: atrezzo import ${r.workspace.contract} (scenario from the contract), then atrezzo world.`);
-  else out('Next step: create a scenario in atrezzo/escenarios/ (skill /atrezzo:escena) and run atrezzo world.');
+  else out('Next step: create a scenario in atrezzo/scenarios/ (skill /atrezzo:scene) and run atrezzo world.');
   return EXIT.OK;
 }
 
