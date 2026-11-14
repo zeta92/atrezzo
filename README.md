@@ -22,7 +22,7 @@ claude --plugin-dir ./atrezzo
 <h2><img src="./assets/readme/section-01-see-it-work.svg" width="100%" alt="01 See it work"></h2>
 
 <p align="center">
-  <img src="./assets/readme/atrezzo-demo.gif" width="100%" alt="17-second terminal recording: verify passes 4 of 4 checks; a deliberately broken flow fails one and diagnose names a pagination mismatch; a route the scenario does not declare gets a 404 that records the gap; atrezzo misses lists it; two lines of scenario YAML plus a hot reload; the next request is served and the gap is marked resolved.">
+  <img src="./assets/readme/atrezzo-explainer.gif" width="100%" alt="21-second explainer: a scenario declares 3 customers and 40 orders, 3 of them with an issue; the page asks for 12 rows and for the issues, and both answers come from that one state; the issues list shows 3 while the first page shows 2, because reference 30 is on page two; verify --diagnose names the pagination mismatch instead of failing silently; the fixed flow reports 4 OK and the install command.">
 </p>
 
 All output below is literal, cut only where a block says so. It comes from [`examples/tienda`](examples/tienda/README.md) unless a block says otherwise. In this README, `atrezzo` is short for `node <plugin>/scripts/cli.mjs`. Inside Claude Code, the skills run it for you.
