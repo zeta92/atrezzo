@@ -109,7 +109,7 @@ function cmdInit({ flags }) {
   for (const w of r.written) out(`  written: ${w}`);
   for (const s of r.skipped) out(`  unchanged: ${s}`);
   if (r.installed.length) out(`  installed: ${r.installed.join(', ')}`);
-  else if (!flags.install) out('  dependencies: nothing installed (use --install for msw and yaml; serve does not need them)');
+  else if (!flags.install) out('  dependencies: nothing installed (use --install for msw; serve does not need it)');
   if (r.workspace?.contract) out(`Next step: atrezzo import ${r.workspace.contract} (scenario from the contract), then atrezzo world.`);
   else out('Next step: create a scenario in atrezzo/scenarios/ (skill /atrezzo:scene) and run atrezzo world.');
   return EXIT.OK;

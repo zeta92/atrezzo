@@ -122,7 +122,7 @@ export function runInit(dir, { force = false, install = false, log = () => {}, r
   const installed = [];
   if (install) {
     if (!info.hasPackageJson) throw new AtrezzoError('--install needs a package.json in the project (or in the front end)');
-    const missing = ['msw', 'yaml'].filter((m) => !Object.hasOwn(info.deps, m));
+    const missing = ['msw'].filter((m) => !Object.hasOwn(info.deps, m));
     if (missing.length) {
       const args = { npm: ['install', '-D'], pnpm: ['add', '-D'], yarn: ['add', '-D'], bun: ['add', '-d'] }[info.packageManager];
       log(`Installing ${missing.join(', ')} with ${info.packageManager} ${args.join(' ')} in ${relPath(dir, frontAbs)} …`);

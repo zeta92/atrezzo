@@ -53,7 +53,7 @@ $ atrezzo verify flow-broken.yaml --diagnose
 
 ### No session means red, never green
 
-One flow, run twice with the Playwright driver (real Chromium) against a small cookie-protected app. That app is a scratch server, not part of this repo. The flow sends `Cookie: "${APP_COOKIE}"`. Abridged: the table headers are cut.
+One flow, run twice with the Playwright driver (real Chromium) against a small cookie-protected app. That app is a scratch server, not part of this repo; the same case runs in `tests/headers.test.mjs` if you want to reproduce it. The flow sends `Cookie: "${APP_COOKIE}"`. Abridged: the table headers are cut.
 
 ```text
 $ APP_COOKIE="session=valid" atrezzo verify flow.yaml --driver playwright
@@ -122,7 +122,7 @@ Run `atrezzo world` afterwards so the committed `.generated/` files match the ne
 
 A mock built endpoint by endpoint is a set of canned responses. They drift apart, ids point nowhere, and a list of 40 orders has no reason to agree with a badge that says 3 issues. atrezzo starts from the state instead:
 
-- **A world, not responses.** The scenario declares entities and their distribution. A seeded PRNG builds the world with one stream per entity. The same seed gives the same bytes. Generation never calls `Math.random()` or `Date.now()`, and a test checks this. Every foreign key points to a row that exists.
+- **A world, not responses.** The scenario declares entities and their distribution. A seeded PRNG builds the world with one stream per entity. The same seed gives the same bytes. Generation never calls `Math.random()` or `Date.now()`, and a test checks this. Every foreign key points to a row that exists (or is null where the scenario asks for `nulls:`).
 - **Endpoints are projections.** An endpoint declares filters, pagination, sort order, joins and envelopes over the world. `serve` and the MSW handlers use the same engine. `world` copies it next to the data as `runtime.mjs`, and you commit and review it like any other code.
 - **The scenario carries its assertions.** `expect` says what the screen must show (`=12` rows, `3` badges) and which request feeds each count. That link lets `verify` tell a data problem from a rendering problem.
 - **Diagnosis, not regeneration.** A failed count produces typed hypotheses: `pagination-mismatch`, `client-side-filter`, `dedupe-by-id`, `undeclared-filter`, `null-field`, `navigation` and others. The skills forbid hand-writing data JSON: you change the scenario and regenerate.
@@ -176,7 +176,7 @@ Get a scenario first: ask `/atrezzo:scene` for one, or run `atrezzo import api/o
 atrezzo init                                             # detects the project, picks an adapter, says why
 atrezzo world atrezzo/scenarios/orders.yaml              # world + files for the chosen adapter
 atrezzo serve --scenario orders &                        # builtin adapter on http://127.0.0.1:4010
-atrezzo verify atrezzo/flujos/orders.yaml --diagnose     # count the screen, compare, diagnose
+atrezzo verify atrezzo/flows/orders.yaml --diagnose     # count the screen, compare, diagnose
 ```
 
 ### Or run the example
@@ -203,7 +203,7 @@ The scenario does not depend on where it is served. `world` always writes the wo
 | `prism` | `@stoplight/prism-cli` (a spec alone is not enough) | an OpenAPI 3.1 file whose examples come from the world | filter or paginate: any query gets the default example |
 | `wiremock` | a WireMock dependency, `mappings/` + `__files/`, or docker-compose | mappings for every enumerable combination: each filter value, pages, and the exact requests in your flows | combined filters or unlisted pages: those get a **501** with the list of combinations it did generate, never a wrong page |
 
-Full detail, including how `auto` scores each adapter and what each one does with a missing route, is in [`references/runtimes.md`](references/runtimes.md).
+The `prism` and `wiremock` rows describe behaviour checked by hand against 0.3; they were not re-run against 0.4, and their own limits are listed in [`references/runtimes.md`](references/runtimes.md). Full detail, including how `auto` scores each adapter and what each one does with a missing route, is there too.
 
 ### Monorepos and separate front end and backend
 
@@ -304,7 +304,7 @@ scripts/lib/                 world, scenario, contract (engine), codegen, serve,
 scripts/lib/runtimes/        builtin, msw, supabase, prism, wiremock
 references/                  scenario.md (scenario spec) · assumptions.md (client assumptions) · runtimes.md (adapters, monorepo)
 examples/tienda/             runnable end-to-end example
-tests/                       node --test tests/  (113 tests; the Playwright ones launch real Chromium and skip without it)
+tests/                       node --test tests/  (113 tests; 3 launch real Chromium, the rest of the Playwright-driver tests use a fake page; 1 skips without Postgres and 1 without PyYAML)
 ```
 
 </details>
