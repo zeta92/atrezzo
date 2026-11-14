@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Tienda · conciliación</title>
+  <style>
+    body { font: 14px system-ui, sans-serif; margin: 2rem; color: #222; }
+    .chips span { display: inline-block; padding: .2rem .6rem; margin-right: .4rem; border-radius: 1rem; background: #eef; }
+    table { border-collapse: collapse; margin-top: 1rem; }
+    td, th { padding: .3rem .8rem; border-bottom: 1px solid #ddd; text-align: left; }
+    [data-estado=incidencia] { color: #b00; font-weight: 600; }
+    .incidencias li { color: #b00; }
+  </style>
+</head>
+<body>
+  <h1>Pedidos</h1>
+  <section class="chips" id="clientes"></section>
+  <section class="incidencias">
+    <h2>Incidencias</h2>
+    <ul id="incidencias"></ul>
+  </section>
+  <table>
+    <thead><tr><th>Referencia</th><th>Cliente</th><th>Estado</th><th>Importe</th></tr></thead>
+    <tbody id="pedidos"></tbody>
+  </table>
+  <script type="module">
+    // App mínima: pinta lo que devuelve la API. No sabe nada de atrezzo.
+    const get = (p) => fetch(p).then((r) => r.json());
+    const el = (tag, attrs, text) => Object.assign(document.createElement(tag), attrs, text === undefined ? {} : { textContent: text });
+    const fmt = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' });
+
+    const [clientes, pedidos, incidencias] = await Promise.all([
+      get('/api/customers'),
+      get('/api/orders?limit=12'),
+      get('/api/orders?estado=incidencia'),
+    ]);
+
+    for (const c of clientes) {
+      const chip = el('span', {}, c.nombre);
+      chip.dataset.testid = 'customer-chip';
+      document.getElementById('clientes').append(chip);
+    }
+    for (const p of incidencias) {
+      const li = el('li', {}, `${p.referencia} · ${p.cliente?.nombre ?? 'sin cliente'}`);
+      li.dataset.testid = 'badge-incidencia';
+      document.getElementById('incidencias').append(li);
+    }
+    const tbody = document.getElementById('pedidos');
+    if (!pedidos.length) {
+      const empty = el('p', {}, 'Todavía no hay pedidos.');
+      empty.dataset.testid = 'empty-state';
+      tbody.closest('table').after(empty);
+    }
+    for (const p of pedidos) {
+      const tr = el('tr');
+      tr.dataset.testid = 'order-row';
+      const estado = el('td', {}, p.estado);
+      estado.dataset.estado = p.estado;
+      const importe = el('td', {}, fmt.format(p.importe));
+      importe.dataset.testid = 'importe';
+      tr.append(el('td', {}, p.referencia), el('td', {}, p.cliente?.nombre ?? '—'), estado, importe);
+      tbody.append(tr);
+    }
+    const ready = el('span');
+    ready.dataset.testid = 'listo';
+    document.body.append(ready);
+  </script>
+</body>
+</html>

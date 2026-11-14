@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "stack": "otro",
+  "scenariosDir": "escenarios",
+  "handlersDir": "atrezzo/handlers",
+  "generatedDir": "atrezzo/.generated",
+  "mock": { "baseUrl": "http://127.0.0.1:4010", "port": 4010, "static": "." },
+  "verify": { "driver": "http" }
+}

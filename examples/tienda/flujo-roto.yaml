@@ -1,0 +1,13 @@
+# Flujo que FALLA a propósito para ver el diagnóstico (--diagnose):
+# cuenta las incidencias dentro de la primera página de 12 en vez de pedirlas filtradas.
+escenario: escenarios/pedidos.yaml
+steps:
+  - screen: lista-pedidos
+    visit: /
+    requests:
+      pedidos: GET /api/orders?limit=12
+      incidencias: GET /api/orders?estado=incidencia
+    expect:
+      - selector: "[data-testid=order-row] [data-estado=incidencia]"
+        count: 3
+        data: { request: pedidos, where: { estado: incidencia } }

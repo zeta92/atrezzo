@@ -1,0 +1,30 @@
+# Conciliación con incidencias: 3 clientes, 40 pedidos, 3 con incidencia.
+name: pedidos
+description: Lista de pedidos con 3 incidencias pendientes de conciliar.
+seed: 7712
+now: 2025-03-01T09:00:00Z
+world:
+  clientes: 3
+  pedidos:
+    total: 40
+    distribucion: { pagado: 34, pendiente: 3, incidencia: 3 }
+    valor: { min: 20, max: 900, moneda: EUR }
+  usuarios: 2
+endpoints:
+  - path: /api/orders
+    entity: pedidos
+    filters: [estado, client_id]
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: -creado_en
+    include: [clientes]
+  - path: /api/customers
+    entity: clientes
+entry: dashboard
+path: [dashboard, lista-pedidos]
+expect:
+  - selector: "[data-testid=order-row]"
+    count: 12
+    data: { request: pedidos }
+  - selector: "[data-testid=badge-incidencia]"
+    count: 3
+    data: { request: incidencias, where: { estado: incidencia } }

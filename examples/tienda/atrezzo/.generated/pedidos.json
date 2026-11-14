@@ -1,0 +1,494 @@
+{
+  "atrezzo": 1,
+  "scenario": "pedidos",
+  "seed": 7712,
+  "now": "2025-03-01T09:00:00.000Z",
+  "hash": "681ff6fdb90a8a35",
+  "schema": {
+    "clientes": {
+      "singular": "cliente",
+      "fk": "client_id",
+      "fields": [
+        "id",
+        "nombre",
+        "email",
+        "ciudad",
+        "creado_en"
+      ],
+      "refs": {}
+    },
+    "pedidos": {
+      "singular": "pedido",
+      "fk": "order_id",
+      "fields": [
+        "id",
+        "referencia",
+        "client_id",
+        "estado",
+        "importe",
+        "moneda",
+        "creado_en"
+      ],
+      "refs": {
+        "client_id": "clientes"
+      }
+    },
+    "usuarios": {
+      "singular": "usuario",
+      "fk": "user_id",
+      "fields": [
+        "id",
+        "nombre",
+        "email",
+        "rol",
+        "creado_en"
+      ],
+      "refs": {}
+    }
+  },
+  "endpoints": [
+    {
+      "path": "/api/orders",
+      "entity": "pedidos",
+      "filters": [
+        "estado",
+        "client_id"
+      ],
+      "pagination": {
+        "limit": "limit",
+        "offset": "offset",
+        "defaultLimit": null,
+        "maxLimit": null
+      },
+      "sort": [
+        {
+          "field": "creado_en",
+          "dir": "desc"
+        }
+      ],
+      "include": [
+        "clientes"
+      ],
+      "shape": "array",
+      "detail": true
+    },
+    {
+      "path": "/api/customers",
+      "entity": "clientes",
+      "filters": [],
+      "pagination": null,
+      "sort": [
+        {
+          "field": "id",
+          "dir": "asc"
+        }
+      ],
+      "include": [],
+      "shape": "array",
+      "detail": true
+    }
+  ],
+  "entities": {
+    "clientes": [
+      {
+        "id": 1,
+        "nombre": "Librería Hermanos Gil",
+        "email": "contacto1@libreria.hermanos.gil.example",
+        "ciudad": "Málaga",
+        "creado_en": "2025-02-02T08:32:00.000Z"
+      },
+      {
+        "id": 2,
+        "nombre": "Talleres Levante",
+        "email": "contacto2@talleres.levante.example",
+        "ciudad": "Sevilla",
+        "creado_en": "2025-02-18T11:10:00.000Z"
+      },
+      {
+        "id": 3,
+        "nombre": "Librería Mediterráneo",
+        "email": "contacto3@libreria.mediterraneo.example",
+        "ciudad": "Madrid",
+        "creado_en": "2024-12-10T04:55:00.000Z"
+      }
+    ],
+    "pedidos": [
+      {
+        "id": 1,
+        "referencia": "PED-00001",
+        "client_id": 2,
+        "estado": "pagado",
+        "importe": 892.93,
+        "moneda": "EUR",
+        "creado_en": "2025-02-19T13:40:00.000Z"
+      },
+      {
+        "id": 2,
+        "referencia": "PED-00002",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 257.45,
+        "moneda": "EUR",
+        "creado_en": "2025-02-06T11:22:00.000Z"
+      },
+      {
+        "id": 3,
+        "referencia": "PED-00003",
+        "client_id": 3,
+        "estado": "pendiente",
+        "importe": 415.61,
+        "moneda": "EUR",
+        "creado_en": "2025-01-18T23:55:00.000Z"
+      },
+      {
+        "id": 4,
+        "referencia": "PED-00004",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 381.37,
+        "moneda": "EUR",
+        "creado_en": "2025-02-08T17:27:00.000Z"
+      },
+      {
+        "id": 5,
+        "referencia": "PED-00005",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 83.04,
+        "moneda": "EUR",
+        "creado_en": "2025-02-27T13:22:00.000Z"
+      },
+      {
+        "id": 6,
+        "referencia": "PED-00006",
+        "client_id": 3,
+        "estado": "pendiente",
+        "importe": 65.49,
+        "moneda": "EUR",
+        "creado_en": "2025-02-13T05:54:00.000Z"
+      },
+      {
+        "id": 7,
+        "referencia": "PED-00007",
+        "client_id": 2,
+        "estado": "pagado",
+        "importe": 442.32,
+        "moneda": "EUR",
+        "creado_en": "2025-02-22T17:39:00.000Z"
+      },
+      {
+        "id": 8,
+        "referencia": "PED-00008",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 358.94,
+        "moneda": "EUR",
+        "creado_en": "2025-02-09T05:03:00.000Z"
+      },
+      {
+        "id": 9,
+        "referencia": "PED-00009",
+        "client_id": 2,
+        "estado": "pagado",
+        "importe": 135.6,
+        "moneda": "EUR",
+        "creado_en": "2025-02-19T16:31:00.000Z"
+      },
+      {
+        "id": 10,
+        "referencia": "PED-00010",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 345.49,
+        "moneda": "EUR",
+        "creado_en": "2025-02-27T22:34:00.000Z"
+      },
+      {
+        "id": 11,
+        "referencia": "PED-00011",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 341.65,
+        "moneda": "EUR",
+        "creado_en": "2025-02-06T11:19:00.000Z"
+      },
+      {
+        "id": 12,
+        "referencia": "PED-00012",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 364.98,
+        "moneda": "EUR",
+        "creado_en": "2025-02-23T04:29:00.000Z"
+      },
+      {
+        "id": 13,
+        "referencia": "PED-00013",
+        "client_id": 3,
+        "estado": "pagado",
+        "importe": 73.99,
+        "moneda": "EUR",
+        "creado_en": "2025-01-31T11:49:00.000Z"
+      },
+      {
+        "id": 14,
+        "referencia": "PED-00014",
+        "client_id": 2,
+        "estado": "pagado",
+        "importe": 92.28,
+        "moneda": "EUR",
+        "creado_en": "2025-02-26T23:11:00.000Z"
+      },
+      {
+        "id": 15,
+        "referencia": "PED-00015",
+        "client_id": 3,
+        "estado": "incidencia",
+        "importe": 888.01,
+        "moneda": "EUR",
+        "creado_en": "2025-02-02T10:34:00.000Z"
+      },
+      {
+        "id": 16,
+        "referencia": "PED-00016",
+        "client_id": 3,
+        "estado": "pagado",
+        "importe": 277.48,
+        "moneda": "EUR",
+        "creado_en": "2025-01-20T19:32:00.000Z"
+      },
+      {
+        "id": 17,
+        "referencia": "PED-00017",
+        "client_id": 2,
+        "estado": "pagado",
+        "importe": 237.87,
+        "moneda": "EUR",
+        "creado_en": "2025-02-26T08:03:00.000Z"
+      },
+      {
+        "id": 18,
+        "referencia": "PED-00018",
+        "client_id": 3,
+        "estado": "pagado",
+        "importe": 103.24,
+        "moneda": "EUR",
+        "creado_en": "2025-02-24T20:52:00.000Z"
+      },
+      {
+        "id": 19,
+        "referencia": "PED-00019",
+        "client_id": 2,
+        "estado": "pagado",
+        "importe": 580.37,
+        "moneda": "EUR",
+        "creado_en": "2025-02-24T01:35:00.000Z"
+      },
+      {
+        "id": 20,
+        "referencia": "PED-00020",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 389.34,
+        "moneda": "EUR",
+        "creado_en": "2025-02-05T04:25:00.000Z"
+      },
+      {
+        "id": 21,
+        "referencia": "PED-00021",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 244.94,
+        "moneda": "EUR",
+        "creado_en": "2025-02-23T08:19:00.000Z"
+      },
+      {
+        "id": 22,
+        "referencia": "PED-00022",
+        "client_id": 1,
+        "estado": "pendiente",
+        "importe": 681.48,
+        "moneda": "EUR",
+        "creado_en": "2025-02-19T21:16:00.000Z"
+      },
+      {
+        "id": 23,
+        "referencia": "PED-00023",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 423.14,
+        "moneda": "EUR",
+        "creado_en": "2025-02-19T18:22:00.000Z"
+      },
+      {
+        "id": 24,
+        "referencia": "PED-00024",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 409.27,
+        "moneda": "EUR",
+        "creado_en": "2025-02-16T11:36:00.000Z"
+      },
+      {
+        "id": 25,
+        "referencia": "PED-00025",
+        "client_id": 2,
+        "estado": "pagado",
+        "importe": 141.98,
+        "moneda": "EUR",
+        "creado_en": "2025-02-28T16:01:00.000Z"
+      },
+      {
+        "id": 26,
+        "referencia": "PED-00026",
+        "client_id": 3,
+        "estado": "pagado",
+        "importe": 508.9,
+        "moneda": "EUR",
+        "creado_en": "2025-02-13T01:36:00.000Z"
+      },
+      {
+        "id": 27,
+        "referencia": "PED-00027",
+        "client_id": 2,
+        "estado": "pagado",
+        "importe": 595.82,
+        "moneda": "EUR",
+        "creado_en": "2025-02-28T21:29:00.000Z"
+      },
+      {
+        "id": 28,
+        "referencia": "PED-00028",
+        "client_id": 2,
+        "estado": "incidencia",
+        "importe": 243.24,
+        "moneda": "EUR",
+        "creado_en": "2025-02-25T01:51:00.000Z"
+      },
+      {
+        "id": 29,
+        "referencia": "PED-00029",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 782.5,
+        "moneda": "EUR",
+        "creado_en": "2025-02-08T15:52:00.000Z"
+      },
+      {
+        "id": 30,
+        "referencia": "PED-00030",
+        "client_id": 3,
+        "estado": "pagado",
+        "importe": 401.45,
+        "moneda": "EUR",
+        "creado_en": "2025-01-16T00:57:00.000Z"
+      },
+      {
+        "id": 31,
+        "referencia": "PED-00031",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 818.53,
+        "moneda": "EUR",
+        "creado_en": "2025-02-10T10:45:00.000Z"
+      },
+      {
+        "id": 32,
+        "referencia": "PED-00032",
+        "client_id": 3,
+        "estado": "pagado",
+        "importe": 766.18,
+        "moneda": "EUR",
+        "creado_en": "2024-12-24T12:07:00.000Z"
+      },
+      {
+        "id": 33,
+        "referencia": "PED-00033",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 531.98,
+        "moneda": "EUR",
+        "creado_en": "2025-02-26T12:07:00.000Z"
+      },
+      {
+        "id": 34,
+        "referencia": "PED-00034",
+        "client_id": 1,
+        "estado": "pagado",
+        "importe": 698.95,
+        "moneda": "EUR",
+        "creado_en": "2025-02-12T13:41:00.000Z"
+      },
+      {
+        "id": 35,
+        "referencia": "PED-00035",
+        "client_id": 3,
+        "estado": "pagado",
+        "importe": 731.07,
+        "moneda": "EUR",
+        "creado_en": "2024-12-10T05:05:00.000Z"
+      },
+      {
+        "id": 36,
+        "referencia": "PED-00036",
+        "client_id": 3,
+        "estado": "incidencia",
+        "importe": 273.42,
+        "moneda": "EUR",
+        "creado_en": "2024-12-16T14:39:00.000Z"
+      },
+      {
+        "id": 37,
+        "referencia": "PED-00037",
+        "client_id": 3,
+        "estado": "pagado",
+        "importe": 699.06,
+        "moneda": "EUR",
+        "creado_en": "2025-01-08T14:50:00.000Z"
+      },
+      {
+        "id": 38,
+        "referencia": "PED-00038",
+        "client_id": 3,
+        "estado": "pagado",
+        "importe": 44.69,
+        "moneda": "EUR",
+        "creado_en": "2025-02-15T06:11:00.000Z"
+      },
+      {
+        "id": 39,
+        "referencia": "PED-00039",
+        "client_id": 3,
+        "estado": "pagado",
+        "importe": 564.58,
+        "moneda": "EUR",
+        "creado_en": "2025-01-08T14:40:00.000Z"
+      },
+      {
+        "id": 40,
+        "referencia": "PED-00040",
+        "client_id": 3,
+        "estado": "pagado",
+        "importe": 612.55,
+        "moneda": "EUR",
+        "creado_en": "2025-02-13T03:09:00.000Z"
+      }
+    ],
+    "usuarios": [
+      {
+        "id": 1,
+        "nombre": "Valeria Navarro",
+        "email": "valeria.navarro.1@example.com",
+        "rol": "admin",
+        "creado_en": "2024-12-24T12:52:00.000Z"
+      },
+      {
+        "id": 2,
+        "nombre": "Diego Díaz",
+        "email": "diego.diaz.2@example.com",
+        "rol": "operador",
+        "creado_en": "2025-01-10T12:33:00.000Z"
+      }
+    ]
+  }
+}
