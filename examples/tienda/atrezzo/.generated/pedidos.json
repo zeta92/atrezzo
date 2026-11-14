@@ -92,23 +92,23 @@
     "clientes": [
       {
         "id": 1,
-        "nombre": "Librería Hermanos Gil",
-        "email": "contacto1@libreria.hermanos.gil.example",
-        "ciudad": "Málaga",
+        "nombre": "Clearwater Partners",
+        "email": "contacto1@clearwater.partners.example",
+        "ciudad": "Vienna",
         "creado_en": "2025-02-02T08:32:00.000Z"
       },
       {
         "id": 2,
-        "nombre": "Talleres Levante",
-        "email": "contacto2@talleres.levante.example",
-        "ciudad": "Sevilla",
+        "nombre": "Northwind Industries",
+        "email": "contacto2@northwind.industries.example",
+        "ciudad": "Amsterdam",
         "creado_en": "2025-02-18T11:10:00.000Z"
       },
       {
         "id": 3,
-        "nombre": "Librería Mediterráneo",
-        "email": "contacto3@libreria.mediterraneo.example",
-        "ciudad": "Madrid",
+        "nombre": "Clearwater Systems",
+        "email": "contacto3@clearwater.systems.example",
+        "ciudad": "London",
         "creado_en": "2024-12-10T04:55:00.000Z"
       }
     ],
@@ -477,15 +477,15 @@
     "usuarios": [
       {
         "id": 1,
-        "nombre": "Valeria Navarro",
-        "email": "valeria.navarro.1@example.com",
+        "nombre": "Iris Costa",
+        "email": "iris.costa.1@example.com",
         "rol": "admin",
         "creado_en": "2024-12-24T12:52:00.000Z"
       },
       {
         "id": 2,
-        "nombre": "Diego Díaz",
-        "email": "diego.diaz.2@example.com",
+        "nombre": "Jonas Quinn",
+        "email": "jonas.quinn.2@example.com",
         "rol": "operador",
         "creado_en": "2025-01-10T12:33:00.000Z"
       }

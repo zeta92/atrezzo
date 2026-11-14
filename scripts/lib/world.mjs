@@ -3,18 +3,18 @@
 import { createHash } from 'node:crypto';
 import { createRng } from './prng.mjs';
 
-const FIRST = ['Lucía', 'Hugo', 'Martina', 'Mateo', 'Sofía', 'Leo', 'Julia', 'Daniel', 'Paula', 'Álvaro',
-  'Carmen', 'Pablo', 'Valeria', 'Adrián', 'Noa', 'Marcos', 'Irene', 'Javier', 'Elena', 'Diego'];
-const LAST = ['García', 'Martínez', 'López', 'Sánchez', 'Pérez', 'Gómez', 'Martín', 'Jiménez', 'Ruiz',
-  'Hernández', 'Díaz', 'Moreno', 'Álvarez', 'Romero', 'Navarro', 'Torres', 'Domínguez', 'Vázquez'];
-const COMPANY_A = ['Talleres', 'Distribuciones', 'Comercial', 'Suministros', 'Ferretería', 'Bodegas',
-  'Imprenta', 'Construcciones', 'Panadería', 'Óptica', 'Farmacia', 'Librería'];
-const COMPANY_B = ['Norte', 'del Sur', 'Atlántico', 'Ibérica', 'La Ribera', 'El Pilar', 'Mediterráneo',
-  'Hermanos Gil', 'San Roque', 'Levante', 'Las Encinas', 'Miramar'];
-const CITIES = ['Madrid', 'Barcelona', 'Valencia', 'Sevilla', 'Zaragoza', 'Málaga', 'Bilbao', 'Murcia',
-  'Valladolid', 'Vigo', 'Gijón', 'Granada'];
-const PRODUCTS = ['Tornillo', 'Arandela', 'Bisagra', 'Cerradura', 'Taladro', 'Lija', 'Cinta', 'Pintura',
-  'Brocha', 'Martillo', 'Llave inglesa', 'Nivel'];
+const FIRST = ['Emma', 'Liam', 'Olivia', 'Noah', 'Ava', 'Ethan', 'Mia', 'Lucas', 'Nora', 'Owen',
+  'Chloe', 'Adam', 'Iris', 'Felix', 'Ruby', 'Hugo', 'Alice', 'Leo', 'Maya', 'Jonas'];
+const LAST = ['Bennett', 'Carter', 'Hayes', 'Novak', 'Fischer', 'Moreau', 'Rossi', 'Silva', 'Larsen', 'Weber',
+  'Doyle', 'Marsh', 'Quinn', 'Keller', 'Brandt', 'Costa', 'Hale', 'Frost', 'Vance', 'Reyes'];
+const COMPANY_A = ['Northwind', 'Brightline', 'Copperfield', 'Blue Oak', 'Ironwood', 'Harbor',
+  'Summit', 'Lantern', 'Redwood', 'Meridian', 'Stonebridge', 'Clearwater'];
+const COMPANY_B = ['Trading', 'Logistics', 'Supply', 'Studio', 'Works', 'Foods',
+  'Systems', 'Partners', 'Group', 'Industries', 'Labs', 'Collective'];
+const CITIES = ['London', 'Berlin', 'Lisbon', 'Amsterdam', 'Dublin', 'Vienna', 'Milan', 'Prague',
+  'Copenhagen', 'Zurich', 'Porto', 'Ghent'];
+const PRODUCTS = ['Bolt', 'Washer', 'Hinge', 'Lock', 'Drill', 'Sandpaper', 'Tape', 'Paint',
+  'Brush', 'Hammer', 'Wrench', 'Level'];
 
 function slug(s) {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '');

@@ -15,7 +15,7 @@ const PETSTORE = join(ROOT, 'tests/fixtures/petstore.yaml');
 test('emitYaml: round-trips through our parser, quoting where needed', () => {
   const value = {
     openapi: '3.1.0', n: 3, f: 1.5, t: true, nothing: null, empty: {}, list: [],
-    odd: ['yes', 'no', '123', '2025-01-01', 'a: b', '#x', '- y', '', ' sp', 'Ferretería Norte', '{x}', 'a,b', "it's"],
+    odd: ['yes', 'no', '123', '2025-01-01', 'a: b', '#x', '- y', '', ' sp', 'Café Nord', '{x}', 'a,b', "it's"],
     '/api/orders': { get: { responses: { 200: { description: 'ok' } } } },
     nested: [{ a: 1, b: [1, 2] }, [3, 4], { c: { d: 'e' } }],
   };

@@ -64,7 +64,7 @@ paths:
                 $ref: "#/components/schemas/Pet"
   /owners:
     get:
-      summary: Propietarios paginados por página
+      summary: Paginated owners
       parameters:
         - name: page
           in: query
