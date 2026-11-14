@@ -111,6 +111,42 @@ Semántica de la proyección (idéntica en `serve` y en los handlers MSW, mismo 
 5. Parámetros no declarados se ignoran y se listan en `X-Atrezzo-Ignored`.
 6. Solo GET/HEAD. Escrituras ⇒ 405: el mock da forma a los datos, no implementa reglas de negocio.
 
+### Tapar un hueco (endpoint que la app pide y el escenario no tiene)
+
+`atrezzo serve` registra cada petición fuera de contrato (`atrezzo misses`; detalle en el README, "Cuando falta una ruta"). Para taparla se añade **una entidad y un endpoint**, nunca datos (skill `/atrezzo:hueco`):
+
+```yaml
+# 404 recibido: { "atrezzo": { "hueco": "GET /api/users", ... } }
+# el front hace: fetch(`/api/users?rol=${rol}&limit=20&offset=${o}`) y lee
+#   res.items[i].nombre · .email · .rol · .avatar_url · .cliente.nombre · res.total
+world:
+  clientes: 3
+  usuarios:
+    total: 8
+    ref: clientes                 # → client_id; permite include
+    campos:                       # solo lo que el front lee (sustituye la plantilla de la entidad)
+      nombre: texto
+      email: email
+      rol: [admin, operador]
+      avatar_url: url
+endpoints:
+  - path: /api/users              # exactamente el `path` del hueco (sin prefijo distinto, sin barra final)
+    entity: usuarios
+    filters: [rol]                # solo lo que el front envía
+    pagination: { param_limit: limit, param_offset: offset }
+    include: [clientes]           # u.cliente.nombre
+    shape: envelope
+    pick: items                   # res.items + total/limit/offset
+```
+
+Reglas:
+- `path` es la ruta del hueco tal cual (el `path` de `misses --json`); si el hueco era `GET /api/users/:id`, basta el endpoint de la colección (el detalle viene con `detail: true`, por defecto).
+- `filters` y `pagination`: solo los parámetros que aparecen en la `query` del hueco o en la llamada del front. Lo demás se ignora y sale en `X-Atrezzo-Ignored`.
+- Campos: si hay contrato (OpenAPI/tipos), mándalo él; `atrezzo import` los escribe solo. Sin contrato, los que el front lee. Sin `campos`, las entidades conocidas (`usuarios`, `clientes`, `pedidos`, `productos`) traen su plantilla.
+- Después: `atrezzo world <escenario.yaml>` y `POST /__atrezzo/reload` (o reinicia `serve`). El hueco pasa a `resolved: true` en cuanto el mock sirve la ruta.
+- Rutas anidadas (`/api/clientes/:id/pedidos`) no se pueden declarar (`path` sin `:param`): usa la colección con filtro (`/api/orders?client_id=`) si el front lo permite.
+- Escrituras (POST/PUT/PATCH/DELETE): no se declaran. `serve --on-miss stub` responde 200 `{}` para explorar.
+
 ### Aserciones (`expect`)
 | campo | regla |
 |---|---|

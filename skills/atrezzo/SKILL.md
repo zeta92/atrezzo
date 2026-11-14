@@ -18,6 +18,7 @@ CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs <comando>` (en adelante `atrezz
 | "quiero 12 pedidos, 3 con incidencia", "un estado vacío", "datos para esta pantalla" | `/atrezzo:escena` |
 | "comprueba la pantalla", "no salen las filas", "¿cuadra?" | `/atrezzo:verifica` |
 | "estoy en X y quiero llegar a Y", "qué estados necesito para este flujo" | `/atrezzo:desde-intencion` |
+| "la app pide una ruta que no existe", "404 del mock", "mock incompleto", respuesta con `atrezzo.miss`, `doctor`/`atrezzo misses` con huecos sin resolver | `/atrezzo:hueco` |
 
 Si no hay config, empieza siempre por `/atrezzo:init`. Si no hay contrato, `/atrezzo:captura` antes de `/atrezzo:escena`.
 
@@ -26,7 +27,7 @@ Si no hay config, empieza siempre por `/atrezzo:init`. Si no hay contrato, `/atr
 1. **Mundo** — entidades, conteos, distribuciones y semilla (`world:` en el escenario).
 2. **Escenario** — endpoints como proyecciones + `path` de pantallas + `expect`. Ver `${CLAUDE_PLUGIN_ROOT}/references/escenario.md`.
 3. **Generar** — `atrezzo world <escenario.yaml>` escribe JSON + `runtime.mjs` y lo del runtime de la config (handlers MSW, seed.sql de Supabase, OpenAPI para Prism o mappings de WireMock); `atrezzo runtimes` dice cuál y por qué.
-4. **Servir** — `atrezzo serve --escenario <nombre>` (HTTP real; `POST /__atrezzo/reset` cambia de escenario).
+4. **Servir** — `atrezzo serve --escenario <nombre>` (HTTP real; `POST /__atrezzo/reset` cambia de escenario, `POST /__atrezzo/reload` relee el YAML). Lo que la app pida y el escenario no declare queda registrado como hueco (`atrezzo misses`) → `/atrezzo:hueco`.
 5. **Verificar** — `atrezzo verify <flujo.yaml>`; si falla, `--diagnose` y diagnostica antes de tocar nada.
 
 ## Reglas duras

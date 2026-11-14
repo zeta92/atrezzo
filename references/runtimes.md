@@ -41,8 +41,8 @@ En un monorepo se suman las señales de la raíz, del front y del backend (p. ej
 
 ### builtin (`atrezzo serve`)
 
-- **Hace**: sirve las proyecciones por HTTP (`GET /api/x?filtro=&limit=&offset=`, detalle `/:id`, envoltorios, `X-Total-Count`), cambia de escenario sin reiniciar (`POST /__atrezzo/reset {"escenario":"x"}`), estáticos con `--static`.
-- **No hace**: escrituras (405), latencias ni errores inyectados.
+- **Hace**: sirve las proyecciones por HTTP (`GET /api/x?filtro=&limit=&offset=`, detalle `/:id`, envoltorios, `X-Total-Count`), cambia de escenario sin reiniciar (`POST /__atrezzo/reset {"escenario":"x"}`), relee el YAML (`POST /__atrezzo/reload`), estáticos con `--static`, y registra los huecos (`atrezzo misses`).
+- **No hace**: escrituras (405, registradas como hueco), latencias ni errores inyectados.
 - **Arranque**: `atrezzo serve --escenario pedidos --port 4010`.
 
 ### msw
@@ -110,6 +110,30 @@ WireMock no puede ejecutar la proyección: Handlebars no tiene una forma sensata
   Para cambiar de escenario sin reiniciar: `POST /__admin/mappings/reset` + `POST /__admin/mappings/import` con los mappings del otro escenario.
 
 Comprobado con WireMock standalone 3.13.2 (Java 21) sobre el `pedidos` del ejemplo: 15 stubs cargados; `/api/orders`, `?estado=incidencia` y `?limit=12` dan 40/3/12 filas con su `X-Total-Count`; `/api/orders/7` sale por plantilla; `/api/orders/999` → 404; `?estado=incidencia&limit=12` (no pregenerada) → 501.
+
+## Huecos en cada runtime
+
+Un hueco es una petición que el escenario no declara. **Solo `atrezzo serve` (builtin) los registra** en `atrezzo/.atrezzo/misses.json`; el resto de runtimes se comporta así:
+
+| runtime | qué recibe la app ante una ruta no declarada | cómo verlo | se registra en `misses.json` |
+|---|---|---|---|
+| builtin (`serve`) | 404 con `{ error, atrezzo: { miss, hueco, veces, siguiente, endpoints } }` (405 si es una escritura sobre una ruta del contrato); con `--on-miss stub`, 200 `[]`/`{}` + `x-atrezzo-stub: true` | `atrezzo misses`, `GET /__atrezzo/misses`, `doctor` | sí |
+| msw | depende de `onUnhandledRequest`: el arranque sugerido usa `'bypass'` (la petición sale a la red real, o falla si no hay backend). `'warn'` la imprime en consola; `'error'` la rompe | la consola del navegador/test: `[MSW] Warning: intercepted a request without a matching request handler: GET /api/users` | no |
+| prism | no aplica: Prism sirve el OpenAPI que genera `world`, que contiene exactamente los endpoints del escenario; lo demás es 404 de Prism (`NO_PATH_MATCHED_ERROR`) | log de Prism | no |
+| wiremock | rutas declaradas con una query no pregenerada → **501** con `{ error, generadas: [...] }` (la lista de combinaciones que sí existen). Rutas no declaradas → 404 propio de WireMock ("Request was not matched", con near misses) | `GET /__admin/requests/unmatched` | no |
+| supabase | no hay rutas: supabase-js consulta `/rest/v1/<tabla>`. Una tabla que no existe → error de PostgREST (`42P01` / `PGRST205`, "relation does not exist") | respuesta de PostgREST | no |
+
+Para cazar huecos con MSW sin cambiar de runtime, arranca la pantalla una vez contra `atrezzo serve` (mismo motor, mismas rutas) o usa un `onUnhandledRequest` propio:
+
+```js
+await setupWorker(...handlers).start({
+  onUnhandledRequest(req, print) {
+    if (new URL(req.url).pathname.startsWith('/api/')) print.warning(); // hueco: /atrezzo:hueco
+  },
+});
+```
+
+Rellenar el hueco es igual en todos: entidad + endpoint en el escenario (`/atrezzo:hueco`) y `atrezzo world`, que regenera handlers, OpenAPI, mappings o `seed.sql`.
 
 Latencias, errores 5xx y timeouts no son parte del mundo: inyéctalos en el runtime (MSW `delay()`/`HttpResponse.error()`, WireMock `fixedDelayMilliseconds`/`fault`), no en el escenario.
 

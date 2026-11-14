@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // atrezzo CLI. Messages in Spanish; code in English.
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve, join, relative, dirname } from 'node:path';
 import { AtrezzoError, EXIT } from './lib/errors.mjs';
 import { loadConfig, runtimeList } from './lib/config.mjs';
@@ -14,7 +14,8 @@ import { runInit } from './lib/init.mjs';
 import { emitRuntimes, parseRuntimeList, rankRuntimes, SERVABLE, getAdapter } from './lib/runtimes/index.mjs';
 import { detectWorkspace, projectContext } from './lib/project.mjs';
 import { flowRequests } from './lib/flows.mjs';
-import { runImport, formatImportReport } from './lib/openapi.mjs';
+import { runImport, formatImportReport, loadSpec } from './lib/openapi.mjs';
+import { createMissStore, missesFile, hintFor, formatMisses } from './lib/misses.mjs';
 
 const HELP = `atrezzo — mocks de API a partir de estados de aplicación
 
@@ -31,8 +32,14 @@ Comandos:
       después, lo de cada runtime de la config: msw handlers · supabase seed.sql/reset.sh ·
       prism <escenario>.openapi.yaml · wiremock mappings/ + __files/ · builtin nada más.
   serve [--escenario <nombre>] [--port 4010] [--host 127.0.0.1] [--static <dir>] [--escenarios <dir>] [--runtime builtin]
+        [--on-miss log|stub]
       Servidor HTTP con las proyecciones (runtimes builtin/msw). Con otro runtime imprime cómo
-      arrancarlo y sale con 2. Control: POST /__atrezzo/reset {"escenario":"x"}, GET /__atrezzo/state.
+      arrancarlo y sale con 2. Control: POST /__atrezzo/reset {"escenario":"x"}, POST /__atrezzo/reload,
+      GET /__atrezzo/state, GET|DELETE /__atrezzo/misses. Lo que no está en el contrato se registra
+      como hueco; --on-miss stub responde 200 vacío ([] o {}) con x-atrezzo-stub en vez de 404.
+  misses [--json] [--clear] [--dir .]
+      Huecos que ha visto serve (rutas pedidas por la app y no declaradas), con veces, estado y
+      qué hacer: import si el contrato la tiene, o la skill /atrezzo:hueco.
   runtimes [--dir .]
       Lista los adaptadores, su puntuación en este proyecto, el motivo y cómo se arrancan.
   import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
@@ -47,7 +54,7 @@ Comandos:
 
 Códigos de salida: 0 OK · 1 aserción fallida · 2 no verificable (falta herramienta o mock) · 3 entrada inválida`;
 
-const BOOLEAN = new Set(['install', 'force', 'diagnose', 'no-reset', 'json', 'help']);
+const BOOLEAN = new Set(['install', 'force', 'diagnose', 'no-reset', 'json', 'help', 'clear']);
 
 export function parseArgs(argv) {
   const pos = [];
@@ -183,6 +190,7 @@ async function cmdServe({ flags }) {
   const mock = createMockServer({
     scenariosDir, scenario: flags.escenario, staticDir: staticDir && resolve(staticDir),
     generatedDir: join(cfg._dir, cfg.generatedDir), log: (s) => out(`  ${s}`),
+    missesFile: missesFile(cfg), onMiss: flags['on-miss'] ?? 'log',
   });
   let addr;
   try { addr = await mock.listen(port, flags.host ?? '127.0.0.1'); } catch (e) {
@@ -191,8 +199,9 @@ async function cmdServe({ flags }) {
   const d = mock.state.dataset;
   out(`atrezzo serve · escenario "${d.scenario}" (semilla ${d.seed}) · http://${addr.address}:${addr.port}`);
   for (const ep of d.endpoints) out(`  GET ${ep.path}`);
-  out('  POST /__atrezzo/reset  ·  GET /__atrezzo/state');
+  out('  POST /__atrezzo/reset  ·  POST /__atrezzo/reload  ·  GET /__atrezzo/state  ·  GET|DELETE /__atrezzo/misses');
   if (staticDir) out(`  estáticos: ${resolve(staticDir)}`);
+  out(`  huecos: ${relative(process.cwd(), missesFile(cfg)) || missesFile(cfg)} (--on-miss ${flags['on-miss'] ?? 'log'})`);
   const stop = () => mock.close().then(() => process.exit(0));
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
@@ -248,6 +257,41 @@ function cmdImport({ pos, flags }) {
   return r.written.valid ? EXIT.OK : EXIT.INVALID;
 }
 
+function cmdMisses({ flags }) {
+  const cfg = loadConfig(flags.dir ?? '.');
+  const store = createMissStore(missesFile(cfg));
+  if (flags.clear) {
+    const n = store.list().length;
+    store.clear();
+    out(flags.json ? JSON.stringify({ misses: [], sinResolver: 0, borrados: n }) : `${n} huecos borrados (${relative(process.cwd(), store.file) || store.file}).`);
+    return EXIT.OK;
+  }
+  const list = store.list();
+  if (flags.json) {
+    out(JSON.stringify({ misses: list, sinResolver: list.filter((m) => !m.resolved).length }, null, 2));
+    return EXIT.OK;
+  }
+  let spec = null;
+  const contract = cfg.workspace?.contract ?? null;
+  const notes = [];
+  if (contract) {
+    try { spec = loadSpec(join(cfg._dir, contract)); } catch (e) { notes.push(`contrato ${contract} ilegible: ${e.message.split('\n')[0]}`); }
+  }
+  const scenarios = [];
+  const sdir = join(cfg._dir, cfg.scenariosDir);
+  if (existsSync(sdir)) {
+    for (const f of readdirSync(sdir).filter((x) => /\.(ya?ml|json)$/.test(x)).sort()) {
+      try { scenarios.push(loadScenario(join(sdir, f))); } catch { /* doctor reports invalid scenarios */ }
+    }
+  }
+  const hints = new Map(list.filter((m) => !m.resolved).map((m) => [m, hintFor(m, { spec, contract, scenarios })]));
+  out(`atrezzo misses · ${relative(process.cwd(), store.file) || store.file}${contract ? ` · contrato: ${contract}` : ' · sin workspace.contract'}`);
+  out(formatMisses(list, hints));
+  for (const n of notes) out(`  aviso: ${n}`);
+  if (hints.size) out('Detalle de cada hueco (query, referer, accept): atrezzo misses --json · borrar: atrezzo misses --clear');
+  return EXIT.OK;
+}
+
 function cmdDoctor({ flags }) {
   const dir = resolve(flags.dir ?? '.');
   const r = doctor(dir);
@@ -261,7 +305,7 @@ function cmdDoctor({ flags }) {
 export async function main(argv) {
   const args = parseArgs(argv);
   if (!args.cmd || args.flags.help || args.cmd === 'help') { out(HELP); return EXIT.OK; }
-  const cmds = { init: cmdInit, world: cmdWorld, serve: cmdServe, verify: cmdVerify, doctor: cmdDoctor, runtimes: cmdRuntimes, import: cmdImport };
+  const cmds = { init: cmdInit, world: cmdWorld, serve: cmdServe, verify: cmdVerify, doctor: cmdDoctor, runtimes: cmdRuntimes, import: cmdImport, misses: cmdMisses };
   const fn = cmds[args.cmd];
   if (!fn) throw new AtrezzoError(`Comando desconocido "${args.cmd}". Comandos: ${Object.keys(cmds).join(', ')}`);
   return fn(args);

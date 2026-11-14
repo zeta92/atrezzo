@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { CONFIG_FILE, loadConfig } from './config.mjs';
 import { loadScenario } from './scenario.mjs';
 import { generateWorld } from './world.mjs';
+import { missesFile, readMisses } from './misses.mjs';
 
 function readPkg(dir) {
   const f = join(dir, 'package.json');
@@ -86,6 +87,14 @@ export function doctor(dir) {
         }
       }
     }
+  }
+  if (cfg) {
+    const misses = readMisses(missesFile(cfg));
+    const open = misses.filter((m) => !m.resolved);
+    if (open.length) {
+      const top = open.slice(0, 3).map((m) => `${m.method} ${m.path} (${m.times}×)`).join(', ');
+      add('warn', `${open.length} hueco${open.length === 1 ? '' : 's'} sin resolver (de ${misses.length} registrados)`, `${top}${open.length > 3 ? ', …' : ''} → atrezzo misses · skill /atrezzo:hueco`);
+    } else if (misses.length) add('ok', `huecos: ${misses.length} registrados, todos resueltos`);
   }
   return { checks, ok: !checks.some((c) => c.level === 'error'), info };
 }

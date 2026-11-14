@@ -34,6 +34,7 @@ Requisitos: Node ≥ 22. Sin dependencias en tiempo de ejecución (parser YAML y
 | `/atrezzo:escena` | intención ("12 filas, 3 con incidencia") → escenario versionado |
 | `/atrezzo:verifica` | sirve, verifica y diagnostica antes de tocar el escenario |
 | `/atrezzo:desde-intencion` | "estoy en X, quiero Y" → ruta de estados, escenarios por paso, huecos |
+| `/atrezzo:hueco` | la app pide una ruta que el escenario no tiene → busca el consumidor y el contrato, parchea el escenario, recarga y comprueba |
 
 > En Claude Code 2.1.319 el comando de una skill de plugin es `/<plugin>:<directorio>`; el `name:` del frontmatter no lo cambia. Por eso los comandos llevan el prefijo `atrezzo-` del directorio.
 
@@ -44,7 +45,8 @@ node scripts/cli.mjs init [--dir .] [--runtime auto|builtin|msw|supabase|prism|w
 node scripts/cli.mjs runtimes
 node scripts/cli.mjs import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
 node scripts/cli.mjs world <escenario.yaml> [--out dir]
-node scripts/cli.mjs serve [--escenario demo] [--port 4010] [--static dir] [--runtime builtin]
+node scripts/cli.mjs serve [--escenario demo] [--port 4010] [--static dir] [--runtime builtin] [--on-miss log|stub]
+node scripts/cli.mjs misses [--json] [--clear]
 node scripts/cli.mjs verify <flujo.yaml> [--url …] [--driver http|playwright] [--diagnose] [--no-reset] [--json]
 node scripts/cli.mjs doctor
 ```
@@ -55,7 +57,30 @@ node scripts/cli.mjs doctor
 
 Códigos de salida: `0` OK · `1` aserción fallida · `2` no verificable (sin mock, sin playwright o aserción sin datos; **nunca** se reporta como OK) · `3` entrada inválida.
 
-`serve` expone `GET /api/<recurso>?limit=&offset=&<filtros>`, el detalle `/<recurso>/:id`, `POST /__atrezzo/reset {"escenario":"x"}` y `GET /__atrezzo/state`. Usa el mismo motor (`scripts/lib/contract.mjs`) que los handlers MSW: `world` lo copia byte a byte como `runtime.mjs`.
+`serve` expone `GET /api/<recurso>?limit=&offset=&<filtros>`, el detalle `/<recurso>/:id`, `POST /__atrezzo/reset {"escenario":"x"}`, `POST /__atrezzo/reload` (relee el YAML del escenario actual), `GET /__atrezzo/state` y `GET|DELETE /__atrezzo/misses`. Usa el mismo motor (`scripts/lib/contract.mjs`) que los handlers MSW: `world` lo copia byte a byte como `runtime.mjs`.
+
+## Cuando falta una ruta
+
+Si la app pide algo que el escenario no declara, `serve` no se limita a dar un 404: **registra el hueco** y dice qué hacer.
+
+```
+$ curl -s localhost:4010/api/users
+{"error":"GET /api/users no está en el contrato del escenario \"catalogo\"",
+ "atrezzo":{"miss":true,"hueco":"GET /api/users","veces":3,"siguiente":"atrezzo misses","endpoints":["/api/products"]}}
+
+$ atrezzo misses
+GET /api/users      3 veces    sin resolver  hace 12 s   → el contrato lo tiene (GET /users) → atrezzo import api/openapi.yaml
+GET /api/invoices   1 vez      sin resolver  hace 40 s   → no está en el contrato → añade el endpoint al escenario (skill /atrezzo:hueco)
+POST /api/orders    2 veces    sin resolver  hace 1 min  → mutación: atrezzo solo proyecta lecturas → serve --on-miss stub (o no se resuelve)
+```
+
+- Se guarda en `atrezzo/.atrezzo/misses.json` (junto a `.generated/`; la carpeta lleva su propio `.gitignore`): un objeto indexado por `MÉTODO ruta` con `method`, `path`, `ejemplo`, `query`, `times`, `first_seen`, `last_seen`, `referer`, `accept`, `resolved`. La misma ruta solo incrementa `times`; los segmentos con pinta de id (`/users/42`, UUID, hex largo) se colapsan a `:id`, y hay un tope de 200 entradas (se descartan primero las resueltas más antiguas).
+- La `query` y el `referer` se guardan sin secretos: parámetros como `token`, `api_key`, `password`, `session`, `auth`, `signature`… y valores con forma de JWT o clave larga salen como `***`; el referer, sin query. El log de `serve` también enmascara.
+- No son huecos: estáticos (`/favicon.ico`, `.js`, `.css`, imágenes, fuentes) ni rutas `/__atrezzo/*`. Sí lo son las escrituras sobre una ruta del contrato (`POST /api/orders` → 405 con el mismo cuerpo).
+- Cuando añades el endpoint, ejecutas `atrezzo world` y `POST /__atrezzo/reload`, la siguiente petición que se sirve marca el hueco `resolved: true`. `doctor` avisa de los que quedan sin resolver.
+- `atrezzo serve --on-miss stub` responde 200 con `[]` (ruta con pinta de colección) o `{}` (detalle, singular o escritura) y `x-atrezzo-stub: true`, para explorar sin que la pantalla reviente. Se registra igual y **no** cuenta como resuelto. Nunca es el modo por defecto.
+
+Para rellenarlo, la skill `/atrezzo:hueco` busca en el front quién hace la llamada y qué campos lee, usa el contrato como fuente de verdad del shape y añade entidad + endpoint al escenario (los datos los sigue generando el mundo). Solo `serve` registra huecos; qué pasa en los demás runtimes está en [`references/runtimes.md`](references/runtimes.md#huecos-en-cada-runtime).
 
 ## Proyectos sin Supabase y proyectos con Supabase
 
@@ -133,10 +158,10 @@ La app habla con su Supabase local de siempre; `pedidos` tiene exactamente 40 fi
 
 ```
 .claude-plugin/plugin.json   manifiesto
-skills/                      router + 5 skills
+skills/                      router + 6 skills
 scripts/cli.mjs              CLI (bin: atrezzo)
 scripts/lib/                 prng, yaml, yaml-emit, world, scenario, contract, codegen, serve, verify, doctor, init, config,
-                             project (monorepo/front/back), openapi (import), flows
+                             project (monorepo/front/back), openapi (import), flows, misses (huecos)
 scripts/lib/runtimes/        builtin, msw, supabase, prism, wiremock + registro (index.mjs)
 references/                  escenario.md · suposiciones.md · runtimes.md (runtimes, monorepo)
 examples/tienda/             ejemplo ejecutable end-to-end
@@ -153,4 +178,5 @@ Ver [`examples/tienda`](examples/tienda/README.md): `world` → `serve` → `ver
 - El driver `playwright` está probado con un `page` falso y con Chromium real (`tests/headers.test.mjs`, se saltan si no hay `playwright-core` + Chromium). Para apps con sesión, el flujo puede declarar `headers` (p. ej. `Cookie: "${APP_COOKIE}"`); ver `references/escenario.md`.
 - Errores HTTP, latencias y escrituras no son parte del mundo: se inyectan en el runtime (ver `references/runtimes.md`).
 - Runtimes: solo `builtin` y `msw` ejecutan la proyección. **Prism** devuelve examples (no filtra ni pagina); **WireMock** sirve combinaciones pregeneradas y responde 501 al resto; **Supabase** carga el mundo en Postgres y la forma de las respuestas es la de PostgREST. Detalle en `references/runtimes.md`.
+- Huecos: solo los registra `atrezzo serve` (no MSW, Prism, WireMock ni Supabase). Una ruta pedida con prefijos distintos (`/api/users` y `/users`) son dos huecos. Las rutas anidadas (`/api/clientes/:id/pedidos`) se registran pero el motor no las proyecta. `--on-miss stub` no persiste escrituras.
 - `import`: solo GET de colecciones (array de objetos o envoltorio `data`/`items`/`results`/`records`/`content`); campos anidados se omiten (lo dice el informe); ids siempre enteros 1..n; `$ref` externos no; specs YAML con anclas o colecciones `{…}` multilínea → conviértelos a JSON.
