@@ -26,14 +26,14 @@ export function parseHeaders(raw, field, issues, env = process.env) {
   const out = {};
   if (raw === undefined || raw === null) return out;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
-    issues.add(field, 'debe ser un mapa Nombre: "valor"');
+    issues.add(field, 'must be a map Name: "value"');
     return out;
   }
   for (const [name, value] of Object.entries(raw)) {
     const f = `${field}.${name}`;
-    if (!TOKEN.test(name)) { issues.add(f, 'nombre de cabecera inválido'); continue; }
+    if (!TOKEN.test(name)) { issues.add(f, 'invalid header name'); continue; }
     if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
-      issues.add(f, `debe ser texto; es ${Array.isArray(value) ? 'una lista' : value === null ? 'null' : typeof value}`);
+      issues.add(f, `must be a string; got ${Array.isArray(value) ? 'a list' : value === null ? 'null' : typeof value}`);
       continue;
     }
     let missing = null;
@@ -41,8 +41,8 @@ export function parseHeaders(raw, field, issues, env = process.env) {
       if (env[v] === undefined) { missing ??= v; return ''; }
       return env[v];
     });
-    if (missing) { issues.add(f, `usa \${${missing}} pero esa variable de entorno no está definida`); continue; }
-    if (/[\r\n]/.test(expanded)) { issues.add(f, 'el valor no puede contener saltos de línea'); continue; }
+    if (missing) { issues.add(f, `uses \${${missing}} but that environment variable is not set`); continue; }
+    if (/[\r\n]/.test(expanded)) { issues.add(f, 'the value cannot contain line breaks'); continue; }
     out[name] = expanded.trim();
   }
   return out;

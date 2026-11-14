@@ -14,7 +14,7 @@ const get = (path) => {
 };
 const ids = (r) => r.body.map((x) => x.id);
 
-test('limit/offset devuelven la ventana esperada', () => {
+test('limit/offset return the expected window', () => {
   const r = get('/api/orders?limit=12');
   assert.equal(r.status, 200);
   assert.deepEqual(ids(r), Array.from({ length: 12 }, (_, i) => i + 1));
@@ -22,31 +22,31 @@ test('limit/offset devuelven la ventana esperada', () => {
   assert.deepEqual(ids(get('/api/orders?limit=5&offset=10')), [11, 12, 13, 14, 15]);
 });
 
-test('páginas consecutivas cubren todo sin solapes', () => {
+test('consecutive pages cover everything without overlap', () => {
   const all = [];
   for (let off = 0; off < 40; off += 12) all.push(...ids(get(`/api/orders?limit=12&offset=${off}`)));
   assert.deepEqual(all, Array.from({ length: 40 }, (_, i) => i + 1));
 });
 
-test('limit mayor que el total devuelve todo', () => {
+test('limit above the total returns everything', () => {
   assert.equal(get('/api/orders?limit=1000').body.length, 40);
 });
 
-test('offset fuera de rango devuelve []', () => {
+test('out-of-range offset returns []', () => {
   const r = get('/api/orders?limit=10&offset=40');
   assert.deepEqual(r.body, []);
   assert.equal(r.headers['x-total-count'], '40');
   assert.deepEqual(get('/api/orders?offset=999').body, []);
 });
 
-test('limit/offset inválidos ⇒ 400 con motivo', () => {
+test('invalid limit/offset ⇒ 400 with a reason', () => {
   const r = get('/api/orders?limit=-3');
   assert.equal(r.status, 400);
   assert.match(r.body.error, /limit/);
   assert.equal(get('/api/orders?offset=abc').status, 400);
 });
 
-test('filtros por igualdad y lista separada por comas', () => {
+test('equality filters and comma-separated lists', () => {
   const inc = get('/api/orders?estado=incidencia');
   assert.equal(inc.body.length, 3);
   assert.ok(inc.body.every((p) => p.estado === 'incidencia'));
@@ -56,19 +56,19 @@ test('filtros por igualdad y lista separada por comas', () => {
   assert.equal(get('/api/orders?estado=incidencia&limit=2').body.length, 2);
 });
 
-test('parámetros no declarados se ignoran y se informa en cabecera', () => {
-  const r = get('/api/orders?color=rojo');
+test('undeclared parameters are ignored and reported in a header', () => {
+  const r = get('/api/orders?color=red');
   assert.equal(r.body.length, 40);
   assert.equal(r.headers['x-atrezzo-ignored'], 'color');
 });
 
-test('orden estable y determinista', () => {
+test('stable, deterministic sort', () => {
   const ds = { ...dataset, endpoints: [{ ...dataset.endpoints[0], sort: [{ field: 'estado', dir: 'asc' }] }] };
   const e = createEngine(ds);
   const run = () => e.handle({ pathname: '/api/orders', query: new URLSearchParams() }).body.map((p) => p.id);
   const a = run();
   assert.deepEqual(a, run());
-  // dentro de cada estado, se conserva el orden original por id (estabilidad)
+  // within each status, the original id order is kept (stability)
   const body = e.handle({ pathname: '/api/orders', query: new URLSearchParams() }).body;
   for (const estado of ['incidencia', 'pagado', 'pendiente']) {
     const group = body.filter((p) => p.estado === estado).map((p) => p.id);
@@ -77,13 +77,13 @@ test('orden estable y determinista', () => {
   assert.deepEqual([...new Set(body.map((p) => p.estado))], ['incidencia', 'pagado', 'pendiente']);
 });
 
-test('orden descendente', () => {
+test('descending sort', () => {
   const ds = { ...dataset, endpoints: [{ ...dataset.endpoints[0], sort: [{ field: 'creado_en', dir: 'desc' }] }] };
   const body = createEngine(ds).handle({ pathname: '/api/orders' }).body;
   for (let i = 1; i < body.length; i++) assert.ok(body[i - 1].creado_en >= body[i].creado_en);
 });
 
-test('detalle /:id existe o da 404; include embebe el padre', () => {
+test('detail /:id exists or 404s; include embeds the parent', () => {
   assert.equal(get('/api/orders/7').body.id, 7);
   assert.equal(get('/api/orders/999').status, 404);
   const ds = { ...dataset, endpoints: [{ ...dataset.endpoints[0], include: ['clientes'] }] };
@@ -91,9 +91,9 @@ test('detalle /:id existe o da 404; include embebe el padre', () => {
   assert.equal(row.cliente.id, row.client_id);
 });
 
-test('escrituras ⇒ 405 (el mock no implementa reglas de negocio)', () => {
+test('writes ⇒ 405 (the mock does not implement business rules)', () => {
   assert.equal(engine.handle({ method: 'POST', pathname: '/api/orders' }).status, 405);
-  assert.equal(engine.handle({ pathname: '/api/otra' }), null);
+  assert.equal(engine.handle({ pathname: '/api/other' }), null);
 });
 
 test('shape envelope', () => {

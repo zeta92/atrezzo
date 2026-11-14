@@ -14,8 +14,8 @@ world:
   clientes: 3
   pedidos:
     total: 40
-    distribucion: { pagado: 34, pendiente: 3, incidencia: 3 }
-    valor: { min: 20, max: 900, moneda: EUR }
+    distribution: { pagado: 34, pendiente: 3, incidencia: 3 }
+    amount: { min: 20, max: 900, currency: EUR }
   usuarios: 2
 endpoints:
   - path: /api/orders
@@ -39,7 +39,7 @@ export const SMALL = `name: pequeno
 seed: 99
 world:
   clientes: 1
-  pedidos: { total: 5, distribucion: { pagado: 4, incidencia: 1 } }
+  pedidos: { total: 5, distribution: { pagado: 4, incidencia: 1 } }
 endpoints:
   - path: /api/orders
     entity: pedidos
@@ -49,7 +49,7 @@ endpoints:
     entity: clientes
 `;
 
-export const FLOW = `escenario: escenarios/conciliacion.yaml
+export const FLOW = `scenario: escenarios/conciliacion.yaml
 steps:
   - screen: dashboard
     visit: /
@@ -65,7 +65,7 @@ steps:
       incidencias: GET /api/orders?estado=incidencia
 `;
 
-/** Temp project with escenarios/ and the given files. */
+/** Temp project with the given files. */
 export function tmpProject(files = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'atrezzo-test-'));
   for (const [rel, content] of Object.entries(files)) {

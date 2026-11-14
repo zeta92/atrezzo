@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Tienda · conciliación</title>
+  <title>Shop · reconciliation</title>
   <style>
     body { font: 14px system-ui, sans-serif; margin: 2rem; color: #222; }
     .chips span { display: inline-block; padding: .2rem .6rem; margin-right: .4rem; border-radius: 1rem; background: #eef; }
@@ -13,21 +13,21 @@
   </style>
 </head>
 <body>
-  <h1>Pedidos</h1>
+  <h1>Orders</h1>
   <section class="chips" id="clientes"></section>
   <section class="incidencias">
-    <h2>Incidencias</h2>
+    <h2>Issues</h2>
     <ul id="incidencias"></ul>
   </section>
   <table>
-    <thead><tr><th>Referencia</th><th>Cliente</th><th>Estado</th><th>Importe</th></tr></thead>
+    <thead><tr><th>Reference</th><th>Customer</th><th>Status</th><th>Amount</th></tr></thead>
     <tbody id="pedidos"></tbody>
   </table>
   <script type="module">
-    // App mínima: pinta lo que devuelve la API. No sabe nada de atrezzo.
+    // Minimal app: renders whatever the API returns. It knows nothing about atrezzo.
     const get = (p) => fetch(p).then((r) => r.json());
     const el = (tag, attrs, text) => Object.assign(document.createElement(tag), attrs, text === undefined ? {} : { textContent: text });
-    const fmt = new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' });
+    const fmt = new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'EUR' });
 
     const [clientes, pedidos, incidencias] = await Promise.all([
       get('/api/customers'),
@@ -41,13 +41,13 @@
       document.getElementById('clientes').append(chip);
     }
     for (const p of incidencias) {
-      const li = el('li', {}, `${p.referencia} · ${p.cliente?.nombre ?? 'sin cliente'}`);
+      const li = el('li', {}, `${p.referencia} · ${p.cliente?.nombre ?? 'no customer'}`);
       li.dataset.testid = 'badge-incidencia';
       document.getElementById('incidencias').append(li);
     }
     const tbody = document.getElementById('pedidos');
     if (!pedidos.length) {
-      const empty = el('p', {}, 'Todavía no hay pedidos.');
+      const empty = el('p', {}, 'No orders yet.');
       empty.dataset.testid = 'empty-state';
       tbody.closest('table').after(empty);
     }

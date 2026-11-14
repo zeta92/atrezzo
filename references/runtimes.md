@@ -1,145 +1,145 @@
-# Runtimes: dónde se sirve el mock
+# Runtimes: where the mock is served
 
-El escenario (mundo + endpoints + expect) **no depende del runtime**. `atrezzo world` escribe siempre la fuente de verdad, `<generatedDir>/<escenario>.json` (el mundo) y `runtime.mjs` (el motor de proyección, sin dependencias), y después lo que pida cada runtime de `atrezzo.config.json → runtime` (uno o una lista: `"runtime": ["msw", "supabase"]`).
+The scenario (world + endpoints + expect) **does not depend on the runtime**. `atrezzo world` always writes the source of truth, `<generatedDir>/<scenario>.json` (the world) and `runtime.mjs` (the projection engine, no dependencies), and then whatever each runtime in `atrezzo.config.json → runtime` needs (one, or a list: `"runtime": ["msw", "supabase"]`).
 
 ```bash
-atrezzo init                       # detecta y elige (imprime qué encontró, por qué y las alternativas)
-atrezzo init --runtime wiremock    # o lo eliges tú (varios: --runtime msw,supabase)
-atrezzo runtimes                   # puntuación de cada adaptador en este proyecto y cómo se arranca
+atrezzo init                       # detects and chooses (prints what it found, why, and the alternatives)
+atrezzo init --runtime wiremock    # or you choose (several: --runtime msw,supabase)
+atrezzo runtimes                   # each adapter's score in this project and how to start it
 atrezzo world atrezzo/escenarios/pedidos.yaml
 ```
 
-Una config de 0.1 sin campo `runtime` equivale a `msw` (el comportamiento de antes: handlers en cada `world`).
+A 0.1 config without a `runtime` field means `msw` (the old behavior: handlers on every `world`).
 
-## Tabla de decisión
+## Decision table
 
-| el proyecto… | runtime | por qué |
+| the project… | runtime | why |
 |---|---|---|
-| es un front JS con `msw` instalado (Vite, Next cliente, Storybook, vitest) | **msw** | intercepta `fetch` sin cambiar URLs; mismo motor que `serve` |
-| usa Supabase (`supabase/`, `@supabase/supabase-js`, `SUPABASE_URL`) | **supabase** | no hay capa de mock: la "API" es PostgREST sobre Postgres → se carga el mundo en la BD local |
-| ya tiene WireMock (mappings/`__files`, docker-compose, dependencia) | **wiremock** | stubs estáticos que el equipo ya sabe operar |
-| ya usa Prism (`@stoplight/prism-cli` en deps o en scripts) | **prism** | mock desde un OpenAPI generado con examples del mundo |
-| tiene un backend en otro lenguaje, E2E, apps que no se pueden instrumentar, o nada de lo anterior | **builtin** | `atrezzo serve`: HTTP real sin dependencias, filtros y paginación de verdad |
+| is a JS front end with `msw` installed (Vite, Next client, Storybook, vitest) | **msw** | intercepts `fetch` without changing URLs; same engine as `serve` |
+| uses Supabase (`supabase/`, `@supabase/supabase-js`, `SUPABASE_URL`) | **supabase** | there is no mock layer: the "API" is PostgREST over Postgres → the world is loaded into the local DB |
+| already has WireMock (mappings/`__files`, docker-compose, dependency) | **wiremock** | static stubs the team already knows how to run |
+| already uses Prism (`@stoplight/prism-cli` in deps or scripts) | **prism** | mock from a generated OpenAPI with examples from the world |
+| has a backend in another language, E2E, apps that cannot be instrumented, or none of the above | **builtin** | `atrezzo serve`: real HTTP with no dependencies, real filtering and pagination |
 
-### Cómo puntúa `auto`
+### How `auto` scores
 
-Cada adaptador devuelve 0..3 con sus motivos; gana el mayor y, si empatan, la prioridad fija `msw > supabase > wiremock > builtin > prism`.
+Each adapter returns 0..3 with its reasons; the highest wins and, on a tie, the fixed priority `msw > supabase > wiremock > builtin > prism`.
 
-| adaptador | señales (peso) |
+| adapter | signals (weight) |
 |---|---|
-| builtin | siempre 1: fallback universal |
-| msw | `msw` en dependencias (3) · `public/mockServiceWorker.js` (2) |
-| supabase | `supabase/config.toml` (3) · `@supabase/supabase-js` (2) · carpeta `supabase/` (2) · `*SUPABASE_URL` en `.env*` (2) |
-| prism | `@stoplight/prism-cli` (3) · `prism mock/proxy` en scripts (2) · un spec OpenAPI en el repo (1) |
-| wiremock | dependencia `*wiremock*` (3) · `mappings/` + `__files/` en la raíz o en `wiremock/` (3) · `wiremock` en scripts o docker-compose (2) |
+| builtin | always 1: universal fallback |
+| msw | `msw` in dependencies (3) · `public/mockServiceWorker.js` (2) |
+| supabase | `supabase/config.toml` (3) · `@supabase/supabase-js` (2) · `supabase/` folder (2) · `*SUPABASE_URL` in `.env*` (2) |
+| prism | `@stoplight/prism-cli` (3) · `prism mock/proxy` in scripts (2) · an OpenAPI spec in the repo (1) |
+| wiremock | `*wiremock*` dependency (3) · `mappings/` + `__files/` at the root or in `wiremock/` (3) · `wiremock` in scripts or docker-compose (2) |
 
-**Un `openapi.yaml` solo no elige Prism**: empata a 1 con builtin y gana builtin. Un spec es un contrato, no la prueba de que el equipo use Prism; úsalo con `atrezzo import` (escenario desde el contrato) y sírvelo con el runtime que tengas. Con `prism-cli` en dependencias, prism sí gana.
+**An `openapi.yaml` alone does not pick Prism**: it ties at 1 with builtin and builtin wins. A spec is a contract, not proof that the team uses Prism; use it with `atrezzo import` (scenario from the contract) and serve it with whatever runtime you have. With `prism-cli` in dependencies, prism does win.
 
-En un monorepo se suman las señales de la raíz, del front y del backend (p. ej. `msw` en `apps/web` y `supabase/config.toml` en `services/api` empatan a 3 → msw por prioridad; `init` lo dice y propone `--runtime msw,supabase`).
+In a monorepo the signals of the root, the front end and the backend add up (e.g. `msw` in `apps/web` and `supabase/config.toml` in `services/api` tie at 3 → msw by priority; `init` says so and suggests `--runtime msw,supabase`).
 
-## Cada runtime: qué hace, qué NO hace, cómo se arranca
+## Each runtime: what it does, what it does NOT do, how to start it
 
 ### builtin (`atrezzo serve`)
 
-- **Hace**: sirve las proyecciones por HTTP (`GET /api/x?filtro=&limit=&offset=`, detalle `/:id`, envoltorios, `X-Total-Count`), cambia de escenario sin reiniciar (`POST /__atrezzo/reset {"escenario":"x"}`), relee el YAML (`POST /__atrezzo/reload`), estáticos con `--static`, y registra los huecos (`atrezzo misses`).
-- **No hace**: escrituras (405, registradas como hueco), latencias ni errores inyectados.
-- **Arranque**: `atrezzo serve --escenario pedidos --port 4010`.
+- **Does**: serves the projections over HTTP (`GET /api/x?filter=&limit=&offset=`, `/:id` detail, envelopes, `X-Total-Count`), switches scenarios without restarting (`POST /__atrezzo/reset {"scenario":"x"}`), rereads the YAML (`POST /__atrezzo/reload`), serves static files with `--static`, and records gaps (`atrezzo misses`).
+- **Does not**: writes (405, recorded as a gap), injected latency or errors.
+- **Start**: `atrezzo serve --scenario pedidos --port 4010`.
 
 ### msw
 
-- **Hace**: `world` escribe `<escenario>.handlers.mjs`, que importan el JSON y `runtime.mjs` y proyectan con el mismo motor que `serve`. Con `workspace.front`, los handlers van a `<front>/src/mocks/atrezzo/` con imports relativos a `atrezzo/.generated/`; si no, a `.generated/`.
-- **No hace**: instalar msw (usa `init --install`, anunciándolo); registrar el worker por ti.
-- **Arranque**:
+- **Does**: `world` writes `<scenario>.handlers.mjs`, which imports the JSON and `runtime.mjs` and projects with the same engine as `serve`. With `workspace.front`, the handlers go to `<front>/src/mocks/atrezzo/` with relative imports to `atrezzo/.generated/`; otherwise to `.generated/`.
+- **Does not**: install msw (use `init --install`, which announces it) or register the worker for you.
+- **Start**:
   ```js
-  import { setupWorker } from 'msw/browser';           // navegador, solo en desarrollo
+  import { setupWorker } from 'msw/browser';           // browser, development only
   import { handlers } from './mocks/atrezzo/pedidos.handlers.mjs';
   await setupWorker(...handlers).start({ onUnhandledRequest: 'bypass' });
-  // tests Node: import { setupServer } from 'msw/node'; setupServer(...handlers).listen();
+  // Node tests: import { setupServer } from 'msw/node'; setupServer(...handlers).listen();
   ```
-  Requiere importar JSON con `with { type: 'json' }` (Node 22+, Vite 5+, Next 14+).
+  Requires importing JSON with `with { type: 'json' }` (Node 22+, Vite 5+, Next 14+).
 
 ### supabase
 
-Supabase no tiene capa de mock: su API es PostgREST sobre Postgres. El "runtime" es **la base de datos local con el mundo cargado**.
+Supabase has no mock layer: its API is PostgREST over Postgres. The "runtime" is **the local database with the world loaded**.
 
-- **Hace**: `world` escribe en `<backend>/supabase/atrezzo/<escenario>/` (o `supabase/atrezzo/…` en la raíz; si no hay carpeta `supabase/`, en `.generated/supabase/<escenario>/`):
-  - `schema.sql`: `CREATE TABLE IF NOT EXISTS` mínimo con tipos inferidos de los datos y FKs (para que PostgREST pueda hacer joins); `GRANT SELECT … TO anon` si el rol existe.
-  - `seed.sql`: en una transacción, `TRUNCATE … RESTART IDENTITY CASCADE` + `INSERT … OVERRIDING SYSTEM VALUE` con los ids del mundo (los mismos que en `serve`/MSW) y `setval` de la secuencia si la columna `id` es serial/identity.
-  - `reset.sh`: aplica los dos con `psql`, es idempotente y **se niega a tocar una `DATABASE_URL` que no parezca local** (exit 2; `ATREZZO_ALLOW_REMOTE=1` para forzarlo).
-  - `README.md`: pasos con Supabase CLI o Postgres + PostgREST sueltos.
-  - Tu `supabase/seed.sql` no se toca.
-- **No hace**: proyectar con el motor de atrezzo. Filtros, orden, paginación (`Range`, `limit/offset`) y embeds los resuelve PostgREST; las rutas del escenario (`/api/orders`) no existen allí (supabase-js consulta `/rest/v1/<entidad>`). Los datos son idénticos; la forma de la respuesta es la de PostgREST. Tampoco simula RLS ni auth: con RLS activa, `anon` solo ve lo que permitan tus políticas. Si tus migraciones ya crean las tablas con otras columnas, `seed.sql` falla con `column … does not exist` (el escenario no coincide con tu esquema; ajústalo).
-- **Arranque**:
+- **Does**: `world` writes to `<backend>/supabase/atrezzo/<scenario>/` (or `supabase/atrezzo/…` at the root; without a `supabase/` folder, to `.generated/supabase/<scenario>/`):
+  - `schema.sql`: minimal `CREATE TABLE IF NOT EXISTS` with types inferred from the data and FKs (so PostgREST can join); `GRANT SELECT … TO anon` if the role exists.
+  - `seed.sql`: in one transaction, `TRUNCATE … RESTART IDENTITY CASCADE` + `INSERT … OVERRIDING SYSTEM VALUE` with the world's ids (the same as in `serve`/MSW) and `setval` on the sequence if the `id` column is serial/identity.
+  - `reset.sh`: applies both with `psql`, is idempotent and **refuses to touch a `DATABASE_URL` that does not look local** (exit 2; `ATREZZO_ALLOW_REMOTE=1` to force it).
+  - `README.md`: steps with the Supabase CLI or standalone Postgres + PostgREST.
+  - Your `supabase/seed.sql` is left alone.
+- **Does not**: project with the atrezzo engine. PostgREST handles filters, sorting, pagination (`Range`, `limit/offset`) and embeds; the scenario routes (`/api/orders`) do not exist there (supabase-js queries `/rest/v1/<entity>`). The data is identical; the response shape is PostgREST's. It does not simulate RLS or auth either: with RLS on, `anon` only sees what your policies allow. If your migrations already create the tables with other columns, `seed.sql` fails with `column … does not exist` (the scenario does not match your schema; adjust it).
+- **Start**:
   ```bash
   supabase start
   DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres services/api/supabase/atrezzo/pedidos/reset.sh
   ```
-  O con `supabase db reset`: en `config.toml`, `[db.seed] sql_paths = ["./atrezzo/pedidos/seed.sql"]` (si tu versión del CLI soporta `sql_paths`).
+  Or with `supabase db reset`: in `config.toml`, `[db.seed] sql_paths = ["./atrezzo/pedidos/seed.sql"]` (if your CLI version supports `sql_paths`).
 
-Probado contra PostgreSQL 17 real (test `supabase: reset.sh …`, se salta si no hay `initdb`): dos ejecuciones seguidas, conteos y ids iguales al JSON, y una tabla previa con `id GENERATED ALWAYS AS IDENTITY`.
+Tested against a real PostgreSQL 17 (test `supabase: reset.sh …`, skipped without `initdb`): two runs in a row, counts and ids equal to the JSON, and a pre-existing table with `id GENERATED ALWAYS AS IDENTITY`.
 
-#### Alternativa: fachada PostgREST sobre `serve`/MSW
+#### Alternative: a PostgREST facade over `serve`/MSW
 
-Si no quieres levantar Postgres, puedes apuntar `SUPABASE_URL` al mock y traducir delante de `engine.handle` lo que la app usa: `estado=eq.x` → `estado=x`, `in.(a,b)` → `a,b`, `Range: 0-11` → `offset=0&limit=12` (y responder `Content-Range`), `Accept: application/vnd.pgrst.object+json` → detalle. GoTrue: `POST /auth/v1/token` con una sesión fija de un usuario del mundo. No reimplementes PostgREST: solo lo que la pantalla usa.
+If you do not want to run Postgres, you can point `SUPABASE_URL` at the mock and translate what the app uses in front of `engine.handle`: `estado=eq.x` → `estado=x`, `in.(a,b)` → `a,b`, `Range: 0-11` → `offset=0&limit=12` (and answer `Content-Range`), `Accept: application/vnd.pgrst.object+json` → detail. GoTrue: `POST /auth/v1/token` with a fixed session for a world user. Do not reimplement PostgREST: only what the screen uses.
 
 ### prism
 
-- **Hace**: `world` escribe `<generatedDir>/<escenario>.openapi.yaml` (OpenAPI 3.1) desde los endpoints del escenario: un schema por entidad con `required` = campos que nunca son nulos en el mundo, parámetros de filtro y paginación, `X-Total-Count`, detalle `/{id}` con 404, y `examples` calculados con el motor (la proyección sin query, más uno por valor del primer filtro con ≤ 10 valores, p. ej. `estado-incidencia`).
-- **No hace**: filtrar ni paginar. Prism devuelve el example por defecto para **cualquier** query (`?estado=incidencia` da los 40 pedidos); otro example solo con la cabecera `Prefer: example=estado-incidencia`. El detalle devuelve siempre el primer id (`/api/orders/999` → 200 con el id 1) salvo `Prefer: code=404`. Con `-d` (dinámico) genera datos que no son el mundo. Los filtros se declaran `string` sin `enum` porque con enum Prism rechazaría las listas `a,b` que el motor acepta.
-- **Sí hace (de Prism)**: validar las peticiones contra los parámetros: `?limit=abc` → 400.
-- **Arranque**: `npx @stoplight/prism-cli mock atrezzo/.generated/pedidos.openapi.yaml --port 4010`.
+- **Does**: `world` writes `<generatedDir>/<scenario>.openapi.yaml` (OpenAPI 3.1) from the scenario endpoints: one schema per entity with `required` = fields never null in the world, filter and pagination parameters, `X-Total-Count`, `/{id}` detail with 404, and `examples` computed by the engine (the projection without a query, plus one per value of the first filter with ≤ 10 values, e.g. `estado-incidencia`).
+- **Does not**: filter or paginate. Prism returns the default example for **any** query (`?estado=incidencia` returns all 40 orders); another example only with the `Prefer: example=estado-incidencia` header. The detail always returns the first id (`/api/orders/999` → 200 with id 1) unless you send `Prefer: code=404`. With `-d` (dynamic) it generates data that is not the world. Filters are declared as `string` without `enum` because with an enum Prism would reject the `a,b` lists the engine accepts.
+- **Does (Prism's own)**: validate requests against the parameters: `?limit=abc` → 400.
+- **Start**: `npx @stoplight/prism-cli mock atrezzo/.generated/pedidos.openapi.yaml --port 4010`.
 
-Comprobado con `@stoplight/prism-cli` 5.16.0 sobre el `pedidos` del ejemplo (todo lo de arriba).
+Checked with `@stoplight/prism-cli` 5.16.0 on the example's `pedidos` (everything above).
 
 ### wiremock
 
-WireMock no puede ejecutar la proyección: Handlebars no tiene una forma sensata de filtrar + ordenar + trocear un array embebido. Por eso las listas se **pregeneran**.
+WireMock cannot run the projection: Handlebars has no sane way to filter + sort + slice an embedded array. So lists are **pre-generated**.
 
-- **Hace**: `world` escribe una raíz WireMock por escenario en `<generatedDir>/wiremock/<escenario>/`, con `mappings/<endpoint>.json` y los cuerpos en `__files/`. Para cada lista hay una mapping (`urlPath` + `queryParameters` con `equalTo`/`absent`) por cada combinación enumerable:
-  - sin query;
-  - cada valor de cada filtro, de uno en uno (si el campo tiene ≤ 20 valores distintos; `null` incluido);
-  - páginas de `default_limit`/`max_limit` (`limit=N` y `limit=N&offset=k`, hasta 50 páginas);
-  - **las peticiones exactas de los flujos** (`flujo.yaml` cuyo `escenario` apunta a este), p. ej. `?estado=incidencia&limit=12`.
-  Cuerpo y `X-Total-Count` salen del motor: los mismos bytes que `serve`. El detalle `/{id}` usa **response templating**: `bodyFileName: "<escenario>/<endpoint>/id/{{request.pathSegments.[n]}}.json"` con `transformers: ["response-template"]` declarado en la mapping; los ids que no existen dan 404.
-- **No hace**: filtros cruzados, listas `a,b`, órdenes distintos ni páginas no enumeradas. Esas peticiones caen en una mapping de prioridad baja que responde **501** con `{"error": …, "generadas": [...]}`: nunca una página equivocada. Si una pantalla pide una combinación nueva, añádela a un flujo y vuelve a ejecutar `world`. Tampoco emite `X-Atrezzo-Ignored`. No mezcles dos escenarios en la misma carpeta `mappings/` (las rutas chocan): cada escenario es su propia raíz.
-- **Arranque**:
+- **Does**: `world` writes one WireMock root per scenario in `<generatedDir>/wiremock/<scenario>/`, with `mappings/<endpoint>.json` and the bodies in `__files/`. Each list gets one mapping (`urlPath` + `queryParameters` with `equalTo`/`absent`) per enumerable combination:
+  - no query;
+  - each value of each filter, one at a time (if the field has ≤ 20 distinct values; `null` included);
+  - pages of `default_limit`/`max_limit` (`limit=N` and `limit=N&offset=k`, up to 50 pages);
+  - **the exact requests of the flows** (`flujo.yaml` files whose `scenario` points here), e.g. `?estado=incidencia&limit=12`.
+  Body and `X-Total-Count` come from the engine: the same bytes as `serve`. The `/{id}` detail uses **response templating**: `bodyFileName: "<scenario>/<endpoint>/id/{{request.pathSegments.[n]}}.json"` with `transformers: ["response-template"]` declared in the mapping; unknown ids return 404.
+- **Does not**: combined filters, `a,b` lists, other sort orders or pages not enumerated. Those requests fall into a low-priority mapping that answers **501** with `{"error": …, "generated": [...]}`: never a wrong page. If a screen requests a new combination, add it to a flow and run `world` again. It does not emit `X-Atrezzo-Ignored` either. Do not mix two scenarios in the same `mappings/` folder (routes clash): each scenario is its own root.
+- **Start**:
   ```bash
   docker run --rm -p 4010:8080 -v "$PWD/atrezzo/.generated/wiremock/pedidos:/home/wiremock" wiremock/wiremock:3.13.2
-  # o: java -jar wiremock-standalone-3.13.2.jar --root-dir atrezzo/.generated/wiremock/pedidos --port 4010
+  # or: java -jar wiremock-standalone-3.13.2.jar --root-dir atrezzo/.generated/wiremock/pedidos --port 4010
   ```
-  Para cambiar de escenario sin reiniciar: `POST /__admin/mappings/reset` + `POST /__admin/mappings/import` con los mappings del otro escenario.
+  To switch scenarios without restarting: `POST /__admin/mappings/reset` + `POST /__admin/mappings/import` with the other scenario's mappings.
 
-Comprobado con WireMock standalone 3.13.2 (Java 21) sobre el `pedidos` del ejemplo: 15 stubs cargados; `/api/orders`, `?estado=incidencia` y `?limit=12` dan 40/3/12 filas con su `X-Total-Count`; `/api/orders/7` sale por plantilla; `/api/orders/999` → 404; `?estado=incidencia&limit=12` (no pregenerada) → 501.
+Checked with WireMock standalone 3.13.2 (Java 21) on the example's `pedidos`: 15 stubs loaded; `/api/orders`, `?estado=incidencia` and `?limit=12` return 40/3/12 rows with their `X-Total-Count`; `/api/orders/7` comes out via the template; `/api/orders/999` → 404; `?estado=incidencia&limit=12` (not pre-generated) → 501.
 
-## Huecos en cada runtime
+## Gaps in each runtime
 
-Un hueco es una petición que el escenario no declara. **Solo `atrezzo serve` (builtin) los registra** en `atrezzo/.atrezzo/misses.json`; el resto de runtimes se comporta así:
+A gap is a request the scenario does not declare. **Only `atrezzo serve` (builtin) records them** in `atrezzo/.atrezzo/misses.json`; the other runtimes behave like this:
 
-| runtime | qué recibe la app ante una ruta no declarada | cómo verlo | se registra en `misses.json` |
+| runtime | what the app gets for an undeclared route | how to see it | recorded in `misses.json` |
 |---|---|---|---|
-| builtin (`serve`) | 404 con `{ error, atrezzo: { miss, hueco, veces, siguiente, endpoints } }` (405 si es una escritura sobre una ruta del contrato); con `--on-miss stub`, 200 `[]`/`{}` + `x-atrezzo-stub: true` | `atrezzo misses`, `GET /__atrezzo/misses`, `doctor` | sí |
-| msw | depende de `onUnhandledRequest`: el arranque sugerido usa `'bypass'` (la petición sale a la red real, o falla si no hay backend). `'warn'` la imprime en consola; `'error'` la rompe | la consola del navegador/test: `[MSW] Warning: intercepted a request without a matching request handler: GET /api/users` | no |
-| prism | no aplica: Prism sirve el OpenAPI que genera `world`, que contiene exactamente los endpoints del escenario; lo demás es 404 de Prism (`NO_PATH_MATCHED_ERROR`) | log de Prism | no |
-| wiremock | rutas declaradas con una query no pregenerada → **501** con `{ error, generadas: [...] }` (la lista de combinaciones que sí existen). Rutas no declaradas → 404 propio de WireMock ("Request was not matched", con near misses) | `GET /__admin/requests/unmatched` | no |
-| supabase | no hay rutas: supabase-js consulta `/rest/v1/<tabla>`. Una tabla que no existe → error de PostgREST (`42P01` / `PGRST205`, "relation does not exist") | respuesta de PostgREST | no |
+| builtin (`serve`) | 404 with `{ error, atrezzo: { miss, gap, times, next, endpoints } }` (405 for a write to a contract route); with `--on-miss stub`, 200 `[]`/`{}` + `x-atrezzo-stub: true` | `atrezzo misses`, `GET /__atrezzo/misses`, `doctor` | yes |
+| msw | depends on `onUnhandledRequest`: the suggested setup uses `'bypass'` (the request goes to the real network, or fails if there is no backend). `'warn'` prints it to the console; `'error'` breaks it | the browser/test console: `[MSW] Warning: intercepted a request without a matching request handler: GET /api/users` | no |
+| prism | not applicable: Prism serves the OpenAPI that `world` generates, which contains exactly the scenario endpoints; anything else is a Prism 404 (`NO_PATH_MATCHED_ERROR`) | Prism log | no |
+| wiremock | declared routes with a query that was not pre-generated → **501** with `{ error, generated: [...] }` (the list of combinations that do exist). Undeclared routes → WireMock's own 404 ("Request was not matched", with near misses) | `GET /__admin/requests/unmatched` | no |
+| supabase | there are no routes: supabase-js queries `/rest/v1/<table>`. A table that does not exist → PostgREST error (`42P01` / `PGRST205`, "relation does not exist") | PostgREST response | no |
 
-Para cazar huecos con MSW sin cambiar de runtime, arranca la pantalla una vez contra `atrezzo serve` (mismo motor, mismas rutas) o usa un `onUnhandledRequest` propio:
+To catch gaps with MSW without switching runtimes, run the screen once against `atrezzo serve` (same engine, same routes) or use your own `onUnhandledRequest`:
 
 ```js
 await setupWorker(...handlers).start({
   onUnhandledRequest(req, print) {
-    if (new URL(req.url).pathname.startsWith('/api/')) print.warning(); // hueco: /atrezzo:hueco
+    if (new URL(req.url).pathname.startsWith('/api/')) print.warning(); // gap: /atrezzo:hueco
   },
 });
 ```
 
-Rellenar el hueco es igual en todos: entidad + endpoint en el escenario (`/atrezzo:hueco`) y `atrezzo world`, que regenera handlers, OpenAPI, mappings o `seed.sql`.
+Filling the gap is the same everywhere: entity + endpoint in the scenario (`/atrezzo:hueco`) and `atrezzo world`, which regenerates handlers, OpenAPI, mappings or `seed.sql`.
 
-Latencias, errores 5xx y timeouts no son parte del mundo: inyéctalos en el runtime (MSW `delay()`/`HttpResponse.error()`, WireMock `fixedDelayMilliseconds`/`fault`), no en el escenario.
+Latency, 5xx errors and timeouts are not part of the world: inject them in the runtime (MSW `delay()`/`HttpResponse.error()`, WireMock `fixedDelayMilliseconds`/`fault`), not in the scenario.
 
-## Monorepo y front/back separados
+## Monorepo and separate front end/backend
 
-`atrezzo.config.json` puede llevar un bloque `workspace` (rutas relativas a la config):
+`atrezzo.config.json` can carry a `workspace` block (paths relative to the config):
 
 ```json
 "workspace": {
@@ -149,72 +149,72 @@ Latencias, errores 5xx y timeouts no son parte del mundo: inyéctalos en el runt
 }
 ```
 
-- `front`: donde vive el cliente. `msw` escribe ahí los handlers (`apps/web/src/mocks/atrezzo/`) y de ahí sale el `baseUrl` del mock: el destino del proxy de Vite (`server.proxy['/api'].target`) o `NEXT_PUBLIC_API_URL`/`VITE_API_URL`/`REACT_APP_API_URL` en `.env*`. El prefijo (`/api`) se guarda en `mock.apiPrefix`.
-- `backend`: donde vive el contrato y/o la base de datos. `supabase` escribe junto a `<backend>/supabase/` si existe.
-- `contract`: el spec, si no está dentro de `backend` (o para fijarlo). `atrezzo import` sin argumentos usa este.
+- `front`: where the client lives. `msw` writes the handlers there (`apps/web/src/mocks/atrezzo/`), and the mock `baseUrl` comes from it: the Vite proxy target (`server.proxy['/api'].target`) or `NEXT_PUBLIC_API_URL`/`VITE_API_URL`/`REACT_APP_API_URL` in `.env*`. The prefix (`/api`) is stored in `mock.apiPrefix`.
+- `backend`: where the contract and/or the database live. `supabase` writes next to `<backend>/supabase/` if it exists.
+- `contract`: the spec, if it is not inside `backend` (or to pin it). `atrezzo import` without arguments uses it.
 
-`atrezzo` (config, escenarios y `.generated/`) vive en la raíz desde la que ejecutas `init`; normalmente la raíz del monorepo o el repo del front.
+`atrezzo` (config, scenarios and `.generated/`) lives at the root where you run `init`; usually the monorepo root or the front-end repo.
 
-### Caso 1: monorepo
+### Case 1: monorepo
 
-`init` lee `pnpm-workspace.yaml`, `workspaces` de `package.json`, `lerna.json`, `turbo.json` o `nx.json` (estos dos sin lista de paquetes → `apps/*`, `packages/*`, `libs/*`, `services/*`) y clasifica cada paquete:
+`init` reads `pnpm-workspace.yaml`, `workspaces` in `package.json`, `lerna.json`, `turbo.json` or `nx.json` (these two have no package list → `apps/*`, `packages/*`, `libs/*`, `services/*`) and classifies each package:
 
-- **front**: dependencias de UI (react, vue, svelte, next, nuxt, vite, @angular/core, solid, preact, astro), `vite.config.*`/`next.config.*`/`index.html`, nombre `web`/`client`/`app`/`frontend`/`ui`.
-- **backend**: dependencias de servidor (express, fastify, @nestjs/core, hono, koa, @prisma/client, @supabase/supabase-js…), `openapi.{yaml,json}` o `supabase/` (cuentan doble), un manifiesto no JS (`requirements.txt`, `go.mod`, `pom.xml`…), nombre `api`/`server`/`backend`.
+- **front end**: UI dependencies (react, vue, svelte, next, nuxt, vite, @angular/core, solid, preact, astro), `vite.config.*`/`next.config.*`/`index.html`, name `web`/`client`/`app`/`frontend`/`ui`.
+- **backend**: server dependencies (express, fastify, @nestjs/core, hono, koa, @prisma/client, @supabase/supabase-js…), `openapi.{yaml,json}` or `supabase/` (they count double), a non-JS manifest (`requirements.txt`, `go.mod`, `pom.xml`…), name `api`/`server`/`backend`.
 
 ```bash
-cd mi-monorepo
-atrezzo init                              # detecta apps/web (front) y services/api (backend)
-atrezzo init --runtime msw,supabase       # handlers en apps/web y seed en services/api/supabase/atrezzo/
-atrezzo import                            # usa workspace.contract
+cd my-monorepo
+atrezzo init                              # detects apps/web (front end) and services/api (backend)
+atrezzo init --runtime msw,supabase       # handlers in apps/web and seed in services/api/supabase/atrezzo/
+atrezzo import                            # uses workspace.contract
 atrezzo world atrezzo/escenarios/api.yaml
 ```
 
-### Caso 2: dos carpetas sin manifiesto
+### Case 2: two folders without a manifest
 
-Carpetas hermanas `client/`+`server/`, `web/`+`api/`, `frontend/`+`backend/` (y combinaciones): se clasifican igual.
+Sibling folders `client/`+`server/`, `web/`+`api/`, `frontend/`+`backend/` (and combinations) are classified the same way.
 
 ```bash
-cd proyecto                               # client/ (Vue + Vite)  server/ (FastAPI + openapi.json)
+cd project                                # client/ (Vue + Vite)  server/ (FastAPI + openapi.json)
 atrezzo init                              # front=client, backend=server, contract=server/openapi.json
-atrezzo import                            # endpoints desde server/openapi.json
+atrezzo import                            # endpoints from server/openapi.json
 atrezzo world atrezzo/escenarios/api.yaml
-atrezzo serve --escenario api             # builtin: el backend no es JS, HTTP real en el puerto del front
+atrezzo serve --scenario api              # builtin: the backend is not JS; real HTTP on the front end's port
 ```
 
-### Caso 3: dos repos
+### Case 3: two repos
 
-Ejecuta `init` en el repo del front y apunta al otro con rutas relativas:
+Run `init` in the front-end repo and point to the other one with relative paths:
 
 ```bash
 cd ~/code/web
 atrezzo init --front . --backend ../api --contract ../api/openapi.yaml
-atrezzo import                            # lee ../api/openapi.yaml
+atrezzo import                            # reads ../api/openapi.yaml
 atrezzo world atrezzo/escenarios/api.yaml
 ```
 
-Si el backend es Supabase en el otro repo, `--backend ../api` hace que `supabase` escriba en `../api/supabase/atrezzo/<escenario>/` (fuera de este repo: commitea allí o pon `--backend` a una carpeta propia).
+If the backend is Supabase in the other repo, `--backend ../api` makes `supabase` write to `../api/supabase/atrezzo/<scenario>/` (outside this repo: commit there, or point `--backend` at a folder of your own).
 
-### Ambigüedad: nunca una elección silenciosa
+### Ambiguity: never a silent choice
 
-Si hay **dos candidatos a front o ninguno** (o más de un backend), `init` no escribe nada, imprime la tabla y sale con **2**:
+With **two front-end candidates or none** (or more than one backend), `init` writes nothing, prints the table and exits with **2**:
 
 ```
-atrezzo: No elijo por ti: hay 2 candidatos a front (apps/admin, apps/web).
-Estructura: monorepo: package.json#workspaces · paquetes según apps/*
-  paquete     front  backend  rol       motivos
+atrezzo: Not choosing for you: 2 front-end candidates (apps/admin, apps/web).
+Layout: monorepo: package.json#workspaces · packages from apps/*
+  package     front  backend  role      reasons
   apps/admin      2        0  front     dep vue, dep vite
-  apps/api        0        2  backend   dep express, nombre "api"
-  apps/web        3        0  front     dep react, dep vite, nombre "web"
-Indica el front y el backend: atrezzo init --front <ruta> --backend <ruta> [--contract <spec>]
+  apps/api        0        2  backend   dep express, name "api"
+  apps/web        3        0  front     dep react, dep vite, name "web"
+Name the front end and the backend: atrezzo init --front <path> --backend <path> [--contract <spec>]
 ```
 
 ```bash
 atrezzo init --front apps/admin --backend apps/api
 ```
 
-Con `--front`/`--backend` explícitos no se adivina nada; lo que no pases se toma de la detección solo si es único.
+With explicit `--front`/`--backend` nothing is guessed; whatever you do not pass is taken from detection only if it is unique.
 
-### Base de las rutas: front vs spec
+### Path base: front end vs spec
 
-El `servers[0].url` del spec puede ser relativo (`/api`) o absoluto (`https://api.x.com/v2`): `import` se queda con la ruta, la antepone a cada path y lo anota en el informe (`Base: /v2 (servers[0].url = "https://api.x.com/v2", absoluta: me quedo con la ruta)`). Si el front consume otro prefijo (`mock.apiPrefix`, p. ej. un proxy que reescribe `/api` → `/v2`), el informe lo avisa: reimporta con `--base /api`.
+The spec's `servers[0].url` can be relative (`/api`) or absolute (`https://api.x.com/v2`): `import` keeps the path, prepends it to every path and notes it in the report (`Base: /v2 (servers[0].url = "https://api.x.com/v2", absolute: keeping the path)`). If the front end uses another prefix (`mock.apiPrefix`, e.g. a proxy that rewrites `/api` → `/v2`), the report warns you: re-import with `--base /api`.

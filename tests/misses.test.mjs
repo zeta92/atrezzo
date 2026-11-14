@@ -39,9 +39,9 @@ async function startServer(opts = {}) {
   return { dir, file, mock, url };
 }
 
-// ---------- unidades ----------
+// ---------- units ----------
 
-test('missPattern colapsa ids y la barra final; guessShape colección vs detalle', () => {
+test('missPattern collapses ids and the trailing slash; guessShape collection vs detail', () => {
   assert.equal(missPattern('/api/users/42/'), '/api/users/:id');
   assert.equal(missPattern('/api/users/3f2a9c1e-1b2c-4d5e-8f90-1234567890ab/orders'), '/api/users/:id/orders');
   assert.equal(missPattern('/api/me'), '/api/me');
@@ -51,13 +51,13 @@ test('missPattern colapsa ids y la barra final; guessShape colección vs detalle
   assert.equal(guessShape('/api/status'), 'detail');
 });
 
-test('maskQuery/safeSearch: nombres y valores con pinta de secreto salen como ***', () => {
+test('maskQuery/safeSearch: secret-looking names and values come out as ***', () => {
   const q = new URLSearchParams('token=abc&page=2&api_key=x&q=eyJhbGciOi.eyJzdWIi.sig&h=a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6');
   assert.deepEqual(maskQuery(q), { token: '***', page: '2', api_key: '***', q: '***', h: '***' });
   assert.equal(safeSearch(new URLSearchParams('token=abc&page=2')), '?token=***&page=2');
 });
 
-test('store: dedupe por METHOD+ruta, ids colapsados y tope de registros', () => {
+test('store: dedupe by METHOD+path, collapsed ids and an entry cap', () => {
   const s = createMissStore(null);
   s.record({ method: 'GET', pathname: '/api/users/1', status: 404 });
   s.record({ method: 'GET', pathname: '/api/users/2', status: 404 });
@@ -69,57 +69,57 @@ test('store: dedupe por METHOD+ruta, ids colapsados y tope de registros', () => 
   assert.equal(s.list().length, MISS_CAP);
 });
 
-test('findInSpec / hintFor: contrato con la ruta ⇒ import; sin ella ⇒ skill; mutación ⇒ stub', () => {
+test('findInSpec / hintFor: contract has the route ⇒ import; it does not ⇒ skill; mutation ⇒ stub', () => {
   const spec = loadSpec(join(ROOT, 'tests/fixtures/petstore.yaml'));
   assert.deepEqual(findInSpec(spec, 'GET', '/api/pets/:id'), { path: '/pets/{petId}', method: true });
   assert.equal(findInSpec(spec, 'GET', '/api/invoices'), null);
   const opts = { spec, contract: 'api/openapi.yaml', scenarios: [loadScenario(join(tmpProject({ 'c.yaml': CATALOGO }), 'c.yaml'))] };
-  assert.match(hintFor({ method: 'GET', path: '/api/pets' }, opts), /contrato lo tiene \(GET \/pets\) → atrezzo import api\/openapi.yaml/);
+  assert.match(hintFor({ method: 'GET', path: '/api/pets' }, opts), /contract has it \(GET \/pets\) → atrezzo import api\/openapi.yaml/);
   assert.match(hintFor({ method: 'GET', path: '/api/invoices' }, opts), /skill \/atrezzo:hueco/);
-  assert.match(hintFor({ method: 'POST', path: '/api/pets' }, opts), /mutación.*--on-miss stub/);
-  assert.match(hintFor({ method: 'GET', path: '/api/products/2' }, opts), /ya lo declara el escenario catalogo/);
+  assert.match(hintFor({ method: 'POST', path: '/api/pets' }, opts), /mutation.*--on-miss stub/);
+  assert.match(hintFor({ method: 'GET', path: '/api/products/2' }, opts), /already declared by scenario catalogo/);
 });
 
-// ---------- servidor ----------
+// ---------- server ----------
 
-test('hueco registrado y deduplicado: 3 peticiones iguales ⇒ times 3, un registro, 404 accionable', async () => {
+test('gap recorded and deduplicated: 3 identical requests ⇒ times 3, one entry, actionable 404', async () => {
   const { file, mock, url } = await startServer();
   try {
     let last;
     for (let i = 0; i < 3; i++) last = await json(await fetch(`${url}/api/users`, { headers: { referer: 'http://localhost:5173/admin?sid=s3cr3t' } }));
     assert.equal(last.status, 404);
     assert.deepEqual(last.body, {
-      error: 'GET /api/users no está en el contrato del escenario "catalogo"',
-      atrezzo: { miss: true, hueco: 'GET /api/users', veces: 3, siguiente: 'atrezzo misses', endpoints: ['/api/products'] },
+      error: 'GET /api/users is not in the contract of scenario "catalogo"',
+      atrezzo: { miss: true, gap: 'GET /api/users', times: 3, next: 'atrezzo misses', endpoints: ['/api/products'] },
     });
     const disk = JSON.parse(readFileSync(file, 'utf8'));
     assert.deepEqual(Object.keys(disk), ['GET /api/users']);
     const m = disk['GET /api/users'];
     assert.equal(m.times, 3);
     assert.equal(m.resolved, false);
-    assert.equal(m.referer, 'http://localhost:5173/admin', 'el referer se guarda sin query');
+    assert.equal(m.referer, 'http://localhost:5173/admin', 'the referer is stored without its query');
     assert.ok(m.first_seen <= m.last_seen);
     for (const k of ['method', 'path', 'query', 'times', 'first_seen', 'last_seen', 'referer', 'accept', 'resolved']) assert.ok(k in m, k);
     assert.equal(readFileSync(join(file, '../.gitignore'), 'utf8'), '*\n');
     const st = await json(await fetch(`${url}/__atrezzo/state`));
-    assert.deepEqual(st.body.misses, { total: 1, sinResolver: 1 });
+    assert.deepEqual(st.body.misses, { total: 1, unresolved: 1 });
     const api = await json(await fetch(`${url}/__atrezzo/misses`));
-    assert.equal(api.body.sinResolver, 1);
+    assert.equal(api.body.unresolved, 1);
     assert.equal(api.body.misses[0].times, 3);
-    // estáticos que no existen (favicon) no son huecos de la API
+    // missing static files (favicon) are not API gaps
     assert.equal((await fetch(`${url}/favicon.ico`)).status, 404);
-    // una escritura sobre una ruta del contrato también es un hueco (405)
+    // a write to a contract route is a gap too (405)
     const w = await json(await fetch(`${url}/api/products`, { method: 'POST', body: '{}' }));
     assert.equal(w.status, 405);
-    assert.equal(w.body.atrezzo.hueco, 'POST /api/products');
+    assert.equal(w.body.atrezzo.gap, 'POST /api/products');
     assert.equal((await json(await fetch(`${url}/__atrezzo/misses`))).body.misses.length, 2);
     const del = await fetch(`${url}/__atrezzo/misses`, { method: 'DELETE' });
     assert.equal(del.status, 200);
-    assert.deepEqual((await json(await fetch(`${url}/__atrezzo/misses`))).body, { misses: [], sinResolver: 0 });
+    assert.deepEqual((await json(await fetch(`${url}/__atrezzo/misses`))).body, { misses: [], unresolved: 0 });
   } finally { await mock.close(); }
 });
 
-test('el 404 y misses.json no filtran secretos de la query (?token=abc ⇒ "***")', async () => {
+test('the 404 and misses.json do not leak query secrets (?token=abc ⇒ "***")', async () => {
   const { file, mock, url } = await startServer();
   const logs = [];
   try {
@@ -131,7 +131,7 @@ test('el 404 y misses.json no filtran secretos de la query (?token=abc ⇒ "***"
     assert.deepEqual(m.query, { token: '***', page: '2' });
     assert.doesNotMatch(readFileSync(file, 'utf8'), /abc/);
   } finally { await mock.close(); }
-  // y el log de serve tampoco
+  // and neither does the serve log
   const dir = tmpProject({ 'escenarios/catalogo.yaml': CATALOGO });
   const m2 = createMockServer({ scenariosDir: join(dir, 'escenarios'), log: (s) => logs.push(s) });
   const u2 = `http://127.0.0.1:${(await m2.listen(0)).port}`;
@@ -142,25 +142,25 @@ test('el 404 y misses.json no filtran secretos de la query (?token=abc ⇒ "***"
   assert.ok(logs.every((l) => !l.includes('abc')), logs.join('\n'));
 });
 
-test('POST /__atrezzo/reload recoge el YAML modificado sin reiniciar; resolved pasa a true al servirlo', async () => {
+test('POST /__atrezzo/reload picks up the edited YAML without restarting; resolved turns true once served', async () => {
   const { dir, file, mock, url } = await startServer();
   try {
     assert.equal((await fetch(`${url}/api/users`)).status, 404);
     writeFileSync(join(dir, 'escenarios/catalogo.yaml'), PATCH_WORLD(CATALOGO));
-    assert.equal((await fetch(`${url}/api/users`)).status, 404, 'sin reload sigue el escenario viejo');
+    assert.equal((await fetch(`${url}/api/users`)).status, 404, 'without reload the old scenario stays');
     const rl = await json(await fetch(`${url}/__atrezzo/reload`, { method: 'POST' }));
     assert.equal(rl.status, 200);
     assert.deepEqual(rl.body.endpoints, ['/api/products', '/api/users']);
     assert.deepEqual(rl.body.counts, { usuarios: 4, productos: 5 });
-    assert.deepEqual(rl.body.misses, { total: 1, sinResolver: 1 }, 'reload no marca nada: lo marca servirlo');
+    assert.deepEqual(rl.body.misses, { total: 1, unresolved: 1 }, 'reload marks nothing: serving the route does');
     const ok = await json(await fetch(`${url}/api/users`));
     assert.equal(ok.status, 200);
     assert.equal(ok.body.length, 4);
     const m = JSON.parse(readFileSync(file, 'utf8'))['GET /api/users'];
     assert.equal(m.resolved, true);
     assert.equal(m.times, 2);
-    assert.deepEqual((await json(await fetch(`${url}/__atrezzo/state`))).body.misses, { total: 1, sinResolver: 0 });
-    // reload con YAML roto ⇒ 400 y se queda el estado anterior
+    assert.deepEqual((await json(await fetch(`${url}/__atrezzo/state`))).body.misses, { total: 1, unresolved: 0 });
+    // reload with broken YAML ⇒ 400 and the previous state stays
     writeFileSync(join(dir, 'escenarios/catalogo.yaml'), 'name: catalogo\nseed: x\n');
     const bad = await json(await fetch(`${url}/__atrezzo/reload`, { method: 'POST' }));
     assert.equal(bad.status, 400);
@@ -169,7 +169,7 @@ test('POST /__atrezzo/reload recoge el YAML modificado sin reiniciar; resolved p
   } finally { await mock.close(); }
 });
 
-test('--on-miss stub: 200, [] en colecciones, {} en detalle, cabecera x-atrezzo-stub y sigue registrando', async () => {
+test('--on-miss stub: 200, [] for collections, {} for details, x-atrezzo-stub header, still recording', async () => {
   const { mock, url } = await startServer({ onMiss: 'stub' });
   try {
     const col = await json(await fetch(`${url}/api/users`));
@@ -183,24 +183,24 @@ test('--on-miss stub: 200, [] en colecciones, {} en detalle, cabecera x-atrezzo-
     assert.equal(post.status, 200);
     assert.deepEqual(post.body, {});
     const real = await fetch(`${url}/api/products`);
-    assert.equal(real.headers.get('x-atrezzo-stub'), null, 'lo que está en el contrato no es stub');
+    assert.equal(real.headers.get('x-atrezzo-stub'), null, 'what is in the contract is not a stub');
     const list = (await json(await fetch(`${url}/__atrezzo/misses`))).body;
     assert.deepEqual(list.misses.map((m) => `${m.method} ${m.path}`).sort(), ['GET /api/users', 'GET /api/users/:id', 'POST /api/products']);
     assert.ok(list.misses.every((m) => m.status === 200));
   } finally { await mock.close(); }
-  assert.throws(() => createMockServer({ scenariosDir: join(tmpProject({ 'e/c.yaml': CATALOGO }), 'e'), onMiss: 'nada' }), /--on-miss/);
+  assert.throws(() => createMockServer({ scenariosDir: join(tmpProject({ 'e/c.yaml': CATALOGO }), 'e'), onMiss: 'nope' }), /--on-miss/);
 });
 
 // ---------- CLI ----------
 
-test('atrezzo misses --json con un registro; texto con propuesta; --clear vacía; doctor avisa', () => {
+test('atrezzo misses --json with one entry; text with a suggestion; --clear empties; doctor warns', () => {
   const dir = tmpProject({ 'atrezzo.config.json': CONFIG({ workspace: { contract: 'api/openapi.yaml' } }), 'escenarios/catalogo.yaml': CATALOGO, 'api/openapi.yaml': readFileSync(join(ROOT, 'tests/fixtures/petstore.yaml'), 'utf8') });
   const store = createMissStore(join(dir, 'atrezzo/.atrezzo/misses.json'));
   store.record({ method: 'GET', pathname: '/api/invoices', query: new URLSearchParams('token=abc'), status: 404 });
   const j = cli(['misses', '--json'], dir);
   assert.equal(j.code, 0, j.stderr);
   const doc = JSON.parse(j.stdout);
-  assert.equal(doc.sinResolver, 1);
+  assert.equal(doc.unresolved, 1);
   assert.equal(doc.misses.length, 1);
   assert.equal(doc.misses[0].path, '/api/invoices');
   assert.deepEqual(doc.misses[0].query, { token: '***' });
@@ -209,52 +209,52 @@ test('atrezzo misses --json con un registro; texto con propuesta; --clear vacía
   store.record({ method: 'GET', pathname: '/api/pets', status: 404 });
   const t = cli(['misses'], dir);
   assert.equal(t.code, 0, t.stderr);
-  assert.match(t.stdout, /GET \/api\/pets\s+2 veces\s+sin resolver.*→ el contrato lo tiene \(GET \/pets\) → atrezzo import api\/openapi.yaml/);
-  assert.match(t.stdout, /GET \/api\/invoices\s+1 vez\s+sin resolver.*→ no está en el contrato → añade el endpoint al escenario \(skill \/atrezzo:hueco\)/);
-  assert.match(t.stdout, /2 huecos · 2 sin resolver/);
+  assert.match(t.stdout, /GET \/api\/pets\s+2 times\s+unresolved.*→ the contract has it \(GET \/pets\) → atrezzo import api\/openapi.yaml/);
+  assert.match(t.stdout, /GET \/api\/invoices\s+1 time\s+unresolved.*→ not in the contract → add the endpoint to the scenario \(skill \/atrezzo:hueco\)/);
+  assert.match(t.stdout, /2 gaps · 2 unresolved/);
 
   const d = doctor(dir);
-  const w = d.checks.find((c) => /hueco/.test(c.label));
+  const w = d.checks.find((c) => /gap/.test(c.label));
   assert.equal(w.level, 'warn');
-  assert.match(w.label, /2 huecos sin resolver \(de 2 registrados\)/);
+  assert.match(w.label, /2 unresolved gaps \(of 2 recorded\)/);
   assert.match(w.detail, /GET \/api\/pets \(2×\)/);
 
   const c = cli(['misses', '--clear'], dir);
   assert.equal(c.code, 0);
-  assert.match(c.stdout, /2 huecos borrados/);
-  assert.deepEqual(JSON.parse(cli(['misses', '--json'], dir).stdout), { misses: [], sinResolver: 0 });
-  assert.match(cli(['misses'], dir).stdout, /Sin huecos registrados/);
-  assert.ok(!doctor(dir).checks.some((x) => /hueco/.test(x.label)));
+  assert.match(c.stdout, /2 gaps cleared/);
+  assert.deepEqual(JSON.parse(cli(['misses', '--json'], dir).stdout), { misses: [], unresolved: 0 });
+  assert.match(cli(['misses'], dir).stdout, /No gaps recorded/);
+  assert.ok(!doctor(dir).checks.some((x) => /gap/.test(x.label)));
 });
 
-// ---------- end-to-end: página → 404 → misses → parche → world + reload → verde ----------
+// ---------- end-to-end: page → 404 → misses → patch → world + reload → green ----------
 
-const PAGE = `<!doctype html><meta charset="utf-8"><title>usuarios</title>
-<ul id="lista"></ul>
+const PAGE = `<!doctype html><meta charset="utf-8"><title>users</title>
+<ul id="list"></ul>
 <script type="module">
   const r = await fetch('/api/users');
-  const lista = document.getElementById('lista');
+  const list = document.getElementById('list');
   if (!r.ok) {
     const e = await r.json();
-    lista.after(Object.assign(document.createElement('p'), { textContent: 'Error ' + r.status + ': ' + e.error }));
+    list.after(Object.assign(document.createElement('p'), { textContent: 'Error ' + r.status + ': ' + e.error }));
   } else {
     for (const u of await r.json()) {
       const li = Object.assign(document.createElement('li'), { textContent: u.nombre + ' · ' + u.email });
       li.dataset.testid = 'user-row';
-      lista.append(li);
+      list.append(li);
     }
   }
-  const listo = document.createElement('i');
-  listo.hidden = true;
-  listo.dataset.testid = 'listo';
-  document.body.append(listo);
+  const ready = document.createElement('i');
+  ready.hidden = true;
+  ready.dataset.testid = 'ready';
+  document.body.append(ready);
 </script>`;
 
-const FLOW = `escenario: escenarios/catalogo.yaml
+const FLOW = `scenario: escenarios/catalogo.yaml
 steps:
-  - screen: usuarios
+  - screen: users
     visit: /
-    wait_for: "[data-testid=listo]"
+    wait_for: "[data-testid=ready]"
     requests:
       usuarios: GET /api/users
     expect:
@@ -265,7 +265,7 @@ steps:
 
 const realPw = await loadPlaywright(ROOT);
 const realChrome = realPw && (chromeExecutable(realPw.name) ?? (realPw.name !== 'playwright-core' ? 'bundled' : null));
-const skipReal = !realPw ? 'playwright(-core) no instalado en el repo' : !realChrome || (realChrome !== 'bundled' && !existsSync(realChrome)) ? 'sin Chromium (define ATREZZO_CHROME)' : false;
+const skipReal = !realPw ? 'playwright(-core) not installed in the repo' : !realChrome || (realChrome !== 'bundled' && !existsSync(realChrome)) ? 'no Chromium (set ATREZZO_CHROME)' : false;
 
 function serveChild(dir) {
   return new Promise((ok, ko) => {
@@ -277,43 +277,43 @@ function serveChild(dir) {
       if (m && !child.url) { child.url = `http://127.0.0.1:${m[1]}`; ok(child); }
     });
     child.stderr.on('data', (d) => { buf += d; });
-    child.on('exit', (code) => { if (!child.url) ko(new Error(`serve salió con ${code}: ${buf}`)); });
+    child.on('exit', (code) => { if (!child.url) ko(new Error(`serve exited with ${code}: ${buf}`)); });
     child.log = () => buf;
   });
 }
 
-test('end-to-end (Chromium real): 404 registrado → parche al escenario → world + reload → la página pinta y el hueco queda resuelto', { skip: skipReal, timeout: 90_000 }, async (t) => {
+test('end-to-end (real Chromium): 404 recorded → scenario patch → world + reload → the page renders and the gap is resolved', { skip: skipReal, timeout: 90_000 }, async (t) => {
   const dir = tmpProject({ 'atrezzo.config.json': CONFIG(), 'escenarios/catalogo.yaml': CATALOGO, 'index.html': PAGE, 'flujo.yaml': FLOW });
   symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'));
   const srv = await serveChild(dir);
   t.after(() => srv.kill());
   const say = (s) => t.diagnostic(s);
 
-  // 1) la página pide /api/users, que no existe ⇒ rojo, y el hueco queda registrado
+  // 1) the page requests /api/users, which does not exist ⇒ red, and the gap is recorded
   const v1 = await cliAsync(['verify', 'flujo.yaml', '--driver', 'playwright', '--no-reset', '--url', srv.url], dir);
-  say(`verify antes del parche: exit ${v1.code}`);
+  say(`verify before the patch: exit ${v1.code}`);
   assert.notEqual(v1.code, 0, v1.stdout);
   const m1 = await cliAsync(['misses'], dir);
   say(m1.stdout);
-  assert.match(m1.stdout, /GET \/api\/users\s+\d+ (vez|veces)\s+sin resolver/);
+  assert.match(m1.stdout, /GET \/api\/users\s+\d+ times?\s+unresolved/);
   const j1 = JSON.parse((await cliAsync(['misses', '--json'], dir)).stdout);
-  assert.equal(j1.misses[0].referer, `${srv.url}/`, 'el hueco lo provocó la página (referer)');
+  assert.equal(j1.misses[0].referer, `${srv.url}/`, 'the page caused the gap (referer)');
 
-  // 2) parche al escenario (entidad + endpoint; los datos los genera el mundo) → world → reload
+  // 2) scenario patch (entity + endpoint; the world generates the data) → world → reload
   writeFileSync(join(dir, 'escenarios/catalogo.yaml'), PATCH_WORLD(CATALOGO));
   const w = await cliAsync(['world', 'escenarios/catalogo.yaml'], dir);
   assert.equal(w.code, 0, w.stderr);
   assert.match(w.stdout, /GET \/api\/users/);
   const rl = await fetch(`${srv.url}/__atrezzo/reload`, { method: 'POST' }).then((r) => r.json());
-  say(`reload: endpoints ${rl.endpoints.join(', ')} · generado: ${rl.generado}`);
-  assert.equal(rl.generado, 'al día');
+  say(`reload: endpoints ${rl.endpoints.join(', ')} · generated: ${rl.generated}`);
+  assert.equal(rl.generated, 'up to date');
 
-  // 3) la pantalla pinta (sin reset: lo que ve es fruto del reload) y el hueco sale resuelto
+  // 3) the screen renders (no reset: what it shows comes from the reload) and the gap shows as resolved
   const v2 = await cliAsync(['verify', 'flujo.yaml', '--driver', 'playwright', '--no-reset', '--url', srv.url], dir);
   say(v2.stdout);
   assert.equal(v2.code, 0, v2.stdout + v2.stderr);
   const j2 = JSON.parse((await cliAsync(['misses', '--json'], dir)).stdout);
-  assert.equal(j2.sinResolver, 0);
+  assert.equal(j2.unresolved, 0);
   assert.equal(j2.misses[0].resolved, true);
-  assert.match(srv.log(), /hueco GET \/api\/users resuelto/);
+  assert.match(srv.log(), /gap GET \/api\/users resolved/);
 });

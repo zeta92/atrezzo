@@ -1,13 +1,13 @@
 ---
 name: desde-intencion
-description: Planifica estados atrezzo para ir de una pantalla X a un objetivo Y. Úsalo cuando el usuario describa un recorrido ("estoy en el dashboard y quiero conciliar las incidencias") y haya que derivar la ruta de pantallas, un escenario por paso y los huecos de cobertura.
+description: Plans atrezzo states to get from screen X to goal Y. Use it when the user describes a journey ("I'm on the dashboard and want to reconcile the issues") and you need to derive the screen path, one scenario per step and the coverage gaps.
 ---
 
 # /atrezzo:desde-intencion
 
-1. Reformula la intención como `origen → objetivo` y pregunta solo lo que bloquee (rol del usuario, datos mínimos).
-2. Deriva la **ruta de estados**: lista de pantallas con el estado de datos que cada una necesita para avanzar (p. ej. `dashboard (hay incidencias) → lista-pedidos (filtro incidencia) → conciliacion (pedido con cliente)`). Ese es el `path` del escenario y `entry` su primera pantalla.
-3. Para cada paso decide si basta **un mundo** compartido (mismo escenario, distintas proyecciones) o hace falta **otro escenario** (estado vacío, error, límite). Prefiere un mundo; crea escenarios extra solo para estados excluyentes.
-4. Crea los escenarios con `/atrezzo:escena` (formato en `${CLAUDE_PLUGIN_ROOT}/references/escenario.md`) y un `flujo.yaml` con un paso por pantalla (`screen`, `visit`, `requests`, `expect`).
-5. Lista los **huecos de cobertura**: estados que el recorrido toca y ningún escenario cubre — vacío, un solo elemento, página exacta (n = limit), nulos en campos leídos, enums nuevos, errores 4xx/5xx (fuera del mock; anótalos). Usa la matriz de `${CLAUDE_PLUGIN_ROOT}/references/suposiciones.md`.
-6. Cierra con `/atrezzo:verifica` sobre el flujo y entrega: ruta, escenarios creados, resultado de verify y huecos pendientes.
+1. Restate the intent as `origin → goal` and ask only what blocks you (user role, minimum data).
+2. Derive the **state path**: the list of screens with the data state each one needs to move on (e.g. `dashboard (there are issues) → lista-pedidos (issue filter) → conciliacion (order with customer)`). That is the scenario's `path`, and `entry` is its first screen.
+3. For each step decide whether **one world** is enough (same scenario, different projections) or **another scenario** is needed (empty state, error, limit). Prefer one world; create extra scenarios only for mutually exclusive states.
+4. Create the scenarios with `/atrezzo:escena` (format in `${CLAUDE_PLUGIN_ROOT}/references/escenario.md`) and a `flujo.yaml` with one step per screen (`screen`, `visit`, `requests`, `expect`).
+5. List the **coverage gaps**: states the journey touches that no scenario covers — empty, a single item, an exact page (n = limit), nulls in fields that are read, new enum values, 4xx/5xx errors (outside the mock; note them). Use the matrix in `${CLAUDE_PLUGIN_ROOT}/references/suposiciones.md`.
+6. Finish with `/atrezzo:verifica` on the flow and deliver: path, scenarios created, verify result and pending gaps.

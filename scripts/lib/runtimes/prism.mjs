@@ -9,20 +9,20 @@ import { columnInfo, metaFrom, p, slug } from './common.mjs';
 function signals(ctx) {
   const out = [];
   const dep = ctx.dep('@stoplight/prism-cli');
-  if (dep) out.push({ text: `@stoplight/prism-cli en ${dep}`, weight: 3 });
+  if (dep) out.push({ text: `@stoplight/prism-cli in ${dep}`, weight: 3 });
   const script = ctx.scripts.find((s) => /\bprism\s+(mock|proxy)\b/.test(s.text));
-  if (script) out.push({ text: `"prism" en ${script.where}`, weight: 2 });
-  if (ctx.specs.length) out.push({ text: `contrato ${ctx.specs[0]} (señal débil: mejor \`atrezzo import ${ctx.specs[0]}\`; prism no es necesario para usarlo)`, weight: 1 });
+  if (script) out.push({ text: `"prism" in ${script.where}`, weight: 2 });
+  if (ctx.specs.length) out.push({ text: `contract ${ctx.specs[0]} (weak signal: prefer \`atrezzo import ${ctx.specs[0]}\`; prism is not needed to use it)`, weight: 1 });
   return out;
 }
 
 export const meta = metaFrom({
   id: 'prism',
-  label: 'Prism (mock desde OpenAPI generado)',
+  label: 'Prism (mock from a generated OpenAPI)',
   needsOpenapi: true,
   signals,
-  none: 'sin spec OpenAPI ni @stoplight/prism-cli',
-  startHint: 'npx @stoplight/prism-cli mock atrezzo/.generated/<escenario>.openapi.yaml',
+  none: 'no OpenAPI spec and no @stoplight/prism-cli',
+  startHint: 'npx @stoplight/prism-cli mock atrezzo/.generated/<scenario>.openapi.yaml',
 });
 
 const OAS = {
@@ -85,10 +85,10 @@ export function openapiDocument(dataset, config) {
     const parameters = [];
     for (const f of ep.filters) {
       const info = columnInfo(rows, f);
-      const values = info.distinct.length && info.distinct.length <= 25 ? ` Valores en el mundo: ${info.distinct.join(', ')}.` : '';
+      const values = info.distinct.length && info.distinct.length <= 25 ? ` Values in the world: ${info.distinct.join(', ')}.` : '';
       parameters.push({
         name: f, in: 'query', required: false,
-        description: `Igualdad; varios valores separados por coma; "null" filtra nulos.${values}`,
+        description: `Equality; several comma-separated values; "null" matches nulls.${values}`,
         schema: { type: 'string' },
       });
     }
@@ -106,8 +106,8 @@ export function openapiDocument(dataset, config) {
       ? { type: 'object', properties: { [ep.pick ?? 'data']: list, total: { type: 'integer' }, limit: { type: ['integer', 'null'] }, offset: { type: 'integer' } }, required: [ep.pick ?? 'data', 'total', 'limit', 'offset'] }
       : list;
     const def = engine.handle({ pathname: ep.path, query: {} });
-    const examples = { escenario: { summary: `Proyección sin query del escenario ${dataset.scenario}`, value: def.body } };
-    // One example per value of the distribution field, selectable with `Prefer: example=<clave>`.
+    const examples = { scenario: { summary: `Projection of scenario ${dataset.scenario} without a query`, value: def.body } };
+    // One example per value of the distribution field, selectable with `Prefer: example=<key>`.
     const distField = ep.filters.find((f) => columnInfo(rows, f).distinct.length <= 10 && f !== 'id');
     if (distField) {
       for (const v of columnInfo(rows, distField).distinct) {
@@ -118,22 +118,22 @@ export function openapiDocument(dataset, config) {
     const op = slug(ep.path).replace(/[.-]/g, '_');
     const responses = {
       200: {
-        description: `Lista de ${ep.entity}`,
-        headers: { 'X-Total-Count': { description: 'Total tras filtros, antes de paginar', schema: { type: 'integer', example: Number(def.headers['x-total-count']) } } },
+        description: `List of ${ep.entity}`,
+        headers: { 'X-Total-Count': { description: 'Total after filters, before pagination', schema: { type: 'integer', example: Number(def.headers['x-total-count']) } } },
         content: { 'application/json': { schema, examples } },
       },
     };
-    if (ep.pagination) responses[400] = { description: 'Parámetro de paginación no entero', content: { 'application/json': { schema: errorSchema } } };
-    paths[ep.path] = { get: { operationId: `listar_${op}`, summary: `${ep.entity} (proyección de atrezzo)`, parameters, responses } };
+    if (ep.pagination) responses[400] = { description: 'Non-integer pagination parameter', content: { 'application/json': { schema: errorSchema } } };
+    paths[ep.path] = { get: { operationId: `list_${op}`, summary: `${ep.entity} (atrezzo projection)`, parameters, responses } };
     if (ep.detail) {
       const first = rows[0];
       const detailResponses = {
-        200: { description: `Un ${dataset.schema[ep.entity].singular}`, content: { 'application/json': { schema: item, ...(first ? { examples: { escenario: { summary: `id ${first.id}`, value: engine.handle({ pathname: `${ep.path}/${first.id}` }).body } } } : {}) } } },
-        404: { description: 'No existe en el escenario', content: { 'application/json': { schema: errorSchema } } },
+        200: { description: `One ${dataset.schema[ep.entity].singular}`, content: { 'application/json': { schema: item, ...(first ? { examples: { scenario: { summary: `id ${first.id}`, value: engine.handle({ pathname: `${ep.path}/${first.id}` }).body } } } : {}) } } },
+        404: { description: 'Does not exist in the scenario', content: { 'application/json': { schema: errorSchema } } },
       };
       paths[`${ep.path}/{id}`] = {
         get: {
-          operationId: `detalle_${op}`,
+          operationId: `detail_${op}`,
           parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }],
           responses: detailResponses,
         },
@@ -145,7 +145,7 @@ export function openapiDocument(dataset, config) {
     info: {
       title: `atrezzo · ${dataset.scenario}`,
       version: dataset.hash,
-      description: `Generado por atrezzo desde el escenario ${dataset.scenario} (semilla ${dataset.seed}). No editar a mano. Los examples son la proyección exacta del mundo; Prism no filtra ni pagina.`,
+      description: `Generated by atrezzo from scenario ${dataset.scenario} (seed ${dataset.seed}). Do not edit by hand. The examples are the exact projection of the world; Prism does not filter or paginate.`,
     },
     servers: [{ url: config.mock.baseUrl }],
     paths,
@@ -156,16 +156,16 @@ export function openapiDocument(dataset, config) {
 export function emit({ dataset, config }) {
   const file = p(config.generatedDir, `${dataset.scenario}.openapi.yaml`);
   const doc = openapiDocument(dataset, config);
-  const exampleKeys = Object.values(doc.paths).flatMap((x) => Object.keys(x.get.responses[200].content['application/json'].examples ?? {})).filter((k) => k !== 'escenario');
+  const exampleKeys = Object.values(doc.paths).flatMap((x) => Object.keys(x.get.responses[200].content['application/json'].examples ?? {})).filter((k) => k !== 'scenario');
   return {
     files: [{ path: file, content: emitYaml(doc) }],
     start: `npx @stoplight/prism-cli mock ${file} --port ${config.mock.port}`,
     notes: [
-      'Prism devuelve el example "escenario" (proyección sin query) para cualquier query: NO filtra ni pagina; X-Total-Count es el del example',
-      exampleKeys.length ? `otros examples por cabecera Prefer: example=<clave> (${[...new Set(exampleKeys)].slice(0, 6).join(', ')}${exampleKeys.length > 6 ? ', …' : ''})` : 'sin examples por filtro (ningún campo con ≤ 10 valores)',
-      'detalle /{id}: siempre el example del primer id; ids inexistentes no dan 404 salvo con Prefer: code=404',
-      'Prism sí valida las peticiones contra los parámetros declarados (tipos, minimum/maximum): responde 400 (el spec declara 400 en las listas paginadas) o 422 si no cuadran',
-      'los filtros se declaran como string sin enum: con enum Prism rechazaría las listas "a,b" que el motor acepta',
+      'Prism returns the "scenario" example (projection without a query) for any query: it does NOT filter or paginate; X-Total-Count is the example\'s',
+      exampleKeys.length ? `other examples via the Prefer: example=<key> header (${[...new Set(exampleKeys)].slice(0, 6).join(', ')}${exampleKeys.length > 6 ? ', …' : ''})` : 'no per-filter examples (no field with ≤ 10 values)',
+      'detail /{id}: always the first id\'s example; unknown ids do not 404 unless you send Prefer: code=404',
+      'Prism does validate requests against the declared parameters (types, minimum/maximum): it answers 400 (the spec declares 400 on paginated lists) or 422 when they do not match',
+      'filters are declared as string without enum: with an enum Prism would reject the "a,b" lists the engine accepts',
     ],
   };
 }

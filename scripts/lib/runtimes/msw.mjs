@@ -7,17 +7,17 @@ import { metaFrom, p } from './common.mjs';
 function signals(ctx) {
   const out = [];
   const where = ctx.dep('msw');
-  if (where) out.push({ text: `msw en ${where}`, weight: 3 });
+  if (where) out.push({ text: `msw in ${where}`, weight: 3 });
   const worker = [...ctx.files('public/mockServiceWorker.js')];
-  if (worker.length) out.push({ text: `${worker[0]} (msw init hecho)`, weight: 2 });
+  if (worker.length) out.push({ text: `${worker[0]} (msw init done)`, weight: 2 });
   return out;
 }
 
 export const meta = metaFrom({
   id: 'msw',
-  label: 'MSW (handlers en navegador y tests Node)',
+  label: 'MSW (handlers in the browser and Node tests)',
   signals,
-  none: 'msw no está en las dependencias',
+  none: 'msw is not a dependency',
   startHint: "setupWorker(...handlers).start()  ·  setupServer(...handlers).listen()",
 });
 
@@ -33,8 +33,8 @@ export function emit({ dataset, config }) {
   if (!base.startsWith('.')) base = `./${base}`;
   const file = p(dir, `${dataset.scenario}.handlers.mjs`);
   const notes = [];
-  if (dir !== p(config.generatedDir)) notes.push(`handlers en el front (${dir}); importan ${base}/${dataset.scenario}.json y runtime.mjs con rutas relativas`);
-  notes.push('importa JSON con `with { type: "json" }`: Node 22+, Vite 5+, Next 14+');
+  if (dir !== p(config.generatedDir)) notes.push(`handlers in the front end (${dir}); they import ${base}/${dataset.scenario}.json and runtime.mjs with relative paths`);
+  notes.push('imports JSON with `with { type: "json" }`: Node 22+, Vite 5+, Next 14+');
   return {
     files: [{ path: file, content: handlersSource(dataset, { importBase: base }) }],
     start: `import { handlers } from '${file}'  →  setupWorker(...handlers).start({ onUnhandledRequest: 'bypass' })`,

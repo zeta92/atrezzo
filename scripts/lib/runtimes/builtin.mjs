@@ -4,19 +4,19 @@ import { metaFrom } from './common.mjs';
 
 export const meta = metaFrom({
   id: 'builtin',
-  label: 'atrezzo serve (servidor HTTP propio)',
-  signals: () => [{ text: 'fallback universal: HTTP real sin dependencias, vale para cualquier backend o lenguaje', weight: 1 }],
+  label: 'atrezzo serve (built-in HTTP server)',
+  signals: () => [{ text: 'universal fallback: real HTTP with no dependencies, works with any backend or language', weight: 1 }],
   none: '',
-  startHint: 'atrezzo serve --escenario <escenario>',
+  startHint: 'atrezzo serve --scenario <scenario>',
 });
 
 export function emit({ dataset, config }) {
   return {
     files: [], // the dataset JSON and runtime.mjs (always written by `world`) are all it needs
-    start: `atrezzo serve --escenario ${dataset.scenario} --port ${config.mock.port}`,
+    start: `atrezzo serve --scenario ${dataset.scenario} --port ${config.mock.port}`,
     notes: [
-      `sirve ${dataset.endpoints.map((e) => e.path).join(', ')} con el mismo motor que los handlers (runtime.mjs)`,
-      'cambio de escenario sin reiniciar: POST /__atrezzo/reset {"escenario":"<nombre>"}',
+      `serves ${dataset.endpoints.map((e) => e.path).join(', ')} with the same engine as the handlers (runtime.mjs)`,
+      'switch scenarios without restarting: POST /__atrezzo/reset {"scenario":"<name>"}',
     ],
   };
 }

@@ -70,43 +70,43 @@ function withoutPagination(path) {
  */
 export function diagnose(row, ctx) {
   const hyps = [];
-  const add = (tipo, confianza, evidencia) => hyps.push({ tipo, confianza, evidencia });
+  const add = (type, confidence, evidence) => hyps.push({ type, confidence, evidence });
   const exp = row.expect;
   const target = exp.count ?? exp.min ?? exp.max;
   const r = ctx.response;
-  if (r && r.status !== 200) add('respuesta-no-200', 'alta', `la petición devolvió ${r.status}: ${JSON.stringify(r.body).slice(0, 160)}`);
+  if (r && r.status !== 200) add('non-200-response', 'high', `the request returned ${r.status}: ${JSON.stringify(r.body).slice(0, 160)}`);
   if (r) {
     const ignored = header(r.headers, 'x-atrezzo-ignored');
-    if (ignored) add('filtro-no-declarado', 'media', `el cliente envía parámetros que el contrato no declara como filtro y se ignoraron: ${ignored}. Si el cliente espera que el servidor filtre, añádelos a endpoints[].filters.`);
+    if (ignored) add('undeclared-filter', 'medium', `the client sends parameters the contract does not declare as filters, so they were ignored: ${ignored}. If the client expects the server to filter, add them to endpoints[].filters.`);
   }
   if (ctx.items) {
     const total = Number(header(r?.headers, 'x-total-count'));
     if (Number.isFinite(total) && total > ctx.items.length && ctx.fullMatched !== undefined && ctx.fullMatched >= target && ctx.matched < target) {
-      add('paginacion-desalineada', 'alta', `la respuesta trae ${ctx.items.length} de ${total} elementos; sin paginar habría ${ctx.fullMatched} que cumplen la condición, pero en esta página solo ${ctx.matched}. Revisa limit/offset del cliente o el orden (sort) del endpoint.`);
+      add('pagination-mismatch', 'high', `the response has ${ctx.items.length} of ${total} items; unpaginated, ${ctx.fullMatched} match the condition, but this page has only ${ctx.matched}. Check the client's limit/offset or the endpoint's sort.`);
     }
     const ids = ctx.items.map((i) => i?.id).filter((x) => x !== undefined);
     const dup = ids.length - new Set(ids).size;
-    if (dup > 0) add('deduplicacion-por-id', 'alta', `${dup} ids repetidos en la respuesta; si el cliente deduplica por id pinta ${new Set(ids).size} filas.`);
+    if (dup > 0) add('dedupe-by-id', 'high', `${dup} repeated ids in the response; if the client dedupes by id it renders ${new Set(ids).size} rows.`);
     const nullFields = {};
     for (const it of ctx.items) for (const [k, v] of Object.entries(it ?? {})) if (v === null) nullFields[k] = (nullFields[k] ?? 0) + 1;
     const nullRows = ctx.items.filter((it) => Object.values(it ?? {}).some((v) => v === null)).length;
     if (nullRows > 0) {
       const strong = ctx.domCount !== undefined && ctx.domCount === ctx.matched - nullRows;
-      add('campo-nulo', strong ? 'alta' : 'baja', `${nullRows} elementos con campos nulos (${Object.entries(nullFields).map(([k, n]) => `${k}: ${n}`).join(', ')}); si el cliente los descarta o rompe al pintarlos, faltan filas. Ver references/suposiciones.md.`);
+      add('null-field', strong ? 'high' : 'low', `${nullRows} items with null fields (${Object.entries(nullFields).map(([k, n]) => `${k}: ${n}`).join(', ')}); if the client drops them or crashes rendering them, rows go missing. See references/suposiciones.md.`);
     }
     if (ctx.domCount !== undefined && ctx.domCount < ctx.matched && dup === 0 && nullRows === 0) {
-      add('filtro-en-cliente', 'media', `el JSON trae ${ctx.matched} elementos que cumplen, el DOM muestra ${ctx.domCount}: el cliente filtra u oculta elementos. El escenario es correcto; mira el componente.`);
+      add('client-side-filter', 'medium', `the JSON has ${ctx.matched} matching items, the DOM shows ${ctx.domCount}: the client filters or hides items. The scenario is right; look at the component.`);
     }
     if (ctx.domCount !== undefined && ctx.matched === target && ctx.domCount !== target) {
-      add('render', 'alta', `el mock entrega exactamente lo esperado (${target}); la diferencia está en la pantalla, no en el escenario. No regeneres el mundo.`);
+      add('render', 'high', `the mock delivers exactly what was expected (${target}); the difference is in the screen, not the scenario. Do not regenerate the world.`);
     }
     if (ctx.domCount === undefined && ctx.fullMatched !== undefined && ctx.fullMatched !== target && ctx.matched === ctx.fullMatched) {
-      add('mundo-distinto', 'media', `el mundo tiene ${ctx.fullMatched} elementos que cumplen y se esperaban ${expectedText(exp)}: revisa world (total/distribución) o la condición "where" de la aserción.`);
+      add('world-mismatch', 'medium', `the world has ${ctx.fullMatched} matching items and ${expectedText(exp)} were expected: check world (total/distribution) or the assertion's "where" condition.`);
     }
   } else if (ctx.domCount !== undefined) {
-    add('sin-datos', 'baja', 'la aserción no tiene "data" para comparar con el JSON; añade data.request para poder separar fallo de datos y fallo de pantalla.');
+    add('no-data', 'low', 'the assertion has no "data" to compare against the JSON; add data.request to tell a data failure from a screen failure.');
   }
-  if (!hyps.length) add('sin-hipotesis', 'baja', `obtenido ${ctx.obtained}, esperado ${expectedText(exp)}; ninguna heurística encaja. Revisa la ruta de pantallas y los selectores.`);
+  if (!hyps.length) add('no-hypothesis', 'low', `obtained ${ctx.obtained}, expected ${expectedText(exp)}; no heuristic fits. Check the screen path and the selectors.`);
   return hyps;
 }
 
@@ -134,14 +134,14 @@ export function chromeExecutable(moduleName, env = process.env) {
 async function defaultPageFactory(cwd, { viewport } = {}) {
   const pw = await loadPlaywright(cwd);
   if (!pw) {
-    throw new AtrezzoError('El driver playwright necesita el paquete "playwright" (o "playwright-core") y no está instalado en este proyecto.\n  Instálalo con: npm i -D playwright-core   (usa el Chromium del sistema; ATREZZO_CHROME=/ruta para otro binario)\n  o: npm i -D playwright && npx playwright install chromium\n  O usa --driver http. No se ha verificado nada.', { exitCode: EXIT.UNVERIFIABLE });
+    throw new AtrezzoError('The playwright driver needs the "playwright" (or "playwright-core") package, which is not installed in this project.\n  Install it with: npm i -D playwright-core   (uses the system Chromium; ATREZZO_CHROME=/path for another binary)\n  or: npm i -D playwright && npx playwright install chromium\n  Or use --driver http. Nothing was verified.', { exitCode: EXIT.UNVERIFIABLE });
   }
   const chromium = pw.mod.chromium ?? pw.mod.default?.chromium;
   const executablePath = chromeExecutable(pw.name);
   let browser;
   try { browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] }); } catch (e) {
-    const hint = executablePath ? `¿existe y es ejecutable ${executablePath}? (override con ATREZZO_CHROME=/ruta)` : 'Ejecuta: npx playwright install chromium, o define ATREZZO_CHROME=/ruta/al/chromium';
-    throw new AtrezzoError(`${pw.name} está instalado pero no puede lanzar Chromium: ${e.message.split('\n')[0]}\n  ${hint}`, { exitCode: EXIT.UNVERIFIABLE });
+    const hint = executablePath ? `does ${executablePath} exist and is it executable? (override with ATREZZO_CHROME=/path)` : 'Run: npx playwright install chromium, or set ATREZZO_CHROME=/path/to/chromium';
+    throw new AtrezzoError(`${pw.name} is installed but cannot launch Chromium: ${e.message.split('\n')[0]}\n  ${hint}`, { exitCode: EXIT.UNVERIFIABLE });
   }
   const context = await browser.newContext(viewport ? { viewport } : {});
   const page = await context.newPage();
@@ -161,7 +161,7 @@ async function openStep(pw, url, step, headers) {
   else await pw.page.setExtraHTTPHeaders?.(headers);
   let resp;
   try { resp = await pw.page.goto(target); } catch (e) {
-    return redact(`no se pudo abrir ${step.visit}: ${e.message.split('\n')[0]}`, headers);
+    return redact(`could not open ${step.visit}: ${e.message.split('\n')[0]}`, headers);
   }
   await pw.page.waitForLoadState?.('networkidle', { timeout: 15_000 })?.catch?.(() => {});
   const finalUrl = typeof pw.page.url === 'function' ? pw.page.url() : null;
@@ -169,14 +169,14 @@ async function openStep(pw, url, step, headers) {
     const want = new URL(target); const got = new URL(finalUrl);
     if (got.origin !== want.origin || normPath(got.pathname) !== normPath(want.pathname)) {
       const where = got.origin === want.origin ? got.pathname + got.search : finalUrl;
-      return `la app redirigió ${step.visit} → ${where}` + (LOGIN_RE.test(got.pathname) ? ' (pantalla de login: sin sesión o sesión caducada; revisa headers/Cookie del flujo)' : '');
+      return `the app redirected ${step.visit} → ${where}` + (LOGIN_RE.test(got.pathname) ? ' (login screen: no session or session expired; check the flow headers/Cookie)' : '');
     }
   }
   const status = typeof resp?.status === 'function' ? resp.status() : null;
-  if (status !== null && status >= 400) return `${step.visit} respondió HTTP ${status}`;
+  if (status !== null && status >= 400) return `${step.visit} answered HTTP ${status}`;
   if (step.waitFor) {
     try { await pw.page.waitForSelector(step.waitFor, { state: 'attached', timeout: 10_000 }); } catch {
-      return `wait_for "${step.waitFor}" no apareció en 10 s`;
+      return `wait_for "${step.waitFor}" did not appear within 10 s`;
     }
   }
   return null;
@@ -198,14 +198,14 @@ export async function runVerify(flow, opts) {
   try {
     if (reset) {
       const local = generateWorld(flow.scenario);
-      const res = await fetchImpl(joinUrl(url, '/__atrezzo/reset'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ escenario: flow.scenario.name }) });
+      const res = await fetchImpl(joinUrl(url, '/__atrezzo/reset'), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scenario: flow.scenario.name }) });
       const body = await res.json().catch(() => ({}));
-      if (res.status !== 200) throw new AtrezzoError(`El mock en ${url} no pudo cargar el escenario "${flow.scenario.name}": ${body.error ?? res.status}`, { exitCode: EXIT.UNVERIFIABLE });
-      if (body.hash && body.hash !== local.hash) warnings.push(`el mock sirve "${body.escenario}" con hash ${body.hash} pero el escenario local tiene ${local.hash}: ¿ficheros distintos?`);
+      if (res.status !== 200) throw new AtrezzoError(`The mock at ${url} could not load scenario "${flow.scenario.name}": ${body.error ?? res.status}`, { exitCode: EXIT.UNVERIFIABLE });
+      if (body.hash && body.hash !== local.hash) warnings.push(`the mock serves "${body.scenario}" with hash ${body.hash} but the local scenario has ${local.hash}: different files?`);
     }
   } catch (e) {
     if (e instanceof AtrezzoError) throw e;
-    throw new AtrezzoError(`No hay ningún mock escuchando en ${url} (${e.cause?.code ?? e.message}). Arráncalo con: atrezzo serve --escenario ${flow.scenario.name}`, { exitCode: EXIT.UNVERIFIABLE });
+    throw new AtrezzoError(`No mock listening at ${url} (${e.cause?.code ?? e.message}). Start it with: atrezzo serve --scenario ${flow.scenario.name}`, { exitCode: EXIT.UNVERIFIABLE });
   }
 
   let pw = null;
@@ -222,7 +222,7 @@ export async function runVerify(flow, opts) {
       if (needHttp) {
         for (const [name, path] of Object.entries(step.requests)) {
           try { responses[name] = { path, ...(await get(joinUrl(url, path))) }; } catch (e) {
-            throw new AtrezzoError(redact(`Fallo de red pidiendo ${path}: ${e.message}`, headers), { exitCode: EXIT.UNVERIFIABLE });
+            throw new AtrezzoError(redact(`Network error requesting ${path}: ${e.message}`, headers), { exitCode: EXIT.UNVERIFIABLE });
           }
         }
       }
@@ -230,7 +230,7 @@ export async function runVerify(flow, opts) {
       let stepFailRow = null;
       if (pw) {
         if (!step.visit) {
-          for (const e of step.expect) rows.push({ screen: step.screen, expect: e, status: 'N/V', obtained: null, note: 'el paso no tiene "visit": playwright no sabe qué página abrir' });
+          for (const e of step.expect) rows.push({ screen: step.screen, expect: e, status: 'N/V', obtained: null, note: 'the step has no "visit": playwright does not know which page to open' });
           continue;
         }
         stepFail = await openStep(pw, url, step, headers);
@@ -250,14 +250,14 @@ export async function runVerify(flow, opts) {
         }
         if (pw) {
           try { ctx.domCount = await pw.page.locator(e.selector).count(); } catch (err) {
-            stepFail ??= `selector inválido o página cerrada: ${err.message.split('\n')[0]}`;
+            stepFail ??= `invalid selector or closed page: ${err.message.split('\n')[0]}`;
             ctx.domCount = 0;
           }
           row.obtained = ctx.domCount;
         } else if (ctx.items) {
           row.obtained = ctx.matched;
         } else {
-          row.note = 'sin "data": el driver http no puede contar un selector; añade data.request o usa --driver playwright';
+          row.note = 'no "data": the http driver cannot count a selector; add data.request or use --driver playwright';
           rows.push(row);
           continue;
         }
@@ -266,8 +266,8 @@ export async function runVerify(flow, opts) {
         row.status = !stepFail && passes(e, row.obtained) ? 'OK' : 'KO';
         if (stepFail) {
           // say it once per step; the other rows of the step point at it
-          if (stepFailRow === null) { stepFailRow = rows.length + 1; row.note = stepFail; } else row.note = `misma causa que #${stepFailRow}`;
-          if (wantDiag && stepFailRow === rows.length + 1) row.hypotheses = [{ tipo: 'navegacion', confianza: 'alta', evidencia: `lo contado no es la pantalla "${step.screen}"; el escenario y los selectores no son la causa. Arregla la navegación/sesión antes de mirar nada más.` }];
+          if (stepFailRow === null) { stepFailRow = rows.length + 1; row.note = stepFail; } else row.note = `same cause as #${stepFailRow}`;
+          if (wantDiag && stepFailRow === rows.length + 1) row.hypotheses = [{ type: 'navigation', confidence: 'high', evidence: `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.` }];
         } else if (row.status === 'KO' && wantDiag) row.hypotheses = diagnose(row, ctx);
         rows.push(row);
       }
@@ -284,22 +284,22 @@ export async function runVerify(flow, opts) {
 }
 
 export function formatReport(result) {
-  const where = result.scenario ? `Escenario: ${result.scenario} (semilla ${result.seed})` : 'Sin escenario (app real, sin mock)';
+  const where = result.scenario ? `Scenario: ${result.scenario} (seed ${result.seed})` : 'No scenario (real app, no mock)';
   const head = [`${where} · driver: ${result.driver} · ${result.url}${result.viewport ? ` · viewport ${result.viewport.width}x${result.viewport.height}` : ''}`];
-  if (result.headers && Object.keys(result.headers).length) head.push(`Cabeceras: ${formatHeaders(result.headers)}`);
-  for (const w of result.warnings) head.push(`AVISO: ${w}`);
-  const cols = ['#', 'pantalla', 'selector', 'esperado', 'obtenido', 'resultado'];
+  if (result.headers && Object.keys(result.headers).length) head.push(`Headers: ${formatHeaders(result.headers)}`);
+  for (const w of result.warnings) head.push(`WARNING: ${w}`);
+  const cols = ['#', 'screen', 'selector', 'expected', 'obtained', 'result'];
   const data = result.rows.map((r, i) => [String(i + 1), r.screen, r.expect.label ? `${r.expect.selector} (${r.expect.label})` : r.expect.selector, expectedText(r.expect), r.obtained === null ? '-' : String(r.obtained), r.status]);
   const widths = cols.map((c, i) => Math.max(c.length, ...data.map((d) => d[i].length)));
   const fmt = (cells) => cells.map((c, i) => c.padEnd(widths[i])).join('  ').trimEnd();
   const out = [...head, '', fmt(cols), fmt(widths.map((w) => '-'.repeat(w))), ...data.map(fmt)];
   result.rows.forEach((r, i) => {
     if (r.note) out.push(`  #${i + 1}: ${r.note}`);
-    for (const h of r.hypotheses ?? []) out.push(`  #${i + 1} hipótesis [${h.confianza}] ${h.tipo}: ${h.evidencia}`);
+    for (const h of r.hypotheses ?? []) out.push(`  #${i + 1} hypothesis [${h.confidence}] ${h.type}: ${h.evidence}`);
   });
   const ok = result.rows.filter((r) => r.status === 'OK').length;
   const ko = result.rows.filter((r) => r.status === 'KO').length;
   const nv = result.rows.length - ok - ko;
-  out.push('', `${ok} OK · ${ko} KO · ${nv} sin verificar → ${result.exitCode === 0 ? 'VERDE' : result.exitCode === 1 ? 'ROJO' : 'NO VERIFICADO'}`);
+  out.push('', `${ok} OK · ${ko} KO · ${nv} not verified → ${result.exitCode === 0 ? 'GREEN' : result.exitCode === 1 ? 'RED' : 'NOT VERIFIED'}`);
   return out.join('\n');
 }

@@ -5,17 +5,17 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { ROOT, SCENARIO, tmpProject, cli } from './helpers.mjs';
 
-// Stub mínimo de 'msw' para importar los handlers generados sin instalar msw.
+// Minimal 'msw' stub to import the generated handlers without installing msw.
 const MSW_STUB = `
 export const http = { get: (path, resolver) => ({ method: 'GET', path, resolver }) };
 export const HttpResponse = { json: (body, init) => ({ body, ...init }) };
 `;
 
-test('world escribe JSON, handlers MSW y runtime idéntico al motor', () => {
+test('world writes JSON, MSW handlers and a runtime identical to the engine', () => {
   const dir = tmpProject({ 'escenarios/conciliacion.yaml': SCENARIO });
   const r = cli(['world', 'escenarios/conciliacion.yaml'], dir);
   assert.equal(r.code, 0, r.stderr);
-  assert.match(r.stdout, /semilla 7712/);
+  assert.match(r.stdout, /seed 7712/);
   assert.match(r.stdout, /pedidos\s+40\s+pagado=34 pendiente=3 incidencia=3/);
   assert.match(r.stdout, /GET \/api\/orders/);
   const gen = join(dir, 'atrezzo/.generated');
@@ -23,7 +23,7 @@ test('world escribe JSON, handlers MSW y runtime idéntico al motor', () => {
   assert.equal(readFileSync(join(gen, 'runtime.mjs'), 'utf8'), readFileSync(join(ROOT, 'scripts/lib/contract.mjs'), 'utf8'));
 });
 
-test('world es determinista byte a byte entre ejecuciones', () => {
+test('world is byte-for-byte deterministic across runs', () => {
   const a = tmpProject({ 'e.yaml': SCENARIO });
   const b = tmpProject({ 'e.yaml': SCENARIO });
   cli(['world', 'e.yaml'], a);
@@ -33,7 +33,7 @@ test('world es determinista byte a byte entre ejecuciones', () => {
   }
 });
 
-test('los handlers generados proyectan igual que el motor', async () => {
+test('the generated handlers project exactly like the engine', async () => {
   const dir = tmpProject({ 'e.yaml': SCENARIO });
   cli(['world', 'e.yaml'], dir);
   mkdirSync(join(dir, 'node_modules/msw'), { recursive: true });
@@ -46,43 +46,43 @@ test('los handlers generados proyectan igual que el motor', async () => {
   assert.equal(res.body.length, 3);
   assert.ok(res.body.every((p) => p.estado === 'pagado'));
   assert.equal(res.headers['x-total-count'], '34');
-  assert.equal(mod.handlers[0].resolver({ request: new Request('http://localhost/otra') }), undefined);
+  assert.equal(mod.handlers[0].resolver({ request: new Request('http://localhost/other') }), undefined);
 });
 
-test('init: detecta stack, escribe config y no la pisa sin --force', () => {
+test('init: detects the stack, writes the config and does not overwrite it without --force', () => {
   const dir = tmpProject({ 'package.json': JSON.stringify({ dependencies: { next: '15', '@supabase/supabase-js': '2' } }) });
   const r1 = cli(['init'], dir);
   assert.equal(r1.code, 0, r1.stderr);
-  assert.match(r1.stdout, /stack detectado: next/);
+  assert.match(r1.stdout, /detected stack: next/);
   assert.match(r1.stdout, /@supabase\/supabase-js/);
-  assert.match(r1.stdout, /no se ha instalado nada/);
+  assert.match(r1.stdout, /nothing installed/);
   const cfg = JSON.parse(readFileSync(join(dir, 'atrezzo.config.json'), 'utf8'));
   assert.equal(cfg.stack, 'next');
   assert.ok(existsSync(join(dir, 'atrezzo/escenarios')) && existsSync(join(dir, 'atrezzo/handlers')));
-  writeFileSync(join(dir, 'atrezzo.config.json'), JSON.stringify({ ...cfg, stack: 'mio' }));
+  writeFileSync(join(dir, 'atrezzo.config.json'), JSON.stringify({ ...cfg, stack: 'mine' }));
   const r2 = cli(['init'], dir);
-  assert.match(r2.stdout, /ya existe; usa --force/);
-  assert.equal(JSON.parse(readFileSync(join(dir, 'atrezzo.config.json'), 'utf8')).stack, 'mio');
+  assert.match(r2.stdout, /already exists; use --force/);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'atrezzo.config.json'), 'utf8')).stack, 'mine');
   cli(['init', '--force'], dir);
   assert.equal(JSON.parse(readFileSync(join(dir, 'atrezzo.config.json'), 'utf8')).stack, 'next');
 });
 
-test('doctor: config válida, escenarios y estado de generación', () => {
+test('doctor: valid config, scenarios and generation state', () => {
   const dir = tmpProject({ 'package.json': '{}' });
   cli(['init'], dir);
   writeFileSync(join(dir, 'atrezzo/escenarios/conciliacion.yaml'), SCENARIO);
   let r = cli(['doctor'], dir);
   assert.equal(r.code, 0, r.stdout);
-  assert.match(r.stdout, /atrezzo\.config\.json válido/);
-  assert.match(r.stdout, /escenario conciliacion\.yaml — sin generar/);
+  assert.match(r.stdout, /atrezzo\.config\.json valid/);
+  assert.match(r.stdout, /scenario conciliacion\.yaml — not generated/);
   cli(['world', 'atrezzo/escenarios/conciliacion.yaml'], dir);
   r = cli(['doctor'], dir);
-  assert.match(r.stdout, /generado al día/);
+  assert.match(r.stdout, /generated, up to date/);
   writeFileSync(join(dir, 'atrezzo/escenarios/roto.yaml'), 'name: x\n');
   r = cli(['doctor'], dir);
   assert.equal(r.code, 3);
-  assert.match(r.stdout, /ERROR escenario roto\.yaml inválido/);
+  assert.match(r.stdout, /ERROR scenario roto\.yaml invalid/);
   writeFileSync(join(dir, 'atrezzo.config.json'), '{"version": 2}');
   r = cli(['doctor'], dir);
-  assert.match(r.stdout, /atrezzo\.config\.json inválido/);
+  assert.match(r.stdout, /atrezzo\.config\.json invalid/);
 });

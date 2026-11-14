@@ -1,6 +1,6 @@
-# Ruta: dashboard → lista de pedidos. Las aserciones del escenario se evalúan en la
-# última pantalla (lista-pedidos); aquí se añaden las propias de cada paso.
-escenario: escenarios/pedidos.yaml
+# Path: dashboard → order list. The scenario assertions run on the last
+# screen (lista-pedidos); each step adds its own here.
+scenario: escenarios/pedidos.yaml
 base_url: http://127.0.0.1:4010
 steps:
   - screen: dashboard
@@ -21,5 +21,5 @@ steps:
       - selector: "[data-testid=order-row] [data-testid=importe]"
         min: 1
         max: 12
-        label: importes visibles
+        label: visible amounts
         data: { request: pedidos }

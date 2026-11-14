@@ -1,41 +1,41 @@
 ---
 name: init
-description: Configura atrezzo en un repo (init de mocks por escenarios). Úsalo cuando el usuario quiera empezar con atrezzo, no exista atrezzo.config.json, pida detectar el stack o el runtime (MSW, Supabase, Prism, WireMock, serve), o el proyecto sea un monorepo o tenga front y backend separados.
+description: Sets up atrezzo in a repo (scenario-based mocks). Use it when the user wants to start with atrezzo, there is no atrezzo.config.json, they ask to detect the stack or the runtime (MSW, Supabase, Prism, WireMock, serve), or the project is a monorepo or has a separate front end and backend.
 ---
 
 # /atrezzo:init
 
-1. Inspecciona el repo sin modificarlo:
-   - Estructura: ¿monorepo (`pnpm-workspace.yaml`, `workspaces` en `package.json`, `turbo.json`, `nx.json`, `lerna.json`)? ¿carpetas `client/`+`server/`, `web/`+`api/`, `frontend/`+`backend/`? ¿o el backend está en otro repo?
-   - Framework del front y capa de datos: fetch/axios/react-query/swr/supabase-js/apollo; dónde se construyen las URLs (`grep -rn "fetch(\|axios\.\|from('" src | head -50`), proxy de Vite, `NEXT_PUBLIC_API_URL`.
-   - Mocks existentes: msw, WireMock (`mappings/`+`__files/`, docker-compose), Prism, json-server, `supabase/`.
-   - Contratos: OpenAPI, tipos generados (`database.ts`), migraciones.
-2. Ejecuta `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs runtimes` (solo lee) y luego `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs init`.
-   - Nunca uses `--force` sin que el usuario lo pida: `init` no pisa una config existente.
-   - **No instales dependencias sin decirlo.** Si hacen falta (`msw`), anuncia el comando exacto y espera confirmación antes de `init --install`. `serve` y `verify --driver http` no necesitan nada.
+1. Inspect the repo without changing it:
+   - Layout: a monorepo (`pnpm-workspace.yaml`, `workspaces` in `package.json`, `turbo.json`, `nx.json`, `lerna.json`)? `client/`+`server/`, `web/`+`api/`, `frontend/`+`backend/` folders? Or is the backend in another repo?
+   - Front-end framework and data layer: fetch/axios/react-query/swr/supabase-js/apollo; where URLs are built (`grep -rn "fetch(\|axios\.\|from('" src | head -50`), the Vite proxy, `NEXT_PUBLIC_API_URL`.
+   - Existing mocks: msw, WireMock (`mappings/`+`__files/`, docker-compose), Prism, json-server, `supabase/`.
+   - Contracts: OpenAPI, generated types (`database.ts`), migrations.
+2. Run `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs runtimes` (read-only), then `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs init`.
+   - Never use `--force` unless the user asks: `init` does not overwrite an existing config.
+   - **Do not install dependencies without saying so.** If they are needed (`msw`), announce the exact command and wait for confirmation before `init --install`. `serve` and `verify --driver http` need nothing.
 
-## Detección de runtime (`--runtime auto`, por defecto)
+## Runtime detection (`--runtime auto`, the default)
 
-`init` puntúa cada adaptador de 0 a 3 con sus motivos y elige el mayor; si empatan, gana por prioridad `msw > supabase > wiremock > builtin > prism`. **Siempre imprime** la tabla de puntuaciones, el motivo de la elección y las alternativas con señales. Léela y explícasela al usuario con sus palabras; no la resumas como "detectado X" sin el porqué.
+`init` scores each adapter from 0 to 3 with its reasons and picks the highest; on a tie, priority wins: `msw > supabase > wiremock > builtin > prism`. It **always prints** the score table, the reason for the choice and the alternatives with signals. Read it and explain it to the user in your own words; do not summarize it as "detected X" without the why.
 
-| runtime | señales | qué emite `world` |
+| runtime | signals | what `world` emits |
 |---|---|---|
-| `msw` | `msw` en deps, `public/mockServiceWorker.js` | handlers `.mjs` (en `<front>/src/mocks/atrezzo/` si hay workspace) |
-| `supabase` | `supabase/config.toml`, `@supabase/supabase-js`, `supabase/`, `*SUPABASE_URL` en `.env*` | `schema.sql`, `seed.sql`, `reset.sh`, README junto a `<backend>/supabase/` |
-| `wiremock` | dependencia, `mappings/`+`__files/`, docker-compose/scripts | `mappings/` + `__files/` pregenerados (501 para lo no enumerado) |
-| `prism` | `@stoplight/prism-cli`, `prism mock` en scripts; un spec solo puntúa 1 | `<escenario>.openapi.yaml` con examples |
-| `builtin` | siempre 1 (fallback universal) | nada más: `atrezzo serve` |
+| `msw` | `msw` in deps, `public/mockServiceWorker.js` | `.mjs` handlers (in `<front>/src/mocks/atrezzo/` with a workspace) |
+| `supabase` | `supabase/config.toml`, `@supabase/supabase-js`, `supabase/`, `*SUPABASE_URL` in `.env*` | `schema.sql`, `seed.sql`, `reset.sh`, README next to `<backend>/supabase/` |
+| `wiremock` | dependency, `mappings/`+`__files/`, docker-compose/scripts | pre-generated `mappings/` + `__files/` (501 for anything not enumerated) |
+| `prism` | `@stoplight/prism-cli`, `prism mock` in scripts; a spec alone scores 1 | `<scenario>.openapi.yaml` with examples |
+| `builtin` | always 1 (universal fallback) | nothing else: `atrezzo serve` |
 
-- Un `openapi.yaml` sin Prism instalado **no** elige Prism (empata con builtin y gana builtin): propón `atrezzo import` para sacar el escenario del contrato.
-- Si dos runtimes tienen señales fuertes (p. ej. msw en el front y Supabase en el backend), pregunta si quiere ambos: `init --force --runtime msw,supabase`.
-- Si el usuario elige otro: `init --force --runtime <id>`. Explica qué **no** hace ese runtime (Prism no filtra ni pagina; WireMock solo sirve combinaciones pregeneradas; Supabase usa PostgREST, no el motor). Detalle: `${CLAUDE_PLUGIN_ROOT}/references/runtimes.md`.
+- An `openapi.yaml` without Prism installed does **not** pick Prism (it ties with builtin and builtin wins): suggest `atrezzo import` to get the scenario from the contract.
+- If two runtimes have strong signals (e.g. msw in the front end and Supabase in the backend), ask whether they want both: `init --force --runtime msw,supabase`.
+- If the user picks another one: `init --force --runtime <id>`. Explain what that runtime does **not** do (Prism does not filter or paginate; WireMock only serves pre-generated combinations; Supabase uses PostgREST, not the engine). Details: `${CLAUDE_PLUGIN_ROOT}/references/runtimes.md`.
 
-## Monorepo y front/back separados
+## Monorepo and separate front end/backend
 
-- `init` clasifica cada paquete como front (deps de UI, `vite.config`, nombre `web`/`client`…) o backend (deps de servidor, `openapi.*`, `supabase/`, manifiesto no JS, nombre `api`/`server`…) y escribe `workspace: { front, backend, contract }`.
-- **Si sale exit 2** ("No elijo por ti"), muestra la tabla al usuario y pregúntale cuál es el front; después `init --front <ruta> --backend <ruta> [--contract <spec>]`. Nunca elijas tú en silencio.
-- Dos repos: ejecuta `init` en el del front con rutas relativas al otro: `--front . --backend ../api --contract ../api/openapi.yaml`.
-- El `baseUrl` del mock sale del front (proxy de Vite o `*_API_URL`); compruébalo en la salida (`baseUrl del mock: …`).
+- `init` classifies each package as front end (UI deps, `vite.config`, name `web`/`client`…) or backend (server deps, `openapi.*`, `supabase/`, a non-JS manifest, name `api`/`server`…) and writes `workspace: { front, backend, contract }`.
+- **On exit 2** ("Not choosing for you"), show the table to the user and ask which one is the front end; then `init --front <path> --backend <path> [--contract <spec>]`. Never choose silently yourself.
+- Two repos: run `init` in the front-end repo with paths relative to the other one: `--front . --backend ../api --contract ../api/openapi.yaml`.
+- The mock `baseUrl` comes from the front end (Vite proxy or `*_API_URL`); check it in the output (`mock baseUrl: …`).
 
-3. Si ya hay MSW u otro mock, explica cómo convive: los handlers de atrezzo se añaden como uno más (`index.mjs` de `handlersDir`); no reemplaces los existentes.
-4. Termina con un resumen: estructura (workspace), runtime elegido y por qué, alternativas, baseUrl, ficheros escritos y siguiente paso (`atrezzo import <spec>` si hay contrato → `/atrezzo:captura`; si no, `/atrezzo:escena`).
+3. If MSW or another mock already exists, explain how they coexist: atrezzo's handlers are added as one more (`index.mjs` in `handlersDir`); do not replace the existing ones.
+4. Finish with a summary: layout (workspace), runtime chosen and why, alternatives, baseUrl, files written and the next step (`atrezzo import <spec>` if there is a contract → `/atrezzo:captura`; otherwise `/atrezzo:escena`).

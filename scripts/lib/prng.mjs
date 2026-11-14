@@ -47,12 +47,12 @@ export function createRng(seed, stream = '') {
     /** Integer in [min, max], both inclusive. */
     int(min, max) {
       if (!Number.isInteger(min) || !Number.isInteger(max) || max < min) {
-        throw new RangeError(`rng.int: rango inválido [${min}, ${max}]`);
+        throw new RangeError(`rng.int: invalid range [${min}, ${max}]`);
       }
       return min + Math.floor(next() * (max - min + 1));
     },
     pick(arr) {
-      if (!arr.length) throw new RangeError('rng.pick: array vacío');
+      if (!arr.length) throw new RangeError('rng.pick: empty array');
       return arr[Math.floor(next() * arr.length)];
     },
     /** Returns a new shuffled array (Fisher–Yates); the input is not mutated. */

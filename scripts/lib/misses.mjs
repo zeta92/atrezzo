@@ -1,4 +1,4 @@
-// Gaps ("huecos"): requests the mock could not answer because the scenario contract
+// Gaps (misses): requests the mock could not answer because the scenario contract
 // does not declare them. `serve` records them in <atrezzo>/.atrezzo/misses.json
 // (an object keyed by "METHOD /path"), deduplicated, so the plugin can fill them
 // from the app's own context (skill /atrezzo:hueco).
@@ -122,7 +122,7 @@ export function createMissStore(file = null) {
       const entry = {
         method: method === 'HEAD' ? 'GET' : method,
         path: missPattern(pathname),
-        ejemplo: pathname,
+        example: pathname,
         query: maskQuery(query ?? new URLSearchParams()),
         times: (prev?.times ?? 0) + 1,
         first_seen: prev?.first_seen ?? now,
@@ -153,7 +153,7 @@ export function createMissStore(file = null) {
     },
     summary() {
       const l = this.list();
-      return { total: l.length, sinResolver: l.filter((m) => !m.resolved).length };
+      return { total: l.length, unresolved: l.filter((m) => !m.resolved).length };
     },
     clear() { data = {}; save(); },
   };
@@ -198,36 +198,36 @@ export function coveringScenarios(scenarios, path) {
 
 /** One suggestion per unresolved gap. */
 export function hintFor(miss, { spec = null, contract = null, scenarios = [] } = {}) {
-  if (isMutation(miss.method)) return 'mutación: atrezzo solo proyecta lecturas → serve --on-miss stub (o no se resuelve)';
+  if (isMutation(miss.method)) return 'mutation: atrezzo only projects reads → serve --on-miss stub (or leave it unresolved)';
   const covering = coveringScenarios(scenarios, miss.path);
-  if (covering.length) return `ya lo declara el escenario ${covering.join(', ')} → atrezzo world + POST /__atrezzo/reload (o reinicia serve)`;
+  if (covering.length) return `already declared by scenario ${covering.join(', ')} → atrezzo world + POST /__atrezzo/reload (or restart serve)`;
   if (spec) {
     const hit = findInSpec(spec, miss.method, miss.path);
-    if (hit?.method) return `el contrato lo tiene (${miss.method} ${hit.path}) → atrezzo import ${contract}`;
-    if (hit) return `el contrato tiene ${hit.path} pero no ${miss.method} → añade el endpoint al escenario (skill /atrezzo:hueco)`;
-    return 'no está en el contrato → añade el endpoint al escenario (skill /atrezzo:hueco)';
+    if (hit?.method) return `the contract has it (${miss.method} ${hit.path}) → atrezzo import ${contract}`;
+    if (hit) return `the contract has ${hit.path} but not ${miss.method} → add the endpoint to the scenario (skill /atrezzo:hueco)`;
+    return 'not in the contract → add the endpoint to the scenario (skill /atrezzo:hueco)';
   }
-  return 'añade el endpoint al escenario (skill /atrezzo:hueco)';
+  return 'add the endpoint to the scenario (skill /atrezzo:hueco)';
 }
 
 const ago = (iso, now) => {
   const s = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
-  if (s < 60) return `hace ${s} s`;
-  if (s < 3600) return `hace ${Math.round(s / 60)} min`;
-  if (s < 86400) return `hace ${Math.round(s / 3600)} h`;
+  if (s < 60) return `${s} s ago`;
+  if (s < 3600) return `${Math.round(s / 60)} min ago`;
+  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
   return iso.slice(0, 10);
 };
 
 export function formatMisses(list, hints = new Map(), now = Date.now()) {
-  if (!list.length) return 'Sin huecos registrados: el mock ha respondido todo lo que la app ha pedido.';
+  if (!list.length) return 'No gaps recorded: the mock has answered everything the app asked for.';
   const w = Math.max(...list.map((m) => `${m.method} ${m.path}`.length));
   const lines = list.map((m) => {
     const route = `${m.method} ${m.path}`.padEnd(w);
-    const veces = `${m.times} ${m.times === 1 ? 'vez' : 'veces'}`.padEnd(9);
-    const estado = (m.resolved ? 'resuelta' : 'sin resolver').padEnd(12);
+    const times = `${m.times} ${m.times === 1 ? 'time' : 'times'}`.padEnd(9);
+    const state = (m.resolved ? 'resolved' : 'unresolved').padEnd(10);
     const hint = !m.resolved && hints.get(m) ? `   → ${hints.get(m)}` : '';
-    return `${route}   ${veces}  ${estado}  ${ago(m.last_seen, now).padEnd(11)}${hint}`;
+    return `${route}   ${times}  ${state}  ${ago(m.last_seen, now).padEnd(11)}${hint}`;
   });
   const open = list.filter((m) => !m.resolved).length;
-  return `${lines.join('\n')}\n${list.length} ${list.length === 1 ? 'hueco' : 'huecos'} · ${open} sin resolver`;
+  return `${lines.join('\n')}\n${list.length} ${list.length === 1 ? 'gap' : 'gaps'} · ${open} unresolved`;
 }

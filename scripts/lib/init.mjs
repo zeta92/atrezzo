@@ -11,10 +11,10 @@ import { candidatesTable, detectApiBase, detectWorkspace, findSpec, projectConte
 import { chooseRuntime, parseRuntimeList, rankRuntimes } from './runtimes/index.mjs';
 import { handlersDir as mswHandlersDir } from './runtimes/msw.mjs';
 
-const handlersIndex = (importBase) => `// Punto de entrada de los handlers de atrezzo para MSW.
-// Los módulos <escenario>.handlers.mjs los escribe \`atrezzo world\`; aquí solo se eligen.
-// Uso (navegador):  const { handlers } = await loadScenario('mi-escenario'); setupWorker(...handlers).start();
-// Uso (tests node): setupServer(...(await loadScenario('mi-escenario')).handlers).listen();
+const handlersIndex = (importBase) => `// Entry point for atrezzo's MSW handlers.
+// \`atrezzo world\` writes the <scenario>.handlers.mjs modules; this file only picks one.
+// Browser:    const { handlers } = await loadScenario('my-scenario'); setupWorker(...handlers).start();
+// Node tests: setupServer(...(await loadScenario('my-scenario')).handlers).listen();
 export async function loadScenario(name) {
   return import(\`${importBase}\${name}.handlers.mjs\`);
 }
@@ -24,7 +24,7 @@ const relPath = (root, abs) => relative(root, abs).split(sep).join('/') || '.';
 
 function checkDir(root, flag, value) {
   const abs = resolve(root, value);
-  if (!existsSync(abs)) throw new AtrezzoError(`--${flag} ${value}: no existe (${abs})`);
+  if (!existsSync(abs)) throw new AtrezzoError(`--${flag} ${value}: does not exist (${abs})`);
   return relPath(root, abs);
 }
 
@@ -35,32 +35,32 @@ export function resolveWorkspace(dir, { front, backend, contract } = {}) {
   const notes = [...detected.notes];
   let ws = null;
   const ambiguityError = (what) => new AtrezzoError([
-    `No elijo por ti: ${what}.`,
-    `Estructura: ${detected.notes[0]}`,
+    `Not choosing for you: ${what}.`,
+    `Layout: ${detected.notes[0]}`,
     candidatesTable(detected.candidates),
-    'Indica el front y el backend: atrezzo init --front <ruta> --backend <ruta> [--contract <spec>]',
+    'Name the front end and the backend: atrezzo init --front <path> --backend <path> [--contract <spec>]',
   ].join('\n'), { exitCode: EXIT.UNVERIFIABLE });
   if (explicit && front === undefined && detected.kind !== 'simple' && !detected.front) {
-    throw ambiguityError(`has pasado --backend pero no --front, y ${detected.ambiguous ?? 'no hay un front único'}`);
+    throw ambiguityError(`you passed --backend but not --front, and ${detected.ambiguous ?? 'there is no single front end'}`);
   }
   if (explicit) {
     ws = {
       front: front !== undefined ? checkDir(dir, 'front', front) : (detected.front ?? '.'),
       backend: backend !== undefined ? checkDir(dir, 'backend', backend) : detected.backend,
     };
-    notes.push(`workspace explícito: --front ${ws.front}${ws.backend ? ` --backend ${ws.backend}` : ''}`);
-    if (front === undefined) notes.push(detected.front ? `front detectado: ${detected.front}` : 'sin --front: se usa la raíz');
-    if (backend === undefined) notes.push(detected.backend ? `backend detectado: ${detected.backend}` : 'sin --backend y sin candidato único: backend sin definir');
+    notes.push(`explicit workspace: --front ${ws.front}${ws.backend ? ` --backend ${ws.backend}` : ''}`);
+    if (front === undefined) notes.push(detected.front ? `detected front end: ${detected.front}` : 'no --front: using the root');
+    if (backend === undefined) notes.push(detected.backend ? `detected backend: ${detected.backend}` : 'no --backend and no single candidate: backend left undefined');
   } else if (detected.kind !== 'simple') {
     if (detected.ambiguous) throw ambiguityError(detected.ambiguous);
     ws = { front: detected.front, backend: detected.backend };
   }
   if (contract !== undefined) {
-    if (!existsSync(resolve(dir, contract))) throw new AtrezzoError(`--contract ${contract}: no existe`);
+    if (!existsSync(resolve(dir, contract))) throw new AtrezzoError(`--contract ${contract}: does not exist`);
     ws = { front: ws?.front ?? '.', backend: ws?.backend ?? null, ...ws, contract: relPath(dir, resolve(dir, contract)) };
   } else {
     const spec = (ws?.backend && findSpec(resolve(dir, ws.backend))) || findSpec(dir);
-    if (spec) { ws = { ...ws, contract: relPath(dir, spec) }; notes.push(`contrato encontrado: ${ws.contract} (úsalo con: atrezzo import)`); }
+    if (spec) { ws = { ...ws, contract: relPath(dir, spec) }; notes.push(`contract found: ${ws.contract} (use it with: atrezzo import)`); }
   }
   if (ws) for (const k of Object.keys(ws)) if (ws[k] === null || ws[k] === undefined) delete ws[k];
   return { workspace: ws, detected, notes };
@@ -71,7 +71,7 @@ export function resolveWorkspace(dir, { front, backend, contract } = {}) {
  *   workspace: object|null, wsNotes: string[], detected: object, runtime: { ids: string[], why: string, ranking: object[] }, apiBase: object|null, config: object }}
  */
 export function runInit(dir, { force = false, install = false, log = () => {}, runtime = 'auto', front, backend, contract } = {}) {
-  if (!existsSync(dir)) throw new AtrezzoError(`El directorio ${dir} no existe`);
+  if (!existsSync(dir)) throw new AtrezzoError(`Directory ${dir} does not exist`);
   const requested = parseRuntimeList(runtime);
   const { workspace, detected, notes: wsNotes } = resolveWorkspace(dir, { front, backend, contract });
   const frontAbs = workspace?.front ? resolve(dir, workspace.front) : dir;
@@ -83,7 +83,7 @@ export function runInit(dir, { force = false, install = false, log = () => {}, r
     const c = chooseRuntime(ctx);
     rt = { ids: [c.id], why: c.why, ranking: c.ranking, tied: c.tied, auto: true };
   } else {
-    rt = { ids: requested, why: `elegido con --runtime ${requested.join(',')}`, ranking: rankRuntimes(ctx), tied: [], auto: false };
+    rt = { ids: requested, why: `chosen with --runtime ${requested.join(',')}`, ranking: rankRuntimes(ctx), tied: [], auto: false };
   }
 
   const apiBase = detectApiBase(frontAbs, dir);
@@ -106,11 +106,11 @@ export function runInit(dir, { force = false, install = false, log = () => {}, r
   const written = [];
   const skipped = [];
   const cfgFile = join(dir, CONFIG_FILE);
-  if (existsSync(cfgFile) && !force) skipped.push(`${CONFIG_FILE} (ya existe; usa --force para sobrescribir)`);
+  if (existsSync(cfgFile) && !force) skipped.push(`${CONFIG_FILE} (already exists; use --force to overwrite)`);
   else { writeFileSync(cfgFile, `${JSON.stringify(cfg, null, 2)}\n`); written.push(CONFIG_FILE); }
 
   for (const d of [cfg.scenariosDir, cfg.handlersDir]) {
-    if (existsSync(join(dir, d))) skipped.push(`${d}/ (ya existe)`);
+    if (existsSync(join(dir, d))) skipped.push(`${d}/ (already exists)`);
     else { mkdirSync(join(dir, d), { recursive: true }); written.push(`${d}/`); }
   }
   const idx = join(dir, cfg.handlersDir, 'index.mjs');
@@ -121,13 +121,13 @@ export function runInit(dir, { force = false, install = false, log = () => {}, r
 
   const installed = [];
   if (install) {
-    if (!info.hasPackageJson) throw new AtrezzoError('--install necesita un package.json en el proyecto (o en el front)');
+    if (!info.hasPackageJson) throw new AtrezzoError('--install needs a package.json in the project (or in the front end)');
     const missing = ['msw', 'yaml'].filter((m) => !Object.hasOwn(info.deps, m));
     if (missing.length) {
       const args = { npm: ['install', '-D'], pnpm: ['add', '-D'], yarn: ['add', '-D'], bun: ['add', '-d'] }[info.packageManager];
-      log(`Instalando ${missing.join(', ')} con ${info.packageManager} ${args.join(' ')} en ${relPath(dir, frontAbs)} …`);
+      log(`Installing ${missing.join(', ')} with ${info.packageManager} ${args.join(' ')} in ${relPath(dir, frontAbs)} …`);
       const r = spawnSync(info.packageManager, [...args, ...missing], { cwd: frontAbs, stdio: 'inherit' });
-      if (r.status !== 0) throw new AtrezzoError(`La instalación falló (${info.packageManager} salió con ${r.status ?? r.error?.message})`, { exitCode: 2 });
+      if (r.status !== 0) throw new AtrezzoError(`Installation failed (${info.packageManager} exited with ${r.status ?? r.error?.message})`, { exitCode: 2 });
       installed.push(...missing);
     }
   }

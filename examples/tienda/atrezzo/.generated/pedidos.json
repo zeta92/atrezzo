@@ -3,7 +3,7 @@
   "scenario": "pedidos",
   "seed": 7712,
   "now": "2025-03-01T09:00:00.000Z",
-  "hash": "681ff6fdb90a8a35",
+  "hash": "c9de1a2c633bfa2f",
   "schema": {
     "clientes": {
       "singular": "cliente",

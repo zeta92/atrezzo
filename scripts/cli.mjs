@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// atrezzo CLI. Messages in Spanish; code in English.
+// atrezzo CLI.
 import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve, join, relative, dirname } from 'node:path';
 import { AtrezzoError, EXIT } from './lib/errors.mjs';
@@ -17,42 +17,42 @@ import { flowRequests } from './lib/flows.mjs';
 import { runImport, formatImportReport, loadSpec } from './lib/openapi.mjs';
 import { createMissStore, missesFile, hintFor, formatMisses } from './lib/misses.mjs';
 
-const HELP = `atrezzo — mocks de API a partir de estados de aplicación
+const HELP = `atrezzo — API mocks from application states
 
-Uso: atrezzo <comando> [opciones]
+Usage: atrezzo <command> [options]
 
-Comandos:
-  init [--dir .] [--runtime auto|builtin|msw|supabase|prism|wiremock] [--front <ruta> --backend <ruta>] [--contract <spec>]
+Commands:
+  init [--dir .] [--runtime auto|builtin|msw|supabase|prism|wiremock] [--front <path> --backend <path>] [--contract <spec>]
        [--install] [--force]
-      Detecta monorepo/carpetas front-back, el runtime (imprime qué encontró, por qué y las alternativas)
-      y escribe atrezzo.config.json. Si hay dos fronts o ninguno, pide --front/--backend (exit 2).
-      --runtime acepta varios separados por coma (msw,supabase). --install instala msw y yaml si faltan.
-  world <escenario.yaml> [--out <dir>]
-      Genera el mundo y escribe siempre <generatedDir>/<escenario>.json y runtime.mjs (fuente de verdad);
-      después, lo de cada runtime de la config: msw handlers · supabase seed.sql/reset.sh ·
-      prism <escenario>.openapi.yaml · wiremock mappings/ + __files/ · builtin nada más.
-  serve [--escenario <nombre>] [--port 4010] [--host 127.0.0.1] [--static <dir>] [--escenarios <dir>] [--runtime builtin]
+      Detects monorepo/front-back folders and the runtime (prints what it found, why, and the alternatives),
+      then writes atrezzo.config.json. With two front ends or none, asks for --front/--backend (exit 2).
+      --runtime takes several, comma-separated (msw,supabase). --install adds msw and yaml if missing.
+  world <scenario.yaml> [--out <dir>]
+      Generates the world and always writes <generatedDir>/<scenario>.json and runtime.mjs (source of truth);
+      then whatever each configured runtime needs: msw handlers · supabase seed.sql/reset.sh ·
+      prism <scenario>.openapi.yaml · wiremock mappings/ + __files/ · builtin nothing else.
+  serve [--scenario <name>] [--port 4010] [--host 127.0.0.1] [--static <dir>] [--scenarios <dir>] [--runtime builtin]
         [--on-miss log|stub]
-      Servidor HTTP con las proyecciones (runtimes builtin/msw). Con otro runtime imprime cómo
-      arrancarlo y sale con 2. Control: POST /__atrezzo/reset {"escenario":"x"}, POST /__atrezzo/reload,
-      GET /__atrezzo/state, GET|DELETE /__atrezzo/misses. Lo que no está en el contrato se registra
-      como hueco; --on-miss stub responde 200 vacío ([] o {}) con x-atrezzo-stub en vez de 404.
+      HTTP server with the projections (builtin/msw runtimes). With another runtime it prints how to
+      start it and exits with 2. Control: POST /__atrezzo/reset {"scenario":"x"}, POST /__atrezzo/reload,
+      GET /__atrezzo/state, GET|DELETE /__atrezzo/misses. Anything outside the contract is recorded
+      as a gap; --on-miss stub answers an empty 200 ([] or {}) with x-atrezzo-stub instead of 404.
   misses [--json] [--clear] [--dir .]
-      Huecos que ha visto serve (rutas pedidas por la app y no declaradas), con veces, estado y
-      qué hacer: import si el contrato la tiene, o la skill /atrezzo:hueco.
+      Gaps seen by serve (routes the app requested that no scenario declares), with counts, state and
+      what to do: import if the contract has the route, or the /atrezzo:hueco skill.
   runtimes [--dir .]
-      Lista los adaptadores, su puntuación en este proyecto, el motivo y cómo se arrancan.
+      Lists the adapters, their score in this project, the reason and how to start each one.
   import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
-      Infiere un escenario desde un OpenAPI (sin argumento usa workspace.contract) y escribe
-      <escenariosDir>/<name>.yaml con un informe: endpoints, envoltorios, TODO y rutas ignoradas.
-  verify <flujo.yaml> [--url http://127.0.0.1:4010] [--driver http|playwright] [--diagnose] [--no-reset] [--json]
-      Ejecuta el flujo contra el mock (o contra la app real si el flujo no tiene escenario) y compara.
-      El flujo puede declarar headers (\${VAR} desde el entorno; Cookie/Authorization salen como ***).
-      Driver playwright: playwright o playwright-core; Chromium del sistema o ATREZZO_CHROME=/ruta.
+      Infers a scenario from an OpenAPI spec (no argument: uses workspace.contract) and writes
+      <scenariosDir>/<name>.yaml with a report: endpoints, envelopes, TODOs and ignored routes.
+  verify <flow.yaml> [--url http://127.0.0.1:4010] [--driver http|playwright] [--diagnose] [--no-reset] [--json]
+      Runs the flow against the mock (or against the real app if the flow has no scenario) and compares.
+      The flow may declare headers (\${VAR} from the environment; Cookie/Authorization print as ***).
+      Playwright driver: playwright or playwright-core; system Chromium or ATREZZO_CHROME=/path.
   doctor [--dir .]
-      Qué hay instalado, qué falta y si la config y los escenarios son válidos.
+      What is installed, what is missing, and whether the config and scenarios are valid.
 
-Códigos de salida: 0 OK · 1 aserción fallida · 2 no verificable (falta herramienta o mock) · 3 entrada inválida`;
+Exit codes: 0 OK · 1 assertion failed · 2 not verifiable (missing tool or mock) · 3 invalid input`;
 
 const BOOLEAN = new Set(['install', 'force', 'diagnose', 'no-reset', 'json', 'help', 'clear']);
 
@@ -66,7 +66,7 @@ export function parseArgs(argv) {
     const [k, inline] = a.slice(2).split(/=(.*)/s, 2);
     if (BOOLEAN.has(k)) { flags[k] = true; continue; }
     const v = inline ?? argv[++i];
-    if (v === undefined || (inline === undefined && v.startsWith('--'))) throw new AtrezzoError(`La opción --${k} necesita un valor`);
+    if (v === undefined || (inline === undefined && v.startsWith('--'))) throw new AtrezzoError(`Option --${k} needs a value`);
     flags[k] = v;
   }
   return { cmd: pos.shift(), pos, flags };
@@ -89,29 +89,29 @@ function cmdInit({ flags }) {
     force: !!flags.force, install: !!flags.install, log: out,
     runtime: flags.runtime ?? 'auto', front: flags.front, backend: flags.backend, contract: flags.contract,
   });
-  out(`Proyecto: ${dir}`);
-  out('Estructura:');
+  out(`Project: ${dir}`);
+  out('Layout:');
   for (const n of r.wsNotes) out(`  ${n}`);
   if (r.detected.candidates.length) {
     for (const c of r.detected.candidates) out(`    ${c.path.padEnd(18)} front ${c.front} · backend ${c.backend} · ${c.role}${c.reasons.length ? ` (${c.reasons.join(', ')})` : ''}`);
   }
   if (r.workspace) out(`  workspace: ${Object.entries(r.workspace).map(([k, v]) => `${k}=${v}`).join(' · ')}`);
-  out(`  stack detectado: ${r.info.stack}${r.info.dataLayer.length ? ` · capa de datos: ${r.info.dataLayer.join(', ')}` : ''}`);
-  if (r.info.mocks.length) out(`  mocks existentes: ${r.info.mocks.join(', ')}`);
-  if (r.info.contracts.length) out(`  contratos: ${r.info.contracts.join(', ')}`);
-  out(`  baseUrl del mock: ${r.config.mock.baseUrl}${r.apiBase ? ` (${r.apiBase.source})` : ' (por defecto: el front no declara proxy ni *_API_URL)'}`);
+  out(`  detected stack: ${r.info.stack}${r.info.dataLayer.length ? ` · data layer: ${r.info.dataLayer.join(', ')}` : ''}`);
+  if (r.info.mocks.length) out(`  existing mocks: ${r.info.mocks.join(', ')}`);
+  if (r.info.contracts.length) out(`  contracts: ${r.info.contracts.join(', ')}`);
+  out(`  mock baseUrl: ${r.config.mock.baseUrl}${r.apiBase ? ` (${r.apiBase.source})` : ' (default: the front end declares no proxy or *_API_URL)'}`);
   out(`Runtime: ${r.runtime.ids.join(' + ')} — ${r.runtime.why}`);
-  out('  puntuaciones (0 = sin señales · 1 = posible · 2-3 = detectado):');
+  out('  scores (0 = no signals · 1 = possible · 2-3 = detected):');
   printRanking(r.runtime.ranking, r.runtime.ids);
   const alts = r.runtime.ranking.filter((x) => !r.runtime.ids.includes(x.id) && x.score >= 2);
-  if (alts.length) out(`  alternativas con señales: ${alts.map((a) => a.id).join(', ')} → atrezzo init --force --runtime ${[...r.runtime.ids, alts[0].id].join(',')} para emitir ambos`);
-  else out('  cambia con: atrezzo init --force --runtime <id>[,<id>]');
-  for (const w of r.written) out(`  escrito: ${w}`);
-  for (const s of r.skipped) out(`  sin cambios: ${s}`);
-  if (r.installed.length) out(`  instalado: ${r.installed.join(', ')}`);
-  else if (!flags.install) out('  dependencias: no se ha instalado nada (usa --install para msw y yaml; serve no las necesita)');
-  if (r.workspace?.contract) out(`Siguiente paso: atrezzo import ${r.workspace.contract} (escenario desde el contrato) y atrezzo world.`);
-  else out('Siguiente paso: crea un escenario en atrezzo/escenarios/ (skill /atrezzo:escena) y ejecuta atrezzo world.');
+  if (alts.length) out(`  alternatives with signals: ${alts.map((a) => a.id).join(', ')} → atrezzo init --force --runtime ${[...r.runtime.ids, alts[0].id].join(',')} to emit both`);
+  else out('  change it with: atrezzo init --force --runtime <id>[,<id>]');
+  for (const w of r.written) out(`  written: ${w}`);
+  for (const s of r.skipped) out(`  unchanged: ${s}`);
+  if (r.installed.length) out(`  installed: ${r.installed.join(', ')}`);
+  else if (!flags.install) out('  dependencies: nothing installed (use --install for msw and yaml; serve does not need them)');
+  if (r.workspace?.contract) out(`Next step: atrezzo import ${r.workspace.contract} (scenario from the contract), then atrezzo world.`);
+  else out('Next step: create a scenario in atrezzo/escenarios/ (skill /atrezzo:escena) and run atrezzo world.');
   return EXIT.OK;
 }
 
@@ -125,12 +125,12 @@ function writeEmitted(root, files) {
 }
 
 function cmdWorld({ pos, flags }) {
-  if (!pos[0]) throw new AtrezzoError('Uso: atrezzo world <escenario.yaml>');
+  if (!pos[0]) throw new AtrezzoError('Usage: atrezzo world <scenario.yaml>');
   const cfg = loadConfig(flags.dir ?? '.');
   const scenario = loadScenario(resolve(pos[0]));
   const dataset = generateWorld(scenario);
   const problems = checkIntegrity(dataset);
-  if (problems.length) throw new AtrezzoError('Integridad referencial rota (bug de atrezzo, repórtalo)', { exitCode: EXIT.FAIL, issues: problems });
+  if (problems.length) throw new AtrezzoError('Referential integrity broken (atrezzo bug, please report it)', { exitCode: EXIT.FAIL, issues: problems });
   const outDir = resolve(flags.out ?? join(cfg._dir, cfg.generatedDir));
   const files = writeGenerated(dataset, outDir, { handlers: false });
   const ids = runtimeList(cfg);
@@ -138,37 +138,37 @@ function cmdWorld({ pos, flags }) {
   const requests = ids.includes('wiremock') ? flowRequests(cfg._dir, join(cfg._dir, cfg.scenariosDir), resolve(pos[0])).requests : [];
   const emitted = emitRuntimes(ids, { dataset, scenario, config: emitCfg, dir: cfg._dir, requests });
   for (const e of emitted) writeEmitted(cfg._dir, e.files);
-  out(`Mundo "${scenario.name}" · semilla ${scenario.seed} · now ${scenario.now} · hash ${dataset.hash}`);
-  out('Entidades:');
+  out(`World "${scenario.name}" · seed ${scenario.seed} · now ${scenario.now} · hash ${dataset.hash}`);
+  out('Entities:');
   for (const spec of scenario.world) {
     const extra = [];
     if (spec.distribution) extra.push(Object.entries(spec.distribution.counts).map(([k, v]) => `${k}=${v}`).join(' '));
     if (spec.refs.length) extra.push(`→ ${spec.refs.join(', ')}`);
-    if (Object.keys(spec.nulls).length) extra.push(`nulos: ${Object.entries(spec.nulls).map(([k, v]) => `${k}=${v}`).join(' ')}`);
+    if (Object.keys(spec.nulls).length) extra.push(`nulls: ${Object.entries(spec.nulls).map(([k, v]) => `${k}=${v}`).join(' ')}`);
     out(`  ${spec.name.padEnd(12)} ${String(spec.count).padStart(5)}  ${extra.join(' · ')}`);
   }
-  out('Endpoints cubiertos:');
+  out('Endpoints covered:');
   for (const ep of scenario.endpoints) {
     const bits = [ep.entity];
-    if (ep.filters.length) bits.push(`filtros: ${ep.filters.join(',')}`);
-    if (ep.pagination) bits.push(`paginación: ${ep.pagination.limit}/${ep.pagination.page ?? ep.pagination.offset}${ep.pagination.page ? ' (por página)' : ''}`);
-    bits.push(`orden: ${ep.sort.map((s) => (s.dir === 'desc' ? '-' : '') + s.field).join(',')}`);
-    if (ep.pick) bits.push(`envoltorio: ${ep.pick}`);
+    if (ep.filters.length) bits.push(`filters: ${ep.filters.join(',')}`);
+    if (ep.pagination) bits.push(`pagination: ${ep.pagination.limit}/${ep.pagination.page ?? ep.pagination.offset}${ep.pagination.page ? ' (by page)' : ''}`);
+    bits.push(`sort: ${ep.sort.map((s) => (s.dir === 'desc' ? '-' : '') + s.field).join(',')}`);
+    if (ep.pick) bits.push(`envelope: ${ep.pick}`);
     out(`  GET ${ep.path}${ep.detail ? ` (+ ${ep.path}/:id)` : ''}  ${bits.join(' · ')}`);
   }
-  out('Escrito:');
+  out('Written:');
   for (const f of Object.values(files)) out(`  ${relative(process.cwd(), f) || f}`);
   for (const e of emitted) {
     const shown = e.files.length > 8 ? e.files.filter((f) => !f.path.includes('/__files/')).slice(0, 8) : e.files;
     for (const f of shown) out(`  ${relative(process.cwd(), resolve(cfg._dir, f.path))}`);
-    if (shown.length < e.files.length) out(`  … y ${e.files.length - shown.length} ficheros más (${e.id})`);
+    if (shown.length < e.files.length) out(`  … and ${e.files.length - shown.length} more files (${e.id})`);
   }
   for (const e of emitted) {
     out(`Runtime ${e.id}:`);
-    out(`  arranque: ${e.start}`);
-    for (const n of e.notes) out(`  nota: ${n}`);
+    out(`  start: ${e.start}`);
+    for (const n of e.notes) out(`  note: ${n}`);
   }
-  if (cfg._missing) out('(sin atrezzo.config.json: runtime msw por compatibilidad con 0.1; ejecuta atrezzo init para elegirlo)');
+  if (cfg._missing) out('(no atrezzo.config.json: msw runtime for 0.1 compatibility; run atrezzo init to choose one)');
   return EXIT.OK;
 }
 
@@ -176,32 +176,32 @@ async function cmdServe({ flags }) {
   const cfg = loadConfig(flags.dir ?? '.');
   const ids = flags.runtime ? parseRuntimeList(flags.runtime) : runtimeList(cfg);
   if (!ids.some((id) => SERVABLE.includes(id))) {
-    const name = flags.escenario ?? '<escenario>';
-    out(`atrezzo serve sirve los runtimes builtin y msw; la config usa ${ids.join(' + ')}.`);
-    for (const id of ids) out(`  ${id}: ${getAdapter(id).meta.startHint.replaceAll('<escenario>', name)}`);
-    out('  (ejecuta antes atrezzo world <escenario.yaml> para generar sus ficheros)');
-    out('  para servir igualmente con el servidor propio: atrezzo serve --runtime builtin');
+    const name = flags.scenario ?? '<scenario>';
+    out(`atrezzo serve serves the builtin and msw runtimes; the config uses ${ids.join(' + ')}.`);
+    for (const id of ids) out(`  ${id}: ${getAdapter(id).meta.startHint.replaceAll('<scenario>', name)}`);
+    out('  (run atrezzo world <scenario.yaml> first to generate its files)');
+    out('  to serve anyway with the built-in server: atrezzo serve --runtime builtin');
     return EXIT.UNVERIFIABLE;
   }
-  const scenariosDir = resolve(flags.escenarios ?? join(cfg._dir, cfg.scenariosDir));
+  const scenariosDir = resolve(flags.scenarios ?? join(cfg._dir, cfg.scenariosDir));
   const staticDir = flags.static ?? (cfg.mock.static ? join(cfg._dir, cfg.mock.static) : null);
   const port = Number(flags.port ?? cfg.mock.port);
-  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new AtrezzoError(`--port inválido: ${flags.port}`);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new AtrezzoError(`invalid --port: ${flags.port}`);
   const mock = createMockServer({
-    scenariosDir, scenario: flags.escenario, staticDir: staticDir && resolve(staticDir),
+    scenariosDir, scenario: flags.scenario, staticDir: staticDir && resolve(staticDir),
     generatedDir: join(cfg._dir, cfg.generatedDir), log: (s) => out(`  ${s}`),
     missesFile: missesFile(cfg), onMiss: flags['on-miss'] ?? 'log',
   });
   let addr;
   try { addr = await mock.listen(port, flags.host ?? '127.0.0.1'); } catch (e) {
-    throw new AtrezzoError(`No se puede escuchar en el puerto ${port}: ${e.code ?? e.message}`, { exitCode: EXIT.UNVERIFIABLE });
+    throw new AtrezzoError(`Cannot listen on port ${port}: ${e.code ?? e.message}`, { exitCode: EXIT.UNVERIFIABLE });
   }
   const d = mock.state.dataset;
-  out(`atrezzo serve · escenario "${d.scenario}" (semilla ${d.seed}) · http://${addr.address}:${addr.port}`);
+  out(`atrezzo serve · scenario "${d.scenario}" (seed ${d.seed}) · http://${addr.address}:${addr.port}`);
   for (const ep of d.endpoints) out(`  GET ${ep.path}`);
   out('  POST /__atrezzo/reset  ·  POST /__atrezzo/reload  ·  GET /__atrezzo/state  ·  GET|DELETE /__atrezzo/misses');
-  if (staticDir) out(`  estáticos: ${resolve(staticDir)}`);
-  out(`  huecos: ${relative(process.cwd(), missesFile(cfg)) || missesFile(cfg)} (--on-miss ${flags['on-miss'] ?? 'log'})`);
+  if (staticDir) out(`  static: ${resolve(staticDir)}`);
+  out(`  gaps: ${relative(process.cwd(), missesFile(cfg)) || missesFile(cfg)} (--on-miss ${flags['on-miss'] ?? 'log'})`);
   const stop = () => mock.close().then(() => process.exit(0));
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
@@ -209,11 +209,11 @@ async function cmdServe({ flags }) {
 }
 
 async function cmdVerify({ pos, flags }) {
-  if (!pos[0]) throw new AtrezzoError('Uso: atrezzo verify <flujo.yaml> [--driver http|playwright]');
+  if (!pos[0]) throw new AtrezzoError('Usage: atrezzo verify <flow.yaml> [--driver http|playwright]');
   const cfg = loadConfig(flags.dir ?? '.');
   const flow = loadFlow(resolve(pos[0]));
   const driver = flags.driver ?? cfg.verify.driver;
-  if (!['http', 'playwright'].includes(driver)) throw new AtrezzoError(`--driver debe ser http o playwright (es "${driver}")`);
+  if (!['http', 'playwright'].includes(driver)) throw new AtrezzoError(`--driver must be http or playwright (got "${driver}")`);
   const url = flags.url ?? flow.baseUrl ?? cfg.mock.baseUrl;
   const result = await runVerify(flow, { url, driver, diagnose: !!flags.diagnose, reset: !flags['no-reset'], cwd: cfg._dir });
   out(flags.json ? JSON.stringify(result, null, 2) : formatReport(result));
@@ -225,21 +225,21 @@ function cmdRuntimes({ flags }) {
   let cfg = null;
   try { cfg = loadConfig(dir); } catch { /* invalid config: still list */ }
   let ws = cfg && !cfg._missing ? cfg.workspace ?? {} : null;
-  let wsNote = ws ? 'workspace de atrezzo.config.json' : '';
+  let wsNote = ws ? 'workspace from atrezzo.config.json' : '';
   if (!ws) {
     const d = detectWorkspace(dir);
     ws = d.ambiguous ? {} : { front: d.front ?? undefined, backend: d.backend ?? undefined };
-    wsNote = d.ambiguous ? `workspace ambiguo (${d.ambiguous}): solo se mira la raíz` : d.notes[0];
+    wsNote = d.ambiguous ? `ambiguous workspace (${d.ambiguous}): only the root is inspected` : d.notes[0];
   }
   const ctx = projectContext(dir, ws);
   const configured = cfg && !cfg._missing ? runtimeList(cfg) : [];
   out(`atrezzo runtimes · ${dir}`);
-  out(`  ${wsNote}${configured.length ? ` · configurado: ${configured.join(' + ')}` : ' · sin config (atrezzo init)'}`);
+  out(`  ${wsNote}${configured.length ? ` · configured: ${configured.join(' + ')}` : ' · no config (atrezzo init)'}`);
   for (const r of rankRuntimes(ctx)) {
-    const state = r.score >= 2 ? 'detectado' : r.score === 1 ? 'posible' : 'sin señales';
+    const state = r.score >= 2 ? 'detected' : r.score === 1 ? 'possible' : 'no signals';
     out(`  ${configured.includes(r.id) ? '→' : ' '} ${r.id.padEnd(9)} ${r.score}/3 ${state.padEnd(11)} ${r.label}`);
-    out(`      por qué: ${r.reason || '—'}`);
-    out(`      arranque: ${r.startHint}`);
+    out(`      why: ${r.reason || '—'}`);
+    out(`      start: ${r.startHint}`);
   }
   return EXIT.OK;
 }
@@ -247,13 +247,13 @@ function cmdRuntimes({ flags }) {
 function cmdImport({ pos, flags }) {
   const cfg = loadConfig(flags.dir ?? '.');
   const spec = pos[0] ? resolve(pos[0]) : cfg.workspace?.contract ? join(cfg._dir, cfg.workspace.contract) : null;
-  if (!spec) throw new AtrezzoError('Uso: atrezzo import <openapi.yaml|json> [--name api] [--base /api] (o define workspace.contract con atrezzo init --contract)');
+  if (!spec) throw new AtrezzoError('Usage: atrezzo import <openapi.yaml|json> [--name api] [--base /api] (or set workspace.contract with atrezzo init --contract)');
   const r = runImport(spec, {
     name: flags.name ?? 'api', base: flags.base, format: flags.format ?? 'yaml', force: !!flags.force,
     outDir: join(cfg._dir, cfg.scenariosDir), apiPrefix: cfg.mock.apiPrefix ?? null,
   });
   out(formatImportReport(r.result, r.written));
-  if (r.written.valid) out(`Siguiente paso: atrezzo world ${r.written.path}`);
+  if (r.written.valid) out(`Next step: atrezzo world ${r.written.path}`);
   return r.written.valid ? EXIT.OK : EXIT.INVALID;
 }
 
@@ -263,19 +263,19 @@ function cmdMisses({ flags }) {
   if (flags.clear) {
     const n = store.list().length;
     store.clear();
-    out(flags.json ? JSON.stringify({ misses: [], sinResolver: 0, borrados: n }) : `${n} huecos borrados (${relative(process.cwd(), store.file) || store.file}).`);
+    out(flags.json ? JSON.stringify({ misses: [], unresolved: 0, cleared: n }) : `${n} ${n === 1 ? 'gap' : 'gaps'} cleared (${relative(process.cwd(), store.file) || store.file}).`);
     return EXIT.OK;
   }
   const list = store.list();
   if (flags.json) {
-    out(JSON.stringify({ misses: list, sinResolver: list.filter((m) => !m.resolved).length }, null, 2));
+    out(JSON.stringify({ misses: list, unresolved: list.filter((m) => !m.resolved).length }, null, 2));
     return EXIT.OK;
   }
   let spec = null;
   const contract = cfg.workspace?.contract ?? null;
   const notes = [];
   if (contract) {
-    try { spec = loadSpec(join(cfg._dir, contract)); } catch (e) { notes.push(`contrato ${contract} ilegible: ${e.message.split('\n')[0]}`); }
+    try { spec = loadSpec(join(cfg._dir, contract)); } catch (e) { notes.push(`contract ${contract} unreadable: ${e.message.split('\n')[0]}`); }
   }
   const scenarios = [];
   const sdir = join(cfg._dir, cfg.scenariosDir);
@@ -285,20 +285,20 @@ function cmdMisses({ flags }) {
     }
   }
   const hints = new Map(list.filter((m) => !m.resolved).map((m) => [m, hintFor(m, { spec, contract, scenarios })]));
-  out(`atrezzo misses · ${relative(process.cwd(), store.file) || store.file}${contract ? ` · contrato: ${contract}` : ' · sin workspace.contract'}`);
+  out(`atrezzo misses · ${relative(process.cwd(), store.file) || store.file}${contract ? ` · contract: ${contract}` : ' · no workspace.contract'}`);
   out(formatMisses(list, hints));
-  for (const n of notes) out(`  aviso: ${n}`);
-  if (hints.size) out('Detalle de cada hueco (query, referer, accept): atrezzo misses --json · borrar: atrezzo misses --clear');
+  for (const n of notes) out(`  warning: ${n}`);
+  if (hints.size) out('Details per gap (query, referer, accept): atrezzo misses --json · clear: atrezzo misses --clear');
   return EXIT.OK;
 }
 
 function cmdDoctor({ flags }) {
   const dir = resolve(flags.dir ?? '.');
   const r = doctor(dir);
-  const icon = { ok: 'OK  ', warn: 'AVISO', error: 'ERROR', info: '·   ' };
+  const icon = { ok: 'OK   ', warn: 'WARN ', error: 'ERROR', info: '·    ' };
   out(`atrezzo doctor · ${dir}`);
   for (const c of r.checks) out(`  ${icon[c.level]} ${c.label}${c.detail ? ` — ${c.detail}` : ''}`);
-  out(r.ok ? 'Todo lo imprescindible está en orden.' : 'Hay errores que impiden trabajar; corrígelos arriba.');
+  out(r.ok ? 'Everything essential is in order.' : 'There are blocking errors; fix them above.');
   return r.ok ? EXIT.OK : EXIT.INVALID;
 }
 
@@ -307,7 +307,7 @@ export async function main(argv) {
   if (!args.cmd || args.flags.help || args.cmd === 'help') { out(HELP); return EXIT.OK; }
   const cmds = { init: cmdInit, world: cmdWorld, serve: cmdServe, verify: cmdVerify, doctor: cmdDoctor, runtimes: cmdRuntimes, import: cmdImport, misses: cmdMisses };
   const fn = cmds[args.cmd];
-  if (!fn) throw new AtrezzoError(`Comando desconocido "${args.cmd}". Comandos: ${Object.keys(cmds).join(', ')}`);
+  if (!fn) throw new AtrezzoError(`Unknown command "${args.cmd}". Commands: ${Object.keys(cmds).join(', ')}`);
   return fn(args);
 }
 
@@ -315,6 +315,6 @@ main(process.argv.slice(2)).then(
   (code) => { process.exitCode = code; },
   (e) => {
     if (e instanceof AtrezzoError) { process.stderr.write(`atrezzo: ${e.message}\n`); process.exitCode = e.exitCode; }
-    else { process.stderr.write(`atrezzo: error inesperado: ${e.stack}\n`); process.exitCode = 70; }
+    else { process.stderr.write(`atrezzo: unexpected error: ${e.stack}\n`); process.exitCode = 70; }
   },
 );

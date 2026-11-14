@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "stack": "otro",
+  "stack": "other",
   "scenariosDir": "escenarios",
   "handlersDir": "atrezzo/handlers",
   "generatedDir": "atrezzo/.generated",

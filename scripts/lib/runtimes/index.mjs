@@ -14,16 +14,16 @@ const ADAPTERS = { builtin, msw, supabase, prism, wiremock };
 
 export function getAdapter(id) {
   const a = ADAPTERS[id];
-  if (!a) throw new AtrezzoError(`runtime desconocido "${id}" (hay: ${RUNTIME_IDS.join(', ')})`);
+  if (!a) throw new AtrezzoError(`unknown runtime "${id}" (available: ${RUNTIME_IDS.join(', ')})`);
   return a;
 }
 
 /** Parse "--runtime msw,supabase" / config value into a validated list. */
 export function parseRuntimeList(value) {
   const list = (Array.isArray(value) ? value : String(value).split(',')).map((s) => String(s).trim()).filter(Boolean);
-  if (!list.length) throw new AtrezzoError('runtime vacío');
-  for (const id of list) if (!ADAPTERS[id] && id !== 'auto') throw new AtrezzoError(`--runtime: "${id}" no existe (opciones: auto, ${RUNTIME_IDS.join(', ')})`);
-  if (list.includes('auto') && list.length > 1) throw new AtrezzoError('--runtime auto no se combina con otros');
+  if (!list.length) throw new AtrezzoError('empty runtime');
+  for (const id of list) if (!ADAPTERS[id] && id !== 'auto') throw new AtrezzoError(`--runtime: "${id}" does not exist (options: auto, ${RUNTIME_IDS.join(', ')})`);
+  if (list.includes('auto') && list.length > 1) throw new AtrezzoError('--runtime auto cannot be combined with others');
   return [...new Set(list)];
 }
 
@@ -40,8 +40,8 @@ export function chooseRuntime(ctx) {
   const ranking = rankRuntimes(ctx);
   const best = ranking[0];
   const tied = ranking.filter((r) => r.score === best.score && r.id !== best.id);
-  let why = `puntuación ${best.score}/3: ${best.reason}`;
-  if (tied.length) why += ` · empate con ${tied.map((t) => t.id).join(', ')}; desempate por prioridad fija (${PRIORITY.join(' > ')})`;
+  let why = `score ${best.score}/3: ${best.reason}`;
+  if (tied.length) why += ` · tied with ${tied.map((t) => t.id).join(', ')}; broken by fixed priority (${PRIORITY.join(' > ')})`;
   return { id: best.id, why, ranking, tied: tied.map((t) => t.id) };
 }
 

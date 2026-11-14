@@ -48,13 +48,13 @@ export const TEMPLATES = {
   pedidos: {
     singular: 'pedido', fk: 'order_id', defaultRef: ['clientes'], statusField: 'estado',
     defaultStatus: 'pagado', amountField: 'importe',
-    defaultAmount: { min: 10, max: 500, moneda: 'EUR' },
+    defaultAmount: { min: 10, max: 500, currency: 'EUR' },
     fields: ['id', 'referencia', '{fk}', 'estado', 'importe', 'moneda', 'creado_en'],
     make: (rng, id) => ({ referencia: `PED-${String(id).padStart(5, '0')}` }),
   },
   productos: {
     singular: 'producto', fk: 'product_id', amountField: 'precio',
-    defaultAmount: { min: 1, max: 120, moneda: 'EUR' },
+    defaultAmount: { min: 1, max: 120, currency: 'EUR' },
     fields: ['id', 'nombre', 'sku', 'precio', 'moneda', 'stock'],
     make: (rng, id) => ({ nombre: `${rng.pick(PRODUCTS)} ${rng.int(1, 99)}`, sku: `SKU-${String(id).padStart(4, '0')}`, stock: rng.int(0, 250) }),
   },
@@ -82,8 +82,8 @@ export function entityFields(spec) {
   const fks = spec.refs.map((r) => templateFor(r).fk);
   const out = [];
   if (spec.fields) {
-    // Explicit `campos` (e.g. from `atrezzo import`): the field list is exactly
-    // id + fks + campos; the template's own fields are not added.
+    // Explicit `fields` (e.g. from `atrezzo import`): the field list is exactly
+    // id + fks + fields; the template's own fields are not added.
     out.push('id', ...fks.filter((f) => !(f in spec.fields)), ...Object.keys(spec.fields));
   } else {
     for (const f of t.fields) {
@@ -106,19 +106,19 @@ const DAY_MS = 86_400_000;
 
 const hex = (rng, n) => Array.from({ length: n }, () => rng.int(0, 15).toString(16)).join('');
 
-/** Value for a typed `campos` field. Uses its own PRNG stream (fields:<entity>). */
+/** Value for a typed `fields` entry. Uses its own PRNG stream (fields:<entity>). */
 function typedValue(type, field, rng, id, entity, nowMs, days) {
   if (Array.isArray(type)) return rng.pick(type);
   const lower = field.toLowerCase();
   switch (type) {
-    case 'entero': return /price|precio|amount|importe|total/.test(lower) ? rng.int(1, 999) : rng.int(0, 1000);
-    case 'numero': return rng.int(0, 100_000) / 100;
-    case 'booleano': return rng.next() < 0.5;
-    case 'fecha': return new Date(nowMs - rng.int(0, days * 1440) * 60_000).toISOString();
+    case 'integer': return /price|precio|amount|importe|total/.test(lower) ? rng.int(1, 999) : rng.int(0, 1000);
+    case 'number': return rng.int(0, 100_000) / 100;
+    case 'boolean': return rng.next() < 0.5;
+    case 'date': return new Date(nowMs - rng.int(0, days * 1440) * 60_000).toISOString();
     case 'email': return `${slug(person(rng))}.${id}@example.com`;
     case 'uuid': return `${hex(rng, 8)}-${hex(rng, 4)}-4${hex(rng, 3)}-${'89ab'[rng.int(0, 3)]}${hex(rng, 3)}-${hex(rng, 12)}`;
     case 'url': return `https://example.com/${entity}/${id}`;
-    default: // texto
+    default: // string
       if (/(^|_)(first|last)?_?name$|nombre|^name$|fullname|username/i.test(field)) return /user/i.test(field) ? `${slug(person(rng))}${id}` : person(rng);
       if (/compan|empresa|org/.test(lower)) return company(rng);
       if (/city|ciudad/.test(lower)) return rng.pick(CITIES);
@@ -186,7 +186,7 @@ function generateEntity(spec, scenario, counts, built) {
     rows.push(row);
   }
 
-  // Explicit nulls ("nulos: { email: 2 }") to exercise client assumptions.
+  // Explicit nulls ("nulls: { email: 2 }") to exercise client assumptions.
   for (const [field, k] of Object.entries(spec.nulls || {})) {
     for (const idx of createRng(scenario.seed, `nulls:${spec.name}.${field}`).sample(n, k)) rows[idx][field] = null;
   }
@@ -247,7 +247,7 @@ export function checkIntegrity(dataset) {
     for (const [fk, target] of Object.entries(meta.refs)) {
       const ids = new Set((dataset.entities[target] || []).map((r) => r.id));
       for (const row of dataset.entities[name]) {
-        if (row[fk] !== null && !ids.has(row[fk])) problems.push(`${name}#${row.id}.${fk}=${row[fk]} no existe en ${target}`);
+        if (row[fk] !== null && !ids.has(row[fk])) problems.push(`${name}#${row.id}.${fk}=${row[fk]} does not exist in ${target}`);
       }
     }
   }

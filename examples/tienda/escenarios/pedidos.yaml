@@ -1,14 +1,14 @@
-# Conciliación con incidencias: 3 clientes, 40 pedidos, 3 con incidencia.
+# Reconciliation with issues: 3 customers, 40 orders, 3 with an issue (incidencia).
 name: pedidos
-description: Lista de pedidos con 3 incidencias pendientes de conciliar.
+description: Order list with 3 issues waiting to be reconciled.
 seed: 7712
 now: 2025-03-01T09:00:00Z
 world:
   clientes: 3
   pedidos:
     total: 40
-    distribucion: { pagado: 34, pendiente: 3, incidencia: 3 }
-    valor: { min: 20, max: 900, moneda: EUR }
+    distribution: { pagado: 34, pendiente: 3, incidencia: 3 }
+    amount: { min: 20, max: 900, currency: EUR }
   usuarios: 2
 endpoints:
   - path: /api/orders

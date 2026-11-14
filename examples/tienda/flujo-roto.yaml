@@ -1,6 +1,6 @@
-# Flujo que FALLA a propósito para ver el diagnóstico (--diagnose):
-# cuenta las incidencias dentro de la primera página de 12 en vez de pedirlas filtradas.
-escenario: escenarios/pedidos.yaml
+# Flow that FAILS on purpose to show the diagnosis (--diagnose):
+# it counts the issues inside the first page of 12 instead of requesting them filtered.
+scenario: escenarios/pedidos.yaml
 steps:
   - screen: lista-pedidos
     visit: /

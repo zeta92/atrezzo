@@ -2,11 +2,11 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "atrezzo",
   "version": "0.3.0",
-  "description": "Mocks de API a partir de estados de aplicación: mundo determinista con semilla, endpoints como proyecciones, escenarios versionados y bucle de verificación contra la pantalla.",
+  "description": "API mocks from application states: a seeded deterministic world, endpoints as projections, versioned scenarios and a verification loop against the screen.",
   "author": {
     "name": "Luis Tiburcio de la Cruz Fernandez",
     "email": "zeta92@users.noreply.github.com"
   },
-  "keywords": ["mocks", "msw", "testing", "fixtures", "escenarios"],
+  "keywords": ["mocks", "msw", "testing", "fixtures", "scenarios"],
   "license": "MIT"
 }

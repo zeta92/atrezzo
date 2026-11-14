@@ -21,7 +21,7 @@ export function scalar(v) {
   if (v === null || v === undefined) return 'null';
   if (typeof v === 'boolean') return String(v);
   if (typeof v === 'number') {
-    if (!Number.isFinite(v)) throw new TypeError(`emitYaml: número no finito ${v}`);
+    if (!Number.isFinite(v)) throw new TypeError(`emitYaml: non-finite number ${v}`);
     return String(v);
   }
   const s = String(v);

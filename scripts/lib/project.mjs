@@ -41,13 +41,13 @@ export function classifyPackage(abs) {
   const spec = findSpec(abs);
   if (spec) backend.push(relative(abs, spec), relative(abs, spec)); // strong signal: counts double
   if (isDir(join(abs, 'supabase'))) backend.push('supabase/', 'supabase/');
-  for (const f of NON_JS_BACKEND) if (existsSync(join(abs, f))) { backend.push(`${f} (backend no JS)`); break; }
+  for (const f of NON_JS_BACKEND) if (existsSync(join(abs, f))) { backend.push(`${f} (non-JS backend)`); break; }
   const name = basename(abs).toLowerCase();
-  if (FRONT_NAMES.includes(name)) front.push(`nombre "${name}"`);
-  if (BACK_NAMES.includes(name)) backend.push(`nombre "${name}"`);
+  if (FRONT_NAMES.includes(name)) front.push(`name "${name}"`);
+  if (BACK_NAMES.includes(name)) backend.push(`name "${name}"`);
   const fs = front.length;
   const bs = backend.length;
-  const role = fs === 0 && bs === 0 ? 'ninguno' : fs > bs ? 'front' : bs > fs ? 'backend' : 'empate';
+  const role = fs === 0 && bs === 0 ? 'none' : fs > bs ? 'front' : bs > fs ? 'backend' : 'tie';
   return { front: fs, backend: bs, role, reasons: [...new Set([...front, ...backend])] };
 }
 
@@ -104,7 +104,7 @@ export function monorepoManifest(root) {
 
 /**
  * Detect front/backend layout under `root`.
- * @returns {{ kind: 'monorepo'|'carpetas'|'simple', manifest: object|null, candidates: object[],
+ * @returns {{ kind: 'monorepo'|'folders'|'simple', manifest: object|null, candidates: object[],
  *   front: string|null, backend: string|null, ambiguous: string|null, notes: string[] }}
  *   front/backend are paths relative to root ('.' for a single project).
  */
@@ -116,28 +116,28 @@ export function detectWorkspace(root) {
   if (manifest) {
     kind = 'monorepo';
     dirs = expandGlobs(root, manifest.patterns);
-    notes.push(`monorepo: ${manifest.files.join(', ')} · paquetes según ${manifest.defaulted ? 'patrones por defecto (apps/*, packages/*, libs/*, services/*)' : manifest.patterns.join(', ')}`);
+    notes.push(`monorepo: ${manifest.files.join(', ')} · packages from ${manifest.defaulted ? 'default patterns (apps/*, packages/*, libs/*, services/*)' : manifest.patterns.join(', ')}`);
   } else {
     const named = [...FRONT_NAMES, ...BACK_NAMES].map((n) => join(root, n)).filter(isDir);
     const hasFront = named.some((d) => FRONT_NAMES.includes(basename(d)));
     const hasBack = named.some((d) => BACK_NAMES.includes(basename(d)));
     if (hasFront && hasBack) {
-      kind = 'carpetas';
+      kind = 'folders';
       dirs = named;
-      notes.push(`sin manifiesto de monorepo; carpetas hermanas: ${named.map((d) => `${basename(d)}/`).join(' + ')}`);
+      notes.push(`no monorepo manifest; sibling folders: ${named.map((d) => `${basename(d)}/`).join(' + ')}`);
     }
   }
   if (kind === 'simple') {
-    return { kind, manifest: null, candidates: [], front: null, backend: null, ambiguous: null, notes: ['proyecto simple (sin monorepo ni carpetas front/back): todo vive en la raíz'] };
+    return { kind, manifest: null, candidates: [], front: null, backend: null, ambiguous: null, notes: ['single project (no monorepo or front/back folders): everything lives at the root'] };
   }
   const candidates = dirs.map((abs) => ({ path: rel(root, abs), ...classifyPackage(abs) }))
     .sort((a, b) => a.path.localeCompare(b.path));
   const fronts = candidates.filter((c) => c.role === 'front');
   const backs = candidates.filter((c) => c.role === 'backend');
   let ambiguous = null;
-  if (fronts.length !== 1) ambiguous = fronts.length ? `hay ${fronts.length} candidatos a front (${fronts.map((c) => c.path).join(', ')})` : 'no hay ningún candidato a front';
-  else if (backs.length > 1) ambiguous = `hay ${backs.length} candidatos a backend (${backs.map((c) => c.path).join(', ')})`;
-  for (const c of candidates.filter((x) => x.role === 'empate')) notes.push(`${c.path}: misma puntuación como front y backend (${c.front}); no se clasifica`);
+  if (fronts.length !== 1) ambiguous = fronts.length ? `${fronts.length} front-end candidates (${fronts.map((c) => c.path).join(', ')})` : 'no front-end candidate';
+  else if (backs.length > 1) ambiguous = `${backs.length} backend candidates (${backs.map((c) => c.path).join(', ')})`;
+  for (const c of candidates.filter((x) => x.role === 'tie')) notes.push(`${c.path}: same score as front end and backend (${c.front}); not classified`);
   return {
     kind, manifest, candidates, ambiguous, notes,
     front: fronts.length === 1 ? fronts[0].path : null,
@@ -148,7 +148,7 @@ export function detectWorkspace(root) {
 /** Table of candidates for the terminal. */
 export function candidatesTable(candidates) {
   const w = Math.max(8, ...candidates.map((c) => c.path.length));
-  const rows = [`  ${'paquete'.padEnd(w)}  front  backend  rol       motivos`];
+  const rows = [`  ${'package'.padEnd(w)}  front  backend  role      reasons`];
   for (const c of candidates) rows.push(`  ${c.path.padEnd(w)}  ${String(c.front).padStart(5)}  ${String(c.backend).padStart(7)}  ${c.role.padEnd(8)}  ${c.reasons.join(', ') || '—'}`);
   return rows.join('\n');
 }
@@ -178,7 +178,7 @@ export function detectApiBase(frontAbs, root) {
     const text = readText(join(frontAbs, f));
     if (!text) continue;
     const m = /proxy\s*:\s*\{\s*['"]?(\/[\w./-]*)['"]?\s*:\s*(?:\{[^}]*?target\s*:\s*)?['"`](https?:\/\/[^'"`]+)['"`]/s.exec(text);
-    if (m) return { baseUrl: new URL(m[2]).origin, prefix: m[1].replace(/\/$/, '') || null, source: `proxy de Vite "${m[1]}" → ${m[2]} en ${rel(root, join(frontAbs, f))}` };
+    if (m) return { baseUrl: new URL(m[2]).origin, prefix: m[1].replace(/\/$/, '') || null, source: `Vite proxy "${m[1]}" → ${m[2]} in ${rel(root, join(frontAbs, f))}` };
   }
   const env = envKeys(frontAbs);
   for (const k of API_ENV) {
@@ -186,9 +186,9 @@ export function detectApiBase(frontAbs, root) {
     const v = env[k].value;
     if (/^https?:\/\//.test(v)) {
       const u = new URL(v);
-      return { baseUrl: u.origin, prefix: u.pathname.replace(/\/$/, '') || null, source: `${k}=${v} en ${rel(root, join(frontAbs, env[k].file))}` };
+      return { baseUrl: u.origin, prefix: u.pathname.replace(/\/$/, '') || null, source: `${k}=${v} in ${rel(root, join(frontAbs, env[k].file))}` };
     }
-    if (v.startsWith('/')) return { baseUrl: null, prefix: v.replace(/\/$/, '') || null, source: `${k}=${v} en ${rel(root, join(frontAbs, env[k].file))} (relativa: mismo origen que el front)` };
+    if (v.startsWith('/')) return { baseUrl: null, prefix: v.replace(/\/$/, '') || null, source: `${k}=${v} in ${rel(root, join(frontAbs, env[k].file))} (relative: same origin as the front end)` };
   }
   return null;
 }
@@ -199,7 +199,7 @@ export function detectApiBase(frontAbs, root) {
  */
 export function projectContext(root, workspace = {}) {
   const abs = (p) => (p ? resolve(root, p) : null);
-  const places = [{ role: 'raíz', dir: root }];
+  const places = [{ role: 'root', dir: root }];
   if (workspace.front && abs(workspace.front) !== root) places.push({ role: 'front', dir: abs(workspace.front) });
   if (workspace.backend && abs(workspace.backend) !== root && abs(workspace.backend) !== abs(workspace.front)) places.push({ role: 'backend', dir: abs(workspace.backend) });
   const label = (p) => (p.dir === root ? '' : `${rel(root, p.dir)}/`);

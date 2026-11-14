@@ -1,4 +1,4 @@
-# Primer día: un cliente, ningún pedido. La pantalla debe mostrar su estado vacío.
+# Day one: one customer, no orders. The screen must show its empty state.
 name: vacio
 seed: 1
 now: 2025-03-01T09:00:00Z

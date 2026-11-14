@@ -7,7 +7,7 @@
 
 export class YamlError extends Error {
   constructor(message, line, file) {
-    super(`${file}${line ? ` (línea ${line})` : ''}: YAML inválido: ${message}`);
+    super(`${file}${line ? ` (line ${line})` : ''}: invalid YAML: ${message}`);
     this.name = 'YamlError';
     this.line = line;
   }
@@ -50,11 +50,11 @@ function findKeySep(text) {
 
 function unquote(raw, ctx) {
   if (raw.startsWith('"')) {
-    if (!raw.endsWith('"') || raw.length < 2) ctx.fail(`cadena entre comillas sin cerrar: ${raw}`);
-    try { return JSON.parse(raw); } catch { ctx.fail(`cadena entre comillas dobles mal formada: ${raw}`); }
+    if (!raw.endsWith('"') || raw.length < 2) ctx.fail(`unterminated quoted string: ${raw}`);
+    try { return JSON.parse(raw); } catch { ctx.fail(`malformed double-quoted string: ${raw}`); }
   }
   if (raw.startsWith("'")) {
-    if (!raw.endsWith("'") || raw.length < 2) ctx.fail(`cadena entre comillas sin cerrar: ${raw}`);
+    if (!raw.endsWith("'") || raw.length < 2) ctx.fail(`unterminated quoted string: ${raw}`);
     return raw.slice(1, -1).replace(/''/g, "'");
   }
   return null;
@@ -68,9 +68,9 @@ function plainScalar(raw, ctx) {
   if (/^[-+]?\d+$/.test(s)) return Number.parseInt(s, 10);
   if (/^[-+]?(\d+\.\d*|\.\d+|\d+)([eE][-+]?\d+)?$/.test(s)) return Number(s);
   if (s.startsWith('&') || s.startsWith('*') || s.startsWith('!')) {
-    ctx.fail(`anclas, alias y etiquetas no están soportados: ${s}`);
+    ctx.fail(`anchors, aliases and tags are not supported: ${s}`);
   }
-  if (s.startsWith('@') || s.startsWith('`')) ctx.fail(`un escalar no puede empezar por "${s[0]}"; usa comillas`);
+  if (s.startsWith('@') || s.startsWith('`')) ctx.fail(`a scalar cannot start with "${s[0]}"; quote it`);
   return s;
 }
 
@@ -86,7 +86,7 @@ function parseFlow(text, ctx) {
       const start = i;
       i++;
       while (i < text.length && text[i] !== c) { if (c === '"' && text[i] === '\\') i++; i++; }
-      if (i >= text.length) ctx.fail(`cadena sin cerrar en colección en línea: ${text}`);
+      if (i >= text.length) ctx.fail(`unterminated string in flow collection: ${text}`);
       i++;
       return unquote(text.slice(start, i), ctx);
     }
@@ -109,14 +109,14 @@ function parseFlow(text, ctx) {
         key = text.slice(start, i).trim();
       }
       ws();
-      if (text[i] !== ':') ctx.fail(`se esperaba ":" tras la clave "${key}" en ${text}`);
+      if (text[i] !== ':') ctx.fail(`expected ":" after key "${key}" in ${text}`);
       i++;
-      if (Object.hasOwn(out, key)) ctx.fail(`clave duplicada "${key}"`);
+      if (Object.hasOwn(out, key)) ctx.fail(`duplicate key "${key}"`);
       out[key] = value([',', '}']);
       ws();
       if (text[i] === ',') { i++; continue; }
       if (text[i] === '}') { i++; return out; }
-      ctx.fail(`colección {…} sin cerrar o mal separada: ${text}`);
+      ctx.fail(`unterminated or badly separated {…} collection: ${text}`);
     }
   }
   function seq() {
@@ -129,12 +129,12 @@ function parseFlow(text, ctx) {
       ws();
       if (text[i] === ',') { i++; continue; }
       if (text[i] === ']') { i++; return out; }
-      ctx.fail(`colección […] sin cerrar o mal separada: ${text}`);
+      ctx.fail(`unterminated or badly separated […] collection: ${text}`);
     }
   }
   const v = value([]);
   ws();
-  if (i < text.length) ctx.fail(`contenido inesperado tras la colección: "${text.slice(i)}"`);
+  if (i < text.length) ctx.fail(`unexpected content after the collection: "${text.slice(i)}"`);
   return v;
 }
 
@@ -147,13 +147,13 @@ function inlineValue(raw, ctx) {
 }
 
 export function parseYaml(src, file = '<yaml>') {
-  if (typeof src !== 'string') throw new YamlError('la entrada no es texto', 0, file);
+  if (typeof src !== 'string') throw new YamlError('input is not a string', 0, file);
   const raw = src.replace(/^﻿/, '').split(/\r?\n/);
   const lines = [];
   raw.forEach((full, idx) => {
     const num = idx + 1;
     const m = /^([ \t]*)/.exec(full);
-    if (m[1].includes('\t')) throw new YamlError('tabulador en la indentación; usa espacios', num, file);
+    if (m[1].includes('\t')) throw new YamlError('tab in indentation; use spaces', num, file);
     lines.push({ num, indent: m[1].length, raw: full, text: stripComment(full).trimEnd().slice(m[1].length) });
   });
   let pos = 0;
@@ -186,7 +186,7 @@ export function parseYaml(src, file = '<yaml>') {
     skip();
     if (pos >= lines.length) return null;
     const l = lines[pos];
-    if (l.indent !== indent) ctx.fail(`indentación inesperada (${l.indent} espacios, se esperaban ${indent})`);
+    if (l.indent !== indent) ctx.fail(`unexpected indentation (${l.indent} spaces, expected ${indent})`);
     return isSeqItem(l) ? sequence(indent) : mapping(indent);
   }
 
@@ -207,15 +207,15 @@ export function parseYaml(src, file = '<yaml>') {
       if (pos >= lines.length) break;
       const l = lines[pos];
       if (l.indent < indent) break;
-      if (l.indent > indent) ctx.fail('indentación inesperada dentro de un mapa');
-      if (isSeqItem(l)) ctx.fail('elemento de lista "-" donde se esperaba una clave');
+      if (l.indent > indent) ctx.fail('unexpected indentation inside a map');
+      if (isSeqItem(l)) ctx.fail('list item "-" where a key was expected');
       const sep = findKeySep(l.text);
-      if (sep < 0) ctx.fail(`se esperaba "clave: valor" y se encontró "${l.text}"`);
+      if (sep < 0) ctx.fail(`expected "key: value", found "${l.text}"`);
       let key = l.text.slice(0, sep).trim();
       const uq = unquote(key, ctx);
       if (uq !== null) key = uq;
-      if (key === '') ctx.fail('clave vacía');
-      if (Object.hasOwn(out, key)) ctx.fail(`clave duplicada "${key}"`);
+      if (key === '') ctx.fail('empty key');
+      if (Object.hasOwn(out, key)) ctx.fail(`duplicate key "${key}"`);
       const rest = l.text.slice(sep + 1).trim();
       if (rest === '') out[key] = childValue(indent, true);
       else if (rest === '|' || rest === '>' || rest === '|-' || rest === '>-') {
@@ -235,7 +235,7 @@ export function parseYaml(src, file = '<yaml>') {
       if (pos >= lines.length) break;
       const l = lines[pos];
       if (l.indent < indent) break;
-      if (l.indent > indent) ctx.fail('indentación inesperada dentro de una lista');
+      if (l.indent > indent) ctx.fail('unexpected indentation inside a list');
       if (!isSeqItem(l)) break;
       const content = l.text === '-' ? '' : l.text.slice(2);
       const lead = content.length - content.trimStart().length;
@@ -256,6 +256,6 @@ export function parseYaml(src, file = '<yaml>') {
 
   const result = block(lines[pos].indent);
   skip();
-  if (pos < lines.length) ctx.fail(`contenido inesperado: "${lines[pos].text}"`);
+  if (pos < lines.length) ctx.fail(`unexpected content: "${lines[pos].text}"`);
   return result;
 }

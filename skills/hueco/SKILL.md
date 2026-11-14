@@ -1,68 +1,68 @@
 ---
 name: hueco
-description: Rellena un hueco del mock atrezzo (la app pide una ruta que el escenario no declara) a partir del código que la consume y del contrato. Úsalo cuando el mock responde 404 con "atrezzo.miss", `atrezzo misses` o `doctor` muestran huecos sin resolver, "la app pide una ruta que no existe", "404 del mock", "mock incompleto", o falta un endpoint en el escenario.
+description: Fills a gap in the atrezzo mock (the app requests a route the scenario does not declare) from the code that consumes it and the contract. Use it when the mock answers 404 with "atrezzo.miss", `atrezzo misses` or `doctor` show unresolved gaps, "the app requests a route that doesn't exist", "mock 404", "incomplete mock", or an endpoint is missing from the scenario.
 ---
 
 # /atrezzo:hueco
 
-CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (abajo `atrezzo`). Formato del escenario: `${CLAUDE_PLUGIN_ROOT}/references/escenario.md` (sección "Tapar un hueco").
+CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (`atrezzo` below). Scenario format: `${CLAUDE_PLUGIN_ROOT}/references/escenario.md` (section "Filling a gap").
 
-`atrezzo serve` registra en `atrezzo/.atrezzo/misses.json` cada petición que no casa con el contrato (deduplicada por `MÉTODO ruta`, ids colapsados a `:id`, secretos de la query como `***`) y responde:
+`atrezzo serve` records in `atrezzo/.atrezzo/misses.json` every request that does not match the contract (deduplicated by `METHOD path`, ids collapsed to `:id`, query secrets as `***`) and answers:
 
 ```json
-{ "error": "GET /api/users no está en el contrato del escenario \"catalogo\"",
-  "atrezzo": { "miss": true, "hueco": "GET /api/users", "veces": 3,
-               "siguiente": "atrezzo misses", "endpoints": ["/api/products"] } }
+{ "error": "GET /api/users is not in the contract of scenario \"catalogo\"",
+  "atrezzo": { "miss": true, "gap": "GET /api/users", "times": 3,
+               "next": "atrezzo misses", "endpoints": ["/api/products"] } }
 ```
 
-(405 con el mismo cuerpo si la ruta existe pero el método es una escritura.) Con `--on-miss stub` responde 200 con `[]`/`{}` y `x-atrezzo-stub: true`: sirve para explorar, **no tapa el hueco** (sigue sin resolver).
+(405 with the same body if the route exists but the method is a write.) With `--on-miss stub` it answers 200 with `[]`/`{}` and `x-atrezzo-stub: true`: useful for exploring, but it **does not fill the gap** (it stays unresolved).
 
-## El bucle (corto y verificable)
+## The loop (short and verifiable)
 
-1. **Elige el hueco.** `atrezzo misses` → el de más `veces` **sin resolver**. La propuesta de cada línea te dice si el contrato ya lo tiene (`→ atrezzo import <spec>`: hazlo y salta al paso 5), si un escenario ya lo declara (solo falta `world` + reload) o si es una mutación. `atrezzo misses --json` da `query`, `referer` (qué pantalla lo pidió) y `accept`.
+1. **Pick the gap.** `atrezzo misses` → the **unresolved** one with the most `times`. Each line's suggestion tells you whether the contract already has it (`→ atrezzo import <spec>`: do it and jump to step 5), whether a scenario already declares it (only `world` + reload are missing) or whether it is a mutation. `atrezzo misses --json` gives `query`, `referer` (which screen requested it) and `accept`.
 
-2. **Busca el consumidor.** En el front (`workspace.front` de la config si existe), busca la llamada:
+2. **Find the consumer.** In the front end (`workspace.front` in the config, if present), find the call:
    ```bash
    grep -rnE "fetch\(|axios|useQuery|useSWR|\\\$fetch|ky\.|apiClient|/api/users" src/ --include='*.{ts,tsx,js,jsx,vue,svelte}'
    ```
-   Busca también el nombre del recurso sin prefijo (`users`, `"/users"`) y el cliente HTTP propio del proyecto (`api.get(`, `http.get(`, `client.users.list(`). Anota:
-   - **método** y **ruta** (con o sin `:id`);
-   - **query que envía**: solo esos parámetros serán `filters`/`pagination`;
-   - **qué campos lee** de la respuesta (`u.nombre`, `data.items`, `res.total`, destructuring, columnas de tabla, tipos TS del componente). **Esos campos definen el esquema; no se inventan.**
-   - si lee `res.data` / `res.items` → hay **envoltorio** (`shape: envelope` + `pick`).
+   Also search for the resource name without a prefix (`users`, `"/users"`) and the project's own HTTP client (`api.get(`, `http.get(`, `client.users.list(`). Note:
+   - **method** and **route** (with or without `:id`);
+   - **the query it sends**: only those parameters become `filters`/`pagination`;
+   - **which fields it reads** from the response (`u.nombre`, `data.items`, `res.total`, destructuring, table columns, the component's TS types). **Those fields define the schema; do not invent any.**
+   - if it reads `res.data` / `res.items` → there is an **envelope** (`shape: envelope` + `pick`).
 
-3. **Contrato primero.** Si hay OpenAPI o tipos del backend (`workspace.contract`, `src/types/database.ts`, DTOs), son la fuente de verdad del shape (nombres, tipos, enums). El código del front solo añade lo que el contrato no dice (qué filtros usa de verdad, cuántas filas espera la pantalla). Si contrato y front discrepan, dilo: es un bug real, no algo que el mock deba tapar.
+3. **Contract first.** If there is an OpenAPI spec or backend types (`workspace.contract`, `src/types/database.ts`, DTOs), they are the source of truth for the shape (names, types, enums). The front-end code only adds what the contract does not say (which filters it really uses, how many rows the screen expects). If contract and front end disagree, say so: it is a real bug, not something the mock should paper over.
 
-4. **Parchea el escenario** (`atrezzo/escenarios/<escenario>.yaml`, el que nombra el 404). Nunca escribas el JSON de datos: el mundo los genera.
+4. **Patch the scenario** (`atrezzo/escenarios/<scenario>.yaml`, the one the 404 names). Never write the data JSON: the world generates it.
    ```yaml
    world:
-     clientes: 3                       # ya estaba
-     usuarios:                         # entidad nueva (o reutiliza una existente)
+     clientes: 3                       # already there
+     usuarios:                         # new entity (or reuse an existing one)
        total: 8
-       ref: clientes                   # solo si el front lee u.cliente.*  → client_id + include
-       campos:                         # SOLO los campos que el front lee (con campos, la plantilla
-         nombre: texto                 #   de la entidad se sustituye entera; sin campos, usuarios
-         email: email                  #   trae nombre, email, rol, creado_en)
-         rol: [admin, operador]        # lista = enum (valores que el front distingue)
+       ref: clientes                   # only if the front end reads u.cliente.*  → client_id + include
+       fields:                         # ONLY the fields the front end reads (with fields, the entity
+         nombre: string                #   template is replaced entirely; without fields, usuarios
+         email: email                  #   brings nombre, email, rol, creado_en)
+         rol: [admin, operador]        # list = enum (values the front end tells apart)
          avatar_url: url
    endpoints:
-     - path: /api/users                # exactamente la ruta del hueco
+     - path: /api/users                # exactly the gap's route
        entity: usuarios
-       filters: [rol]                  # solo los parámetros que el front ENVÍA
-       pagination: { param_limit: limit, param_offset: offset }   # solo si los envía
-       include: [clientes]             # embebe "cliente" (requiere el ref)
-       shape: envelope                 # si lee res.items / res.data…
-       pick: items                     #   …con esa clave → { items, total, limit, offset }
+       filters: [rol]                  # only the parameters the front end SENDS
+       pagination: { param_limit: limit, param_offset: offset }   # only if it sends them
+       include: [clientes]             # embeds "cliente" (requires the ref)
+       shape: envelope                 # if it reads res.items / res.data…
+       pick: items                     #   …with that key → { items, total, limit, offset }
    ```
-   Tipos de `campos`: texto, entero, numero, booleano, fecha, email, uuid, url o lista (enum).
-   Detalle (`/api/users/:id`) va incluido por defecto (`detail: true`). Ruta anidada (`/api/clientes/:id/pedidos`): no se proyecta; usa la colección con filtro (`/api/orders?client_id=`) si el front puede, o déjalo anotado como limitación.
+   `fields` types: string, integer, number, boolean, date, email, uuid, url, or a list (enum).
+   The detail route (`/api/users/:id`) is included by default (`detail: true`). Nested route (`/api/clientes/:id/pedidos`): not projected; use the collection with a filter (`/api/orders?client_id=`) if the front end can, or note it as a limitation.
 
-5. **Genera y recarga.** `atrezzo world atrezzo/escenarios/<escenario>.yaml` (revisa el resumen: entidad y `GET /api/users` en "Endpoints cubiertos") y `curl -s -X POST <mock>/__atrezzo/reload` (relee el YAML sin reiniciar `serve`; devuelve el mismo resumen que `reset`, con `generado: "al día"`). Si no hay serve corriendo, reinícialo.
+5. **Generate and reload.** `atrezzo world atrezzo/escenarios/<scenario>.yaml` (check the summary: the entity and `GET /api/users` under "Endpoints covered") and `curl -s -X POST <mock>/__atrezzo/reload` (rereads the YAML without restarting `serve`; returns the same summary as `reset`, with `generated: "up to date"`). If serve is not running, restart it.
 
-6. **Verifica que el hueco desaparece.** `atrezzo verify <flujo.yaml>` (si el flujo cubre esa pantalla) o recarga la pantalla. Después `atrezzo misses`: la línea debe decir **resuelta** (se marca sola cuando el mock sirve la ruta). Si sigue "sin resolver", la app pide otra cosa (prefijo distinto, barra final, otro método): compara `ejemplo` de `misses --json` con el `path` del escenario.
+6. **Check that the gap is gone.** `atrezzo verify <flow.yaml>` (if the flow covers that screen) or reload the screen. Then `atrezzo misses`: the line must say **resolved** (it is marked automatically when the mock serves the route). If it still says "unresolved", the app requests something else (different prefix, trailing slash, another method): compare `example` in `misses --json` with the scenario `path`.
 
-7. **Mutaciones (POST/PUT/PATCH/DELETE).** Dilo explícitamente: atrezzo solo proyecta lecturas. Opciones: `atrezzo serve --on-miss stub` (200 `{}` para que la pantalla no reviente; no persiste nada) o dejarlo sin resolver y anotarlo. No inventes lógica de negocio en el mock.
+7. **Mutations (POST/PUT/PATCH/DELETE).** Say it explicitly: atrezzo only projects reads. Options: `atrezzo serve --on-miss stub` (200 `{}` so the screen does not crash; nothing is persisted) or leave it unresolved and note it. Do not invent business logic in the mock.
 
-## Informe
+## Report
 
-Hueco elegido (`MÉTODO ruta`, veces) · consumidor (`fichero:línea`) · campos leídos y de dónde sale cada uno (contrato o front) · diff del escenario · salida de `world` · `misses` antes y después. Si no lo has podido resolver, el motivo real.
+Gap picked (`METHOD path`, times) · consumer (`file:line`) · fields read and where each comes from (contract or front end) · scenario diff · `world` output · `misses` before and after. If you could not resolve it, the real reason.

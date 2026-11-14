@@ -6,30 +6,30 @@ import { AtrezzoError } from '../scripts/lib/errors.mjs';
 import { SCENARIO, tmpProject, cli } from './helpers.mjs';
 
 const norm = (text) => normalizeScenario(parseYaml(text, 'e.yaml'), 'e.yaml');
-const errorOf = (fn) => { try { fn(); } catch (e) { return e; } assert.fail('se esperaba un error'); };
+const errorOf = (fn) => { try { fn(); } catch (e) { return e; } assert.fail('expected an error'); };
 
-test('parser YAML: estructuras del formato de escenario', () => {
+test('YAML parser: scenario format structures', () => {
   const doc = parseYaml(SCENARIO);
   assert.equal(doc.seed, 7712);
-  assert.deepEqual(doc.world.pedidos.distribucion, { pagado: 34, pendiente: 3, incidencia: 3 });
+  assert.deepEqual(doc.world.pedidos.distribution, { pagado: 34, pendiente: 3, incidencia: 3 });
   assert.deepEqual(doc.path, ['dashboard', 'lista']);
   assert.equal(doc.expect[0].selector, '[data-testid=order-row]');
   assert.deepEqual(doc.endpoints[0].filters, ['estado', 'client_id']);
-  assert.deepEqual(parseYaml('a: "x # no es comentario" # sí\nb: |\n  l1\n  l2\n'), { a: 'x # no es comentario', b: 'l1\nl2\n' });
+  assert.deepEqual(parseYaml('a: "x # not a comment" # yes\nb: |\n  l1\n  l2\n'), { a: 'x # not a comment', b: 'l1\nl2\n' });
   assert.deepEqual(parseYaml('k:\n- 1\n- two\n'), { k: [1, 'two'] });
 });
 
-test('YAML roto ⇒ YamlError con línea', () => {
+test('broken YAML ⇒ YamlError with line number', () => {
   const e = errorOf(() => parseYaml('name: x\nworld:\n  clientes: 3\n   pedidos: 4\n', 'roto.yaml'));
   assert.ok(e instanceof YamlError);
-  assert.match(e.message, /roto\.yaml \(línea 4\)/);
-  assert.match(errorOf(() => parseYaml('a: {b: 1\n')).message, /sin cerrar/);
-  assert.match(errorOf(() => parseYaml('a: 1\na: 2\n')).message, /clave duplicada "a"/);
-  assert.match(errorOf(() => parseYaml('a:\n\tb: 1\n')).message, /tabulador/);
-  assert.match(errorOf(() => parseYaml('a: *ancla\n')).message, /alias/);
+  assert.match(e.message, /roto\.yaml \(line 4\)/);
+  assert.match(errorOf(() => parseYaml('a: {b: 1\n')).message, /unterminated/);
+  assert.match(errorOf(() => parseYaml('a: 1\na: 2\n')).message, /duplicate key "a"/);
+  assert.match(errorOf(() => parseYaml('a:\n\tb: 1\n')).message, /tab in indentation/);
+  assert.match(errorOf(() => parseYaml('a: *anchor\n')).message, /aliases/);
 });
 
-test('escenario válido se normaliza con valores por defecto', () => {
+test('a valid scenario is normalized with defaults', () => {
   const s = norm(SCENARIO);
   assert.equal(s.name, 'conciliacion');
   assert.equal(s.now, '2025-03-01T09:00:00.000Z');
@@ -38,60 +38,60 @@ test('escenario válido se normaliza con valores por defecto', () => {
   assert.equal(s.expect.length, 2);
 });
 
-test('endpoint sin entidad ⇒ error que nombra el campo', () => {
+test('endpoint without entity ⇒ error naming the field', () => {
   const e = errorOf(() => norm(SCENARIO.replace('    entity: clientes\n', '')));
   assert.ok(e instanceof AtrezzoError);
   assert.equal(e.exitCode, 3);
-  assert.match(e.message, /campo "endpoints\[1\]\.entity": falta/);
+  assert.match(e.message, /field "endpoints\[1\]\.entity": missing/);
 });
 
-test('expect sin selector ⇒ error', () => {
+test('expect without selector ⇒ error', () => {
   const e = errorOf(() => norm(SCENARIO.replace('  - selector: "[data-testid=order-row]"\n    count: 12', '  - count: 12')));
-  assert.match(e.message, /campo "expect\[0\]\.selector": falta/);
+  assert.match(e.message, /field "expect\[0\]\.selector": missing/);
 });
 
-test('validaciones estrictas acumuladas con motivo', () => {
+test('strict validations accumulate, each with its reason', () => {
   const bad = SCENARIO
     .replace('pagado: 34', 'pagado: 33')
     .replace('filters: [estado, client_id]', 'filters: [estadoo]')
     .replace('    count: 3\n', '    count: 3\n    min: 1\n')
     .replace('seed: 7712', 'seed: -1')
-    .replace('name: conciliacion', 'name: conciliacion\ncolor: azul');
+    .replace('name: conciliacion', 'name: conciliacion\ncolor: blue');
   const e = errorOf(() => norm(bad));
-  assert.match(e.message, /campo "world\.pedidos\.distribucion": la suma \(39\) no coincide con total \(40\)/);
-  assert.match(e.message, /campo "endpoints\[0\]\.filters\[0\]": el campo "estadoo" no existe en "pedidos"/);
-  assert.match(e.message, /usa "count" exacto o "min"\/"max", no ambos/);
-  assert.match(e.message, /campo "seed"/);
-  assert.match(e.message, /campo "color": campo desconocido/);
+  assert.match(e.message, /field "world\.pedidos\.distribution": sum \(39\) does not match total \(40\)/);
+  assert.match(e.message, /field "endpoints\[0\]\.filters\[0\]": field "estadoo" does not exist in "pedidos"/);
+  assert.match(e.message, /use an exact "count" or "min"\/"max", not both/);
+  assert.match(e.message, /field "seed"/);
+  assert.match(e.message, /field "color": unknown field/);
 });
 
-test('entidad desconocida y referencia a entidad vacía', () => {
-  assert.match(errorOf(() => norm(SCENARIO.replace('entity: clientes', 'entity: facturas'))).message, /"facturas" no está declarada en world/);
-  assert.match(errorOf(() => norm(SCENARIO.replace('  clientes: 3', '  clientes: 0'))).message, /tiene 0 elementos; los ids no existirían/);
+test('unknown entity and reference to an empty entity', () => {
+  assert.match(errorOf(() => norm(SCENARIO.replace('entity: clientes', 'entity: facturas'))).message, /"facturas" is not declared in world/);
+  assert.match(errorOf(() => norm(SCENARIO.replace('  clientes: 3', '  clientes: 0'))).message, /has 0 items; the ids would not exist/);
 });
 
-test('min/max se aceptan', () => {
+test('min/max are accepted', () => {
   const s = norm(SCENARIO.replace('    count: 12\n', '    min: 10\n    max: 12\n'));
   assert.deepEqual([s.expect[0].min, s.expect[0].max], [10, 12]);
-  assert.match(errorOf(() => norm(SCENARIO.replace('    count: 12\n', '    min: 13\n    max: 12\n'))).message, /min \(13\) es mayor que max \(12\)/);
+  assert.match(errorOf(() => norm(SCENARIO.replace('    count: 12\n', '    min: 13\n    max: 12\n'))).message, /min \(13\) is greater than max \(12\)/);
 });
 
-test('CLI: escenario inválido ⇒ exit 3 y mensaje en stderr', () => {
+test('CLI: invalid scenario ⇒ exit 3 and message on stderr', () => {
   const dir = tmpProject({
     'roto.yaml': 'name: x\nseed: 1\nworld:\n  clientes: [\n',
     'sin-entidad.yaml': SCENARIO.replace('    entity: pedidos\n', ''),
-    'sin-selector.yaml': SCENARIO.replace('  - selector: "[data-testid=badge-incidencia]"\n', '  - label: sin selector\n'),
+    'sin-selector.yaml': SCENARIO.replace('  - selector: "[data-testid=badge-incidencia]"\n', '  - label: no selector\n'),
   });
   const r1 = cli(['world', 'roto.yaml'], dir);
   assert.equal(r1.code, 3);
-  assert.match(r1.stderr, /YAML inválido/);
+  assert.match(r1.stderr, /invalid YAML/);
   const r2 = cli(['world', 'sin-entidad.yaml'], dir);
   assert.equal(r2.code, 3);
-  assert.match(r2.stderr, /endpoints\[0\]\.entity": falta/);
+  assert.match(r2.stderr, /endpoints\[0\]\.entity": missing/);
   const r3 = cli(['world', 'sin-selector.yaml'], dir);
   assert.equal(r3.code, 3);
-  assert.match(r3.stderr, /expect\[1\]\.selector": falta/);
+  assert.match(r3.stderr, /expect\[1\]\.selector": missing/);
   const r4 = cli(['world', 'no-existe.yaml'], dir);
   assert.equal(r4.code, 3);
-  assert.match(r4.stderr, /no existe/);
+  assert.match(r4.stderr, /does not exist/);
 });

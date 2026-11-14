@@ -1,7 +1,7 @@
 {
   "name": "atrezzo",
   "version": "0.3.0",
-  "description": "Plugin de Claude Code: mocks de API a partir de estados de aplicación",
+  "description": "Claude Code plugin: API mocks from application states",
   "type": "module",
   "private": true,
   "bin": {

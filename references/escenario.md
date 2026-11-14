@@ -1,35 +1,35 @@
-# Especificación del fichero de escenario
+# Scenario file specification
 
-Un escenario es un YAML versionado que describe **un estado de la aplicación**: el mundo de datos, cómo lo ven los endpoints, la ruta de pantallas y lo que debe verse. `atrezzo world` lo valida de forma estricta: cualquier error dice el **campo** y el **motivo** y sale con código 3.
+A scenario is a versioned YAML file that describes **one application state**: the data world, how the endpoints see it, the screen path and what must be visible. `atrezzo world` validates it strictly: every error names the **field** and the **reason** and exits with code 3.
 
-## Ejemplo completo
+## Full example
 
 ```yaml
-name: conciliacion-con-incidencias   # obligatorio, kebab-case; nombre del escenario
-description: Texto libre para humanos # opcional
-seed: 7712                            # obligatorio, entero >= 0
-now: 2025-03-01T09:00:00Z             # opcional; "ahora" inyectado (por defecto 2025-01-15T09:00:00Z)
+name: conciliacion-con-incidencias   # required, kebab-case; the scenario name
+description: Free text for humans     # optional
+seed: 7712                            # required, integer >= 0
+now: 2025-03-01T09:00:00Z             # optional; injected "now" (default 2025-01-15T09:00:00Z)
 world:
-  clientes: 3                         # forma corta: solo el total
+  clientes: 3                         # short form: just the total
   pedidos:
     total: 40
-    distribucion: { pagado: 34, pendiente: 3, incidencia: 3 }   # suma == total
-    valor: { min: 20, max: 900, moneda: EUR }
-    ref: clientes                     # opcional: pedidos ya referencia clientes por defecto
-    nulos: { client_id: 0 }           # opcional: n registros con el campo a null
-    dias: 90                          # opcional: ventana de fechas hacia atrás desde now
+    distribution: { pagado: 34, pendiente: 3, incidencia: 3 }   # sum == total
+    amount: { min: 20, max: 900, currency: EUR }
+    ref: clientes                     # optional: pedidos already references clientes by default
+    nulls: { client_id: 0 }           # optional: n records with the field set to null
+    days: 90                          # optional: date window going back from now
   usuarios:
     total: 4
-    valores: { rol: [admin, operador, lectura] }   # opcional: vocabulario de un campo
+    values: { rol: [admin, operador, lectura] }   # optional: vocabulary for a field
 endpoints:
   - path: /api/orders
     entity: pedidos
     filters: [estado, client_id]      # ?estado=incidencia  ·  ?estado=pendiente,incidencia
     pagination: { param_limit: limit, param_offset: offset, default_limit: 50, max_limit: 100 }
-    sort: -creado_en                  # o lista: [estado, -importe]; por defecto id
-    include: [clientes]               # embebe el padre como "cliente"
-    shape: array                      # array (por defecto) | envelope → { data, total, limit, offset }
-    detail: true                      # genera también /api/orders/:id (por defecto true)
+    sort: -creado_en                  # or a list: [estado, -importe]; default id
+    include: [clientes]               # embeds the parent as "cliente"
+    shape: array                      # array (default) | envelope → { data, total, limit, offset }
+    detail: true                      # also generates /api/orders/:id (default true)
   - path: /api/customers
     entity: clientes
 entry: dashboard-vacio
@@ -41,166 +41,166 @@ expect:
   - selector: "[data-testid=badge-incidencia]"
     min: 1
     max: 3
-    screen: lista-pedidos             # por defecto, la última pantalla de path
+    screen: lista-pedidos             # default: the last screen of path
     data: { request: incidencias, where: { estado: incidencia } }
 ```
 
-## Campos
+## Fields
 
-### Raíz
-| campo | tipo | regla |
+### Root
+| field | type | rule |
 |---|---|---|
-| `name` | texto | obligatorio, `^[a-z0-9][a-z0-9-]*$` |
-| `seed` | entero | obligatorio, >= 0 |
-| `now` | fecha ISO | opcional; todas las fechas se calculan desde aquí |
-| `world` | mapa | obligatorio, al menos una entidad |
-| `endpoints` | lista | obligatoria, al menos uno |
-| `entry` | texto | opcional; si hay `path`, debe ser su primer elemento |
-| `path` | lista de textos | opcional; pantallas en orden |
-| `expect` | lista | opcional |
+| `name` | string | required, `^[a-z0-9][a-z0-9-]*$` |
+| `seed` | integer | required, >= 0 |
+| `now` | ISO date | optional; every date is computed from here |
+| `world` | map | required, at least one entity |
+| `endpoints` | list | required, at least one |
+| `entry` | string | optional; with `path`, it must be its first element |
+| `path` | list of strings | optional; screens in order |
+| `expect` | list | optional |
 
-Cualquier otro campo es un error (`campo desconocido`). Un escenario también puede ser `.json` con la misma estructura (`atrezzo import --format json`).
+Any other field is an error (`unknown field`). A scenario can also be `.json` with the same structure (`atrezzo import --format json`).
 
-### Entidades (`world.<nombre>`)
-Entero (= `total`) o mapa con: `total` (obligatorio), `distribucion`, `campo_distribucion` (por defecto `estado`), `valor`, `ref`, `nulos`, `valores`, `dias`, `campos`.
+### Entities (`world.<name>`)
+An integer (= `total`) or a map with: `total` (required), `distribution`, `distribution_field` (default `estado`), `amount`, `ref`, `nulls`, `values`, `days`, `fields`.
 
-#### `campos`: campos con tipo (los escribe `atrezzo import`)
+#### `fields`: typed fields (written by `atrezzo import`)
 
 ```yaml
 world:
   pets:
     total: 30
-    distribucion: { available: 10, pending: 10, sold: 10 }
-    campo_distribucion: status
-    campos:
-      name: texto
-      status: [available, pending, sold]   # lista = enum
-      createdAt: fecha
+    distribution: { available: 10, pending: 10, sold: 10 }
+    distribution_field: status
+    fields:
+      name: string
+      status: [available, pending, sold]   # list = enum
+      createdAt: date
 ```
 
-Tipos: `texto`, `entero`, `numero`, `booleano`, `fecha` (ISO, dentro de `dias` antes de `now`), `email`, `uuid`, `url`, o una lista de valores. Con `campos`, la entidad tiene **exactamente** `id` + fks de sus `ref` + `campos` (+ el campo de `distribucion` y los de `valor` si los declaras): la plantilla (`clientes`, `pedidos`…) no añade los suyos ni sus valores por defecto. `id` no se puede declarar (siempre enteros 1..n). Los valores salen de un flujo propio del PRNG (`fields:<entidad>`): añadir `campos` a una entidad no altera las demás.
+Types: `string`, `integer`, `number`, `boolean`, `date` (ISO, within `days` before `now`), `email`, `uuid`, `url`, or a list of values. With `fields`, the entity has **exactly** `id` + the fks of its `ref` + `fields` (+ the `distribution` field and the `amount` fields if you declare them): the template (`clientes`, `pedidos`…) adds neither its own fields nor its defaults. `id` cannot be declared (always integers 1..n). Values come from a dedicated PRNG stream (`fields:<entity>`): adding `fields` to one entity does not change the others.
 
-Plantillas conocidas y sus campos:
+Built-in templates and their fields (the field names are generated data, so they stay as they are):
 
-| entidad | campos |
+| entity | fields |
 |---|---|
 | `clientes` (`customers`) | id, nombre, email, ciudad, creado_en |
 | `usuarios` (`users`) | id, nombre, email, rol, creado_en |
 | `pedidos` (`orders`) | id, referencia, client_id, estado, importe, moneda, creado_en |
 | `productos` (`products`) | id, nombre, sku, precio, moneda, stock |
-| cualquier otra | id, nombre, `<fk de sus refs>`, creado_en |
+| any other | id, nombre, `<fk of its refs>`, creado_en |
 
-Garantías del generador:
-- ids enteros 1..n.
-- `distribucion` exacta (no aproximada) y barajada con la semilla.
-- Cada fk existe; si hay al menos tantos hijos como padres, todo padre tiene algún hijo.
-- Un hijo nunca es anterior a su padre (`creado_en`).
-- Cada entidad usa su propio flujo del PRNG: añadir una entidad no cambia las demás.
+Generator guarantees:
+- integer ids 1..n.
+- `distribution` is exact (not approximate) and shuffled with the seed.
+- Every fk exists; if there are at least as many children as parents, every parent has a child.
+- A child never predates its parent (`creado_en`).
+- Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (empieza por `/`, sin query ni `:param`), `entity` (obligatoria, declarada en `world`), `filters` (campos existentes), `pagination`, `sort`, `include` (solo entidades referenciadas), `shape`, `detail`, `pick`.
+`path` (starts with `/`, no query or `:param`), `entity` (required, declared in `world`), `filters` (existing fields), `pagination`, `sort`, `include` (referenced entities only), `shape`, `detail`, `pick`.
 
-- `pagination` por desplazamiento: `{ param_limit, param_offset, default_limit, max_limit }`. Por página: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` obligatorio; `offset = (page - 1) × limit`; `page=0` ⇒ 400; no se combina con `param_offset`).
-- `pick: items` ⇒ envoltorio con esa clave: `{ items: [...], total, limit, offset }` (implica `shape: envelope`; `shape: envelope` sin `pick` usa `data`). Una sola clave, sin rutas anidadas.
+- Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
+- `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` uses `data`). A single key, no nested paths.
 
-Semántica de la proyección (idéntica en `serve` y en los handlers MSW, mismo fichero `runtime.mjs`):
-1. Filtros por igualdad; coma = cualquiera de los valores; `null` filtra nulos.
-2. Orden por `sort`, nulos al final, desempate por posición original (estable).
-3. `X-Total-Count` = total tras filtros, antes de paginar.
-4. `limit` mayor que el total ⇒ todo; `offset` fuera de rango ⇒ `[]`; valores no enteros ⇒ 400.
-5. Parámetros no declarados se ignoran y se listan en `X-Atrezzo-Ignored`.
-6. Solo GET/HEAD. Escrituras ⇒ 405: el mock da forma a los datos, no implementa reglas de negocio.
+Projection semantics (identical in `serve` and the MSW handlers, same `runtime.mjs` file):
+1. Equality filters; a comma means any of the values; `null` matches nulls.
+2. Sorted by `sort`, nulls last, ties broken by original position (stable).
+3. `X-Total-Count` = total after filters, before pagination.
+4. `limit` above the total ⇒ everything; out-of-range `offset` ⇒ `[]`; non-integer values ⇒ 400.
+5. Undeclared parameters are ignored and listed in `X-Atrezzo-Ignored`.
+6. GET/HEAD only. Writes ⇒ 405: the mock shapes data, it does not implement business rules.
 
-### Tapar un hueco (endpoint que la app pide y el escenario no tiene)
+### Filling a gap (an endpoint the app requests and the scenario lacks)
 
-`atrezzo serve` registra cada petición fuera de contrato (`atrezzo misses`; detalle en el README, "Cuando falta una ruta"). Para taparla se añade **una entidad y un endpoint**, nunca datos (skill `/atrezzo:hueco`):
+`atrezzo serve` records every request outside the contract (`atrezzo misses`; details in the README, "When a route is missing"). To fill it you add **an entity and an endpoint**, never data (skill `/atrezzo:hueco`):
 
 ```yaml
-# 404 recibido: { "atrezzo": { "hueco": "GET /api/users", ... } }
-# el front hace: fetch(`/api/users?rol=${rol}&limit=20&offset=${o}`) y lee
+# 404 received: { "atrezzo": { "gap": "GET /api/users", ... } }
+# the front end does: fetch(`/api/users?rol=${rol}&limit=20&offset=${o}`) and reads
 #   res.items[i].nombre · .email · .rol · .avatar_url · .cliente.nombre · res.total
 world:
   clientes: 3
   usuarios:
     total: 8
-    ref: clientes                 # → client_id; permite include
-    campos:                       # solo lo que el front lee (sustituye la plantilla de la entidad)
-      nombre: texto
+    ref: clientes                 # → client_id; enables include
+    fields:                       # only what the front end reads (replaces the entity template)
+      nombre: string
       email: email
       rol: [admin, operador]
       avatar_url: url
 endpoints:
-  - path: /api/users              # exactamente el `path` del hueco (sin prefijo distinto, sin barra final)
+  - path: /api/users              # exactly the gap's `path` (no different prefix, no trailing slash)
     entity: usuarios
-    filters: [rol]                # solo lo que el front envía
+    filters: [rol]                # only what the front end sends
     pagination: { param_limit: limit, param_offset: offset }
     include: [clientes]           # u.cliente.nombre
     shape: envelope
     pick: items                   # res.items + total/limit/offset
 ```
 
-Reglas:
-- `path` es la ruta del hueco tal cual (el `path` de `misses --json`); si el hueco era `GET /api/users/:id`, basta el endpoint de la colección (el detalle viene con `detail: true`, por defecto).
-- `filters` y `pagination`: solo los parámetros que aparecen en la `query` del hueco o en la llamada del front. Lo demás se ignora y sale en `X-Atrezzo-Ignored`.
-- Campos: si hay contrato (OpenAPI/tipos), mándalo él; `atrezzo import` los escribe solo. Sin contrato, los que el front lee. Sin `campos`, las entidades conocidas (`usuarios`, `clientes`, `pedidos`, `productos`) traen su plantilla.
-- Después: `atrezzo world <escenario.yaml>` y `POST /__atrezzo/reload` (o reinicia `serve`). El hueco pasa a `resolved: true` en cuanto el mock sirve la ruta.
-- Rutas anidadas (`/api/clientes/:id/pedidos`) no se pueden declarar (`path` sin `:param`): usa la colección con filtro (`/api/orders?client_id=`) si el front lo permite.
-- Escrituras (POST/PUT/PATCH/DELETE): no se declaran. `serve --on-miss stub` responde 200 `{}` para explorar.
+Rules:
+- `path` is the gap's route as is (the `path` in `misses --json`); if the gap was `GET /api/users/:id`, the collection endpoint is enough (the detail comes with `detail: true`, the default).
+- `filters` and `pagination`: only the parameters in the gap's `query` or in the front end's call. Anything else is ignored and shows up in `X-Atrezzo-Ignored`.
+- Fields: if there is a contract (OpenAPI/types), it rules; `atrezzo import` writes them for you. Without a contract, the ones the front end reads. Without `fields`, the built-in entities (`usuarios`, `clientes`, `pedidos`, `productos`) bring their template.
+- Then: `atrezzo world <scenario.yaml>` and `POST /__atrezzo/reload` (or restart `serve`). The gap turns `resolved: true` as soon as the mock serves the route.
+- Nested routes (`/api/clientes/:id/pedidos`) cannot be declared (`path` without `:param`): use the collection with a filter (`/api/orders?client_id=`) if the front end allows it.
+- Writes (POST/PUT/PATCH/DELETE): not declared. `serve --on-miss stub` answers 200 `{}` for exploring.
 
-### Aserciones (`expect`)
-| campo | regla |
+### Assertions (`expect`)
+| field | rule |
 |---|---|
-| `selector` | obligatorio, CSS |
-| `count` | entero exacto; excluyente con `min`/`max` |
-| `min`, `max` | enteros; `min <= max` |
-| `screen` | pantalla de `path` |
-| `data.request` | nombre de una petición del paso del flujo |
-| `data.where` | mapa campo: valor (o lista) para contar en el JSON |
-| `data.pick` | ruta al array (`data.items`); por defecto array raíz o `data` |
-| `label` | texto para el informe |
+| `selector` | required, CSS |
+| `count` | exact integer; mutually exclusive with `min`/`max` |
+| `min`, `max` | integers; `min <= max` |
+| `screen` | a screen from `path` |
+| `data.request` | name of a request in the flow step |
+| `data.where` | map field: value (or list) to count in the JSON |
+| `data.pick` | path to the array (`data.items`); default: root array or `data` |
+| `label` | text for the report |
 
-Con `--driver http` una aserción sin `data` queda **sin verificar** (exit 2), nunca OK.
+With `--driver http` an assertion without `data` stays **not verified** (exit 2), never OK.
 
-## Fichero de flujo (`flujo.yaml`)
+## Flow file (`flujo.yaml`)
 
 ```yaml
-escenario: escenarios/pedidos.yaml    # relativa al flujo (opcional: ver «App real» abajo)
-base_url: http://127.0.0.1:4010       # opcional (si no, --url o config)
-viewport: { width: 1440, height: 1000 }  # opcional, solo playwright (por defecto 1280x720)
-headers:                              # opcional: se envían en TODAS las peticiones del flujo
-  Cookie: "${APP_COOKIE}"             # ${VAR} se toma del entorno; no commitees secretos
+scenario: escenarios/pedidos.yaml     # relative to the flow (optional: see "Real app" below)
+base_url: http://127.0.0.1:4010       # optional (otherwise --url or the config)
+viewport: { width: 1440, height: 1000 }  # optional, playwright only (default 1280x720)
+headers:                              # optional: sent on EVERY request of the flow
+  Cookie: "${APP_COOKIE}"             # ${VAR} comes from the environment; do not commit secrets
 steps:
   - screen: lista-pedidos
-    visit: /pedidos                   # ruta para playwright
-    headers: { Accept-Language: es-ES }  # opcional; se mezclan con las del flujo
-    wait_for: "[data-testid=listo]"   # opcional; espera a que el elemento exista (no a que sea visible)
-    requests:                         # peticiones equivalentes para el driver http
+    visit: /pedidos                   # route for playwright
+    headers: { Accept-Language: es-ES }  # optional; merged with the flow headers
+    wait_for: "[data-testid=listo]"   # optional; waits for the element to exist (not to be visible)
+    requests:                         # equivalent requests for the http driver
       pedidos: GET /api/orders?limit=12
       incidencias: GET /api/orders?estado=incidencia
-    expect: [ … ]                     # aserciones propias del paso
+    expect: [ … ]                     # the step's own assertions
 ```
 
-Las aserciones del escenario se añaden al paso de su `screen` (por defecto la última de `path`).
+Scenario assertions are added to the step of their `screen` (default: the last one in `path`).
 
-### Cabeceras (`headers`)
+### Headers (`headers`)
 
-- A nivel de flujo y/o de paso. Cabeceras efectivas de un paso = las del flujo + las del paso; si se repite un nombre (sin distinguir mayúsculas) gana el paso.
-- Driver `playwright`: `context.setExtraHTTPHeaders()` con las cabeceras efectivas antes de abrir cada `visit` (las recibe toda petición de la página: documento, fetch, RSC…). Driver `http`: las mismas cabeceras en cada `fetch` de `requests`.
-- `${NOMBRE}` en un valor se sustituye por la variable de entorno. Si no está definida, el flujo es inválido (exit 3) en vez de enviar una cabecera vacía.
-- Secretos: `Cookie`, `Authorization`, `Proxy-Authorization`, `X-Api-Key` y cualquier nombre que contenga `token`, `secret`, `session`, `auth`, `password` o `api-key` se muestran como `***` en la tabla, en `--json` y en los mensajes de error. Los valores no se escriben nunca en logs.
-- Valores: texto de una línea (números y booleanos se convierten a texto). Nombres según RFC 7230.
+- At flow level and/or step level. A step's effective headers = the flow's + the step's; if a name repeats (case-insensitive), the step wins.
+- `playwright` driver: `context.setExtraHTTPHeaders()` with the effective headers before opening each `visit` (every request of the page gets them: document, fetch, RSC…). `http` driver: the same headers on every `fetch` of `requests`.
+- `${NAME}` in a value is replaced by the environment variable. If it is not set, the flow is invalid (exit 3) rather than sending an empty header.
+- Secrets: `Cookie`, `Authorization`, `Proxy-Authorization`, `X-Api-Key` and any name containing `token`, `secret`, `session`, `auth`, `password` or `api-key` print as `***` in the table, in `--json` and in error messages. Values are never written to logs.
+- Values: single-line text (numbers and booleans are converted to text). Names per RFC 7230.
 
-### App real (sin `escenario`)
+### Real app (no `scenario`)
 
-Si el flujo no declara `escenario`, `verify` no hace `reset` ni compara hashes: verifica la app tal cual está en `base_url` (útil para validar los selectores contra la app de verdad, con su sesión en `headers`). Las aserciones `data` siguen funcionando si la app expone el JSON.
+If the flow declares no `scenario`, `verify` does not `reset` or compare hashes: it verifies the app as it is at `base_url` (useful to validate selectors against the real app, with its session in `headers`). `data` assertions still work if the app exposes the JSON.
 
-### Navegación con playwright: nunca verde por accidente
+### Navigation with playwright: never green by accident
 
-Tras abrir `visit`, si la URL final es otra ruta (p. ej. redirect a `/login` por falta de sesión), la respuesta es HTTP ≥ 400 o `wait_for` no aparece en 10 s, **todas las aserciones del paso son KO** aunque el conteo cuadre (un `count: 0` en la pantalla de login no es un OK). El informe dice a dónde redirigió y, con `--diagnose`, añade la hipótesis `navegacion`.
+After opening `visit`, if the final URL is another route (e.g. a redirect to `/login` for lack of a session), the response is HTTP ≥ 400, or `wait_for` does not appear within 10 s, **every assertion of the step is KO** even if the count matches (a `count: 0` on the login screen is not an OK). The report says where it redirected and, with `--diagnose`, adds the `navigation` hypothesis.
 
-## Subconjunto YAML soportado
+## Supported YAML subset
 
-Mapas y listas en bloque (solo espacios), colecciones `{…}` y `[…]` en una línea, comillas simples y dobles, `null`/`~`, booleanos, números, bloques `|` y `>`, comentarios. No se aceptan anclas, alias, etiquetas ni varios documentos: el parser lo dice con número de línea.
+Block maps and lists (spaces only), single-line `{…}` and `[…]` collections, single and double quotes, `null`/`~`, booleans, numbers, `|` and `>` blocks, comments. Anchors, aliases, tags and multiple documents are rejected: the parser says so with a line number.
 
-## Códigos de salida
-`0` OK · `1` aserción fallida · `2` no verificable (falta mock, playwright/Chromium o `data`) · `3` entrada inválida.
+## Exit codes
+`0` OK · `1` assertion failed · `2` not verifiable (no mock, playwright/Chromium or `data`) · `3` invalid input.

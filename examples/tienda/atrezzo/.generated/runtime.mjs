@@ -13,7 +13,7 @@ function compare(a, b) {
 
 function parseNonNegInt(raw, name) {
   if (raw === null || raw === undefined || raw === '') return { value: null };
-  if (!/^\d+$/.test(raw)) return { error: `"${name}" debe ser un entero >= 0; recibido "${raw}"` };
+  if (!/^\d+$/.test(raw)) return { error: `"${name}" must be an integer >= 0; got "${raw}"` };
   return { value: Number.parseInt(raw, 10) };
 }
 
@@ -39,7 +39,7 @@ export function createEngine(dataset) {
   }
 
   function json(status, body, headers = {}) {
-    return { status, headers: { 'content-type': 'application/json; charset=utf-8', 'x-atrezzo-escenario': dataset.scenario, ...headers }, body };
+    return { status, headers: { 'content-type': 'application/json; charset=utf-8', 'x-atrezzo-scenario': dataset.scenario, ...headers }, body };
   }
 
   /** Find the endpoint for a pathname: list route or `<path>/<id>` detail. */
@@ -63,7 +63,7 @@ export function createEngine(dataset) {
     const m = match(pathname);
     if (!m) return null;
     if (method !== 'GET' && method !== 'HEAD') {
-      return json(405, { error: `atrezzo solo proyecta lecturas (GET); ${method} ${pathname} no está en el contrato` }, { allow: 'GET' });
+      return json(405, { error: `atrezzo only projects reads (GET); ${method} ${pathname} is not in the contract` }, { allow: 'GET' });
     }
     const params = query instanceof URLSearchParams ? query : new URLSearchParams(query ?? {});
     const { ep, id } = m;
@@ -71,7 +71,7 @@ export function createEngine(dataset) {
 
     if (id !== null) {
       const row = rows.find((r) => String(r.id) === id);
-      if (!row) return json(404, { error: `${ep.entity} ${id} no existe en el escenario "${dataset.scenario}"` });
+      if (!row) return json(404, { error: `${ep.entity} ${id} does not exist in scenario "${dataset.scenario}"` });
       return json(200, withIncludes(row, ep));
     }
 
@@ -102,7 +102,7 @@ export function createEngine(dataset) {
       const pageParam = ep.pagination.page;
       const o = parseNonNegInt(params.get(pageParam ?? ep.pagination.offset), pageParam ?? ep.pagination.offset);
       if (l.error || o.error) return json(400, { error: l.error || o.error });
-      if (pageParam && o.value === 0) return json(400, { error: `"${pageParam}" empieza en 1; recibido "0"` });
+      if (pageParam && o.value === 0) return json(400, { error: `"${pageParam}" starts at 1; got "0"` });
       limit = l.value ?? ep.pagination.defaultLimit;
       if (limit !== null && ep.pagination.maxLimit !== null) limit = Math.min(limit, ep.pagination.maxLimit);
       offset = pageParam ? ((o.value ?? 1) - 1) * (limit ?? 0) : (o.value ?? 0);

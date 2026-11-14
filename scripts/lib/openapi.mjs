@@ -17,19 +17,19 @@ const LIMIT = ['limit', 'per_page', 'perPage', 'page_size', 'pageSize', 'size'];
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 export function loadSpec(file) {
-  if (!existsSync(file)) throw new AtrezzoError(`No existe el contrato ${file}`);
+  if (!existsSync(file)) throw new AtrezzoError(`Contract ${file} does not exist`);
   const text = readFileSync(file, 'utf8');
   let doc;
   if (/\.json$/i.test(file) || /^\s*\{/.test(text)) {
-    try { doc = JSON.parse(text); } catch (e) { throw new AtrezzoError(`${file}: JSON inválido: ${e.message}`); }
+    try { doc = JSON.parse(text); } catch (e) { throw new AtrezzoError(`${file}: invalid JSON: ${e.message}`); }
   } else {
     try { doc = parseYaml(text, file); } catch (e) {
-      if (e instanceof YamlError) throw new AtrezzoError(`${e.message}\n  El parser YAML de atrezzo es un subconjunto (sin anclas, alias ni colecciones {…} multilínea). Convierte el spec a JSON y vuelve a importarlo.`);
+      if (e instanceof YamlError) throw new AtrezzoError(`${e.message}\n  atrezzo's YAML parser handles a subset (no anchors, aliases or multi-line {…} collections). Convert the spec to JSON and import it again.`);
       throw e;
     }
   }
-  if (!isObj(doc) || (!doc.openapi && !doc.swagger)) throw new AtrezzoError(`${file}: no parece un OpenAPI (falta "openapi" o "swagger" en la raíz)`);
-  if (!isObj(doc.paths)) throw new AtrezzoError(`${file}: el spec no tiene "paths"`);
+  if (!isObj(doc) || (!doc.openapi && !doc.swagger)) throw new AtrezzoError(`${file}: does not look like OpenAPI (no "openapi" or "swagger" at the root)`);
+  if (!isObj(doc.paths)) throw new AtrezzoError(`${file}: the spec has no "paths"`);
   return doc;
 }
 
@@ -38,12 +38,12 @@ function makeDeref(spec, notes) {
   const deref = (node, depth = 0) => {
     if (!isObj(node) || typeof node.$ref !== 'string') return node;
     const ref = node.$ref;
-    if (!ref.startsWith('#/')) { notes.add(`$ref externo no soportado: ${ref}`); return null; }
-    if (depth > 20) { notes.add(`$ref circular: ${ref}`); return null; }
+    if (!ref.startsWith('#/')) { notes.add(`external $ref not supported: ${ref}`); return null; }
+    if (depth > 20) { notes.add(`circular $ref: ${ref}`); return null; }
     if (cache.has(ref)) return cache.get(ref);
     let cur = spec;
     for (const part of ref.slice(2).split('/').map((s) => s.replace(/~1/g, '/').replace(/~0/g, '~'))) cur = isObj(cur) ? cur[part] : undefined;
-    if (cur === undefined) { notes.add(`$ref roto: ${ref}`); return null; }
+    if (cur === undefined) { notes.add(`broken $ref: ${ref}`); return null; }
     const out = deref(cur, depth + 1);
     cache.set(ref, out);
     return out;
@@ -83,48 +83,48 @@ const refName = (schema) => (isObj(schema) && typeof schema.$ref === 'string' ? 
 /** OpenAPI property -> atrezzo field type ({ type } or { skip: reason }). */
 function fieldType(prop, deref) {
   const p = flatten(prop, deref);
-  if (!isObj(p)) return { skip: 'esquema irresoluble' };
+  if (!isObj(p)) return { skip: 'unresolvable schema' };
   const enumVals = p.enum;
   if (Array.isArray(enumVals) && enumVals.length && enumVals.every((v) => v === null || typeof v !== 'object')) return { type: enumVals.filter((v) => v !== null) };
   const t = Array.isArray(p.type) ? p.type.find((x) => x !== 'null') : p.type;
-  if (t === 'integer') return { type: 'entero' };
-  if (t === 'number') return { type: 'numero' };
-  if (t === 'boolean') return { type: 'booleano' };
+  if (t === 'integer') return { type: 'integer' };
+  if (t === 'number') return { type: 'number' };
+  if (t === 'boolean') return { type: 'boolean' };
   if (t === 'string') {
-    if (p.format === 'binary' || p.format === 'byte') return { skip: `string ${p.format} (binario)` };
-    return { type: { 'date-time': 'fecha', date: 'fecha', email: 'email', uuid: 'uuid', uri: 'url', url: 'url' }[p.format] ?? 'texto' };
+    if (p.format === 'binary' || p.format === 'byte') return { skip: `string ${p.format} (binary)` };
+    return { type: { 'date-time': 'date', date: 'date', email: 'email', uuid: 'uuid', uri: 'url', url: 'url' }[p.format] ?? 'string' };
   }
-  if (t === 'array' || p.items) return { skip: 'array anidado' };
-  if (t === 'object' || p.properties) return { skip: 'objeto anidado' };
-  return { skip: 'sin tipo' };
+  if (t === 'array' || p.items) return { skip: 'nested array' };
+  if (t === 'object' || p.properties) return { skip: 'nested object' };
+  return { skip: 'no type' };
 }
 
 function responseSchema(op, spec, deref) {
   const responses = op.responses ?? {};
   const res = deref(responses['200'] ?? responses[200]);
-  if (!res) return { error: Object.keys(responses).length ? `sin respuesta 200 (hay: ${Object.keys(responses).join(', ')})` : 'sin respuestas declaradas' };
+  if (!res) return { error: Object.keys(responses).length ? `no 200 response (declared: ${Object.keys(responses).join(', ')})` : 'no responses declared' };
   if (spec.swagger) {
     const produces = op.produces ?? spec.produces ?? ['application/json'];
-    if (!produces.some((m) => /json/.test(m))) return { error: `respuesta binaria/no JSON (${produces.join(', ')})`, binary: true };
-    if (!res.schema) return { error: '200 sin esquema' };
+    if (!produces.some((m) => /json/.test(m))) return { error: `binary/non-JSON response (${produces.join(', ')})`, binary: true };
+    if (!res.schema) return { error: '200 without schema' };
     return { schema: res.schema };
   }
-  if (!isObj(res.content) || !Object.keys(res.content).length) return { error: '200 sin esquema (sin content)' };
+  if (!isObj(res.content) || !Object.keys(res.content).length) return { error: '200 without schema (no content)' };
   const media = Object.keys(res.content).find((m) => /json/.test(m));
-  if (!media) return { error: `respuesta binaria/no JSON (${Object.keys(res.content).join(', ')})`, binary: true };
-  if (!res.content[media]?.schema) return { error: `200 ${media} sin esquema` };
+  if (!media) return { error: `binary/non-JSON response (${Object.keys(res.content).join(', ')})`, binary: true };
+  if (!res.content[media]?.schema) return { error: `200 ${media} without schema` };
   return { schema: res.content[media].schema };
 }
 
 /** Classify the 200 schema: list of objects, envelope, or not a collection. */
 function shapeOf(schema, deref) {
   const s = flatten(schema, deref);
-  if (!isObj(s)) return { todo: 'esquema de respuesta irresoluble' };
+  if (!isObj(s)) return { todo: 'unresolvable response schema' };
   const isArray = (x) => isObj(x) && (x.type === 'array' || (Array.isArray(x.type) && x.type.includes('array')) || x.items);
   if (isArray(s)) {
     const items = flatten(s.items, deref);
-    if (!isObj(items)) return { todo: 'array cuyos elementos no se pueden resolver' };
-    if (items.type && items.type !== 'object' && !items.properties) return { todo: `array de valores ${items.type}, no de objetos: no hay entidad que generar` };
+    if (!isObj(items)) return { todo: 'array whose items cannot be resolved' };
+    if (items.type && items.type !== 'object' && !items.properties) return { todo: `array of ${items.type} values, not objects: no entity to generate` };
     return { kind: 'array', itemsRaw: s.items, items };
   }
   if (isObj(s.properties)) {
@@ -137,10 +137,10 @@ function shapeOf(schema, deref) {
         }
       }
     }
-    return { todo: `devuelve un objeto (${Object.keys(s.properties).slice(0, 5).join(', ')}), no una colección` };
+    return { todo: `returns an object (${Object.keys(s.properties).slice(0, 5).join(', ')}), not a collection` };
   }
-  if (s.additionalProperties) return { todo: 'devuelve un mapa clave→valor (additionalProperties), no una colección' };
-  return { todo: 'esquema sin tipo ni propiedades' };
+  if (s.additionalProperties) return { todo: 'returns a key→value map (additionalProperties), not a collection' };
+  return { todo: 'schema with no type or properties' };
 }
 
 function normBase(raw) {
@@ -173,16 +173,16 @@ export function inferScenario(spec, { name = 'api', base, file = '<spec>', apiPr
   if (base !== undefined) { prefix = normBase(base); baseInfo = `${prefix || '/'} (--base)`; }
   else {
     const raw = spec.openapi ? spec.servers?.[0]?.url : spec.basePath;
-    if (raw && raw.includes('{')) { prefix = ''; baseInfo = `sin base: ${spec.openapi ? 'servers[0].url' : 'basePath'} = "${raw}" tiene variables; pasa --base`; }
+    if (raw && raw.includes('{')) { prefix = ''; baseInfo = `no base: ${spec.openapi ? 'servers[0].url' : 'basePath'} = "${raw}" has variables; pass --base`; }
     else {
       prefix = normBase(raw);
       const src = spec.openapi ? 'servers[0].url' : 'basePath';
-      baseInfo = raw ? `${prefix || '/'} (${src} = "${raw}"${/^[a-z]+:\/\//i.test(raw) ? ', absoluta: me quedo con la ruta' : ', relativa'})` : `/ (el spec no declara ${src})`;
+      baseInfo = raw ? `${prefix || '/'} (${src} = "${raw}"${/^[a-z]+:\/\//i.test(raw) ? ', absolute: keeping the path' : ', relative'})` : `/ (the spec declares no ${src})`;
     }
   }
-  if (apiPrefix && prefix !== apiPrefix && base === undefined) notesSet.add(`el front consume ${apiPrefix} (config mock.apiPrefix) y el spec da base "${prefix || '/'}": si el proxy reescribe la ruta, reimporta con --base ${apiPrefix}`);
+  if (apiPrefix && prefix !== apiPrefix && base === undefined) notesSet.add(`the front end calls ${apiPrefix} (config mock.apiPrefix) and the spec's base is "${prefix || '/'}": if the proxy rewrites the path, re-import with --base ${apiPrefix}`);
 
-  const entities = new Map(); // name -> { name, refKey, campos, todo, distField, paginated }
+  const entities = new Map(); // name -> { name, refKey, fields, todo, distField, paginated }
   const endpoints = [];
   const todos = [];
   const ignored = [];
@@ -192,14 +192,14 @@ export function inferScenario(spec, { name = 'api', base, file = '<spec>', apiPr
 
   for (const rawPath of pathKeys) {
     const item = deref(spec.paths[rawPath]);
-    if (!isObj(item)) { ignored.push({ method: '*', path: rawPath, reason: 'path item irresoluble' }); continue; }
+    if (!isObj(item)) { ignored.push({ method: '*', path: rawPath, reason: 'unresolvable path item' }); continue; }
     for (const method of METHODS) {
       const op = item[method];
       if (!isObj(op)) continue;
       operations++;
       const M = method.toUpperCase();
       if (method !== 'get') {
-        ignored.push({ method: M, path: rawPath, reason: ['post', 'put', 'patch', 'delete'].includes(method) ? 'mutación no soportada: atrezzo solo proyecta lecturas (GET)' : `${M} no se proyecta` });
+        ignored.push({ method: M, path: rawPath, reason: ['post', 'put', 'patch', 'delete'].includes(method) ? 'mutation not supported: atrezzo only projects reads (GET)' : `${M} is not projected` });
         continue;
       }
       const params = rawPath.match(/\{[^}]+\}/g) ?? [];
@@ -218,26 +218,26 @@ export function inferScenario(spec, { name = 'api', base, file = '<spec>', apiPr
       while (entities.has(ename) && entities.get(ename).key !== key) ename = `${ename}_2`;
       let ent = entities.get(ename);
       if (!ent) {
-        const campos = {};
+        const fields = {};
         const skipped = [];
         let idNote = null;
         const props = shape.items.properties ?? {};
         for (const [prop, sch] of Object.entries(props)) {
           if (prop === 'id') {
             const t = fieldType(sch, deref);
-            if (t.type !== 'entero') idNote = `${ename}.id: el spec dice ${flatten(sch, deref)?.type ?? '?'}${flatten(sch, deref)?.format ? ` (${flatten(sch, deref).format})` : ''}; atrezzo genera ids enteros 1..n`;
+            if (t.type !== 'integer') idNote = `${ename}.id: the spec says ${flatten(sch, deref)?.type ?? '?'}${flatten(sch, deref)?.format ? ` (${flatten(sch, deref).format})` : ''}; atrezzo generates integer ids 1..n`;
             continue;
           }
-          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(prop)) { skipped.push(`${prop} (nombre no válido como campo)`); continue; }
+          if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(prop)) { skipped.push(`${prop} (not a valid field name)`); continue; }
           const t = fieldType(sch, deref);
           if (t.skip) skipped.push(`${prop} (${t.skip})`);
-          else campos[prop] = t.type;
+          else fields[prop] = t.type;
         }
-        if (!('id' in props)) notesSet.add(`${ename}: el esquema no declara "id"; atrezzo lo añade (enteros 1..n)`);
+        if (!('id' in props)) notesSet.add(`${ename}: the schema declares no "id"; atrezzo adds one (integers 1..n)`);
         if (idNote) notesSet.add(idNote);
         ent = {
-          name: ename, key, source: rn ? `#/components/schemas/${rn}` : `ruta ${rawPath}`, campos, skipped,
-          todo: Object.keys(props).length ? null : 'el esquema no declara propiedades; quedan los campos genéricos (id, nombre, creado_en)',
+          name: ename, key, source: rn ? `#/components/schemas/${rn}` : `path ${rawPath}`, fields, skipped,
+          todo: Object.keys(props).length ? null : 'the schema declares no properties; the generic fields remain (id, nombre, creado_en)',
           distField: null, paginated: false,
         };
         entities.set(ename, ent);
@@ -251,23 +251,23 @@ export function inferScenario(spec, { name = 'api', base, file = '<spec>', apiPr
         const en = sch?.enum ?? sch?.items?.enum;
         if (q.name === 'offset' || q.name === 'page' || LIMIT.includes(q.name)) continue;
         if (Array.isArray(en) && en.length) {
-          if (q.name in ent.campos) {
+          if (q.name in ent.fields) {
             ep.filters.push(q.name);
-            if (Array.isArray(ent.campos[q.name]) && !ent.distField) ent.distField = q.name;
-          } else ep.paramNotes.push(`?${q.name} (enum) no tiene campo homónimo en la respuesta: no se declara filtro`);
-        } else ep.paramNotes.push(`?${q.name} sin enum: no se declara filtro (añádelo a filters si filtra por igualdad)`);
+            if (Array.isArray(ent.fields[q.name]) && !ent.distField) ent.distField = q.name;
+          } else ep.paramNotes.push(`?${q.name} (enum) has no field with the same name in the response: no filter declared`);
+        } else ep.paramNotes.push(`?${q.name} without enum: no filter declared (add it to filters if it filters by equality)`);
       }
       const limitName = LIMIT.find((n) => names.includes(n));
       const limitSchema = limitName ? paramSchema(qps.find((q) => q.name === limitName), deref) : null;
       if (names.includes('page')) {
         ep.pagination = { param_page: 'page', param_limit: limitName ?? 'limit', default_limit: Number.isInteger(limitSchema?.default) ? limitSchema.default : 20 };
         if (Number.isInteger(limitSchema?.maximum)) ep.pagination.max_limit = limitSchema.maximum;
-        if (!Number.isInteger(limitSchema?.default)) ep.paramNotes.push(`paginación por página sin tamaño por defecto en el spec: default_limit = 20 (ajústalo)`);
+        if (!Number.isInteger(limitSchema?.default)) ep.paramNotes.push(`page-number pagination with no default size in the spec: default_limit = 20 (adjust it)`);
       } else if (limitName || names.includes('offset')) {
         ep.pagination = { param_limit: limitName ?? 'limit', param_offset: 'offset' };
         if (Number.isInteger(limitSchema?.default)) ep.pagination.default_limit = limitSchema.default;
         if (Number.isInteger(limitSchema?.maximum)) ep.pagination.max_limit = limitSchema.maximum;
-        if (!names.includes('offset')) ep.paramNotes.push(`?${limitName} sin offset: se declara param_offset: offset por defecto`);
+        if (!names.includes('offset')) ep.paramNotes.push(`?${limitName} without offset: declaring param_offset: offset by default`);
       }
       if (ep.pagination) ent.paginated = true;
       endpoints.push(ep);
@@ -279,8 +279,8 @@ export function inferScenario(spec, { name = 'api', base, file = '<spec>', apiPr
     const parent = d.path.replace(/\/\{[^}]+\}$/, '');
     const list = endpoints.find((e) => e.specPath === parent);
     if (list && d.params.length === 1 && d.path.endsWith(d.params[0])) { list.detail = d.path; continue; }
-    if (d.params.length === 1 && d.path.endsWith(d.params[0])) ignored.push({ method: 'GET', path: d.path, reason: `detalle sin lista ${parent} proyectable: atrezzo genera /:id solo junto a su colección` });
-    else ignored.push({ method: 'GET', path: d.path, reason: 'ruta anidada con parámetros en medio: atrezzo no la proyecta (decláralo como colección propia si la pantalla la usa)' });
+    if (d.params.length === 1 && d.path.endsWith(d.params[0])) ignored.push({ method: 'GET', path: d.path, reason: `detail without a projectable list ${parent}: atrezzo generates /:id only alongside its collection` });
+    else ignored.push({ method: 'GET', path: d.path, reason: 'nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)' });
   }
 
   const doc = { name, seed: 1, entities: [...entities.values()], endpoints, todos };
@@ -301,71 +301,71 @@ function evenSplit(total, values) {
 export function scenarioYaml(result) {
   const { doc } = result;
   const L = [
-    `# Generado por atrezzo import desde ${result.file} (${result.version}${result.title ? ` · "${result.title}"` : ''}).`,
-    '# Punto de partida: ajusta conteos, distribuciones y expect con /atrezzo:escena y regenera con atrezzo world.',
-    `# Base de las rutas: ${result.baseInfo}`,
+    `# Generated by atrezzo import from ${result.file} (${result.version}${result.title ? ` · "${result.title}"` : ''}).`,
+    '# Starting point: adjust counts, distributions and expect with /atrezzo:escena and regenerate with atrezzo world.',
+    `# Path base: ${result.baseInfo}`,
     `name: ${doc.name}`,
-    `description: ${scalar(`Importado de ${result.title ?? result.file}`)}`,
+    `description: ${scalar(`Imported from ${result.title ?? result.file}`)}`,
     `seed: ${doc.seed}`,
     'world:',
   ];
   for (const e of doc.entities) {
     const total = e.paginated ? 30 : 10;
-    L.push(`  # ${e.name}: desde ${e.source}${e.skipped.length ? ` · omitidos: ${e.skipped.join(', ')}` : ''}`);
+    L.push(`  # ${e.name}: from ${e.source}${e.skipped.length ? ` · skipped: ${e.skipped.join(', ')}` : ''}`);
     if (e.todo) L.push(`  # TODO: ${e.todo}`);
     L.push(`  ${e.name}:`, `    total: ${total}`);
     if (e.distField) {
-      L.push(`    distribucion: ${flow(evenSplit(total, e.campos[e.distField].map(String)))}`);
-      L.push(`    campo_distribucion: ${scalar(e.distField)}`);
+      L.push(`    distribution: ${flow(evenSplit(total, e.fields[e.distField].map(String)))}`);
+      L.push(`    distribution_field: ${scalar(e.distField)}`);
     }
-    if (Object.keys(e.campos).length) {
-      L.push('    campos:');
-      for (const [k, t] of Object.entries(e.campos)) L.push(`      ${k}: ${Array.isArray(t) ? flow(t) : t}`);
+    if (Object.keys(e.fields).length) {
+      L.push('    fields:');
+      for (const [k, t] of Object.entries(e.fields)) L.push(`      ${k}: ${Array.isArray(t) ? flow(t) : t}`);
     }
   }
-  if (!doc.entities.length) L.push('  # TODO: no se ha podido inferir ninguna entidad; declara al menos una');
+  if (!doc.entities.length) L.push('  # TODO: no entity could be inferred; declare at least one');
   L.push(doc.endpoints.length ? 'endpoints:' : 'endpoints: []');
   for (const ep of doc.endpoints) {
     L.push(`  - path: ${scalar(ep.path)}`, `    entity: ${ep.entity}`);
     if (ep.filters.length) L.push(`    filters: ${flow(ep.filters)}`);
     if (ep.pagination) L.push(`    pagination: ${flow(ep.pagination)}`);
-    if (ep.pick) L.push(`    pick: ${ep.pick}${ep.wrapperOthers.length ? `   # el spec también declara: ${ep.wrapperOthers.join(', ')} (atrezzo emite total, limit, offset)` : ''}`);
+    if (ep.pick) L.push(`    pick: ${ep.pick}${ep.wrapperOthers.length ? `   # the spec also declares: ${ep.wrapperOthers.join(', ')} (atrezzo emits total, limit, offset)` : ''}`);
     if (!ep.detail) L.push('    detail: false');
   }
-  for (const t of doc.todos) L.push(`  # TODO: ${t.method} ${t.path} — ${t.reason}; decláralo a mano si la pantalla lo necesita`);
+  for (const t of doc.todos) L.push(`  # TODO: ${t.method} ${t.path} — ${t.reason}; declare it by hand if the screen needs it`);
   L.push('expect: []', '');
   return L.join('\n');
 }
 
-/** Human report (Spanish) of what was inferred and what was not. */
+/** Human report of what was inferred and what was not. */
 export function formatImportReport(result, written) {
   const { doc } = result;
-  const L = [`Importado ${result.file} (${result.version}${result.title ? ` · "${result.title}"` : ''} · ${result.paths} rutas, ${result.operations} operaciones)`];
+  const L = [`Imported ${result.file} (${result.version}${result.title ? ` · "${result.title}"` : ''} · ${result.paths} paths, ${result.operations} operations)`];
   L.push(`Base: ${result.baseInfo}`);
-  L.push(`Endpoints inferidos (${doc.endpoints.length}):`);
+  L.push(`Inferred endpoints (${doc.endpoints.length}):`);
   for (const ep of doc.endpoints) {
     const e = doc.entities.find((x) => x.name === ep.entity);
-    const campos = Object.entries(e.campos).map(([k, t]) => `${k}:${Array.isArray(t) ? `[${t.join('|')}]` : t}`).join(', ') || 'genéricos (TODO)';
-    L.push(`  GET ${ep.path} → ${ep.entity} · ${ep.pick ? `envoltorio {${ep.pick}: [...]} → pick: ${ep.pick}` : 'array'}`);
-    L.push(`      campos: ${campos}`);
-    if (e.skipped.length) L.push(`      omitidos: ${e.skipped.join(', ')}`);
-    L.push(`      filtros: ${ep.filters.join(', ') || '—'} · paginación: ${ep.pagination ? Object.entries(ep.pagination).map(([k, v]) => `${k}=${v}`).join(' ') : '—'} · detalle: ${ep.detail ? `${ep.path}/:id (de ${ep.detail})` : 'no'}`);
-    for (const n of ep.paramNotes) L.push(`      nota: ${n}`);
-    if (ep.wrapperOthers.length) L.push(`      nota: el envoltorio también trae ${ep.wrapperOthers.join(', ')}; atrezzo emite {${ep.pick}, total, limit, offset}`);
+    const fields = Object.entries(e.fields).map(([k, t]) => `${k}:${Array.isArray(t) ? `[${t.join('|')}]` : t}`).join(', ') || 'generic (TODO)';
+    L.push(`  GET ${ep.path} → ${ep.entity} · ${ep.pick ? `envelope {${ep.pick}: [...]} → pick: ${ep.pick}` : 'array'}`);
+    L.push(`      fields: ${fields}`);
+    if (e.skipped.length) L.push(`      skipped: ${e.skipped.join(', ')}`);
+    L.push(`      filters: ${ep.filters.join(', ') || '—'} · pagination: ${ep.pagination ? Object.entries(ep.pagination).map(([k, v]) => `${k}=${v}`).join(' ') : '—'} · detail: ${ep.detail ? `${ep.path}/:id (from ${ep.detail})` : 'no'}`);
+    for (const n of ep.paramNotes) L.push(`      note: ${n}`);
+    if (ep.wrapperOthers.length) L.push(`      note: the envelope also carries ${ep.wrapperOthers.join(', ')}; atrezzo emits {${ep.pick}, total, limit, offset}`);
   }
   if (result.todos.length) {
-    L.push(`Marcadas # TODO en el YAML (${result.todos.length}):`);
+    L.push(`Marked # TODO in the YAML (${result.todos.length}):`);
     for (const t of result.todos) L.push(`  ${t.method} ${t.path}: ${t.reason}`);
   }
   if (result.ignored.length) {
-    L.push(`Ignoradas (${result.ignored.length}):`);
+    L.push(`Ignored (${result.ignored.length}):`);
     for (const i of result.ignored) L.push(`  ${i.method} ${i.path}: ${i.reason}`);
   }
   if (result.notes.length) {
-    L.push('Notas:');
+    L.push('Notes:');
     for (const n of result.notes) L.push(`  ${n}`);
   }
-  if (written) L.push(`Escrito: ${written.path} (${written.valid ? 'escenario válido' : 'escenario INVÁLIDO todavía: completa los TODO'})`);
+  if (written) L.push(`Written: ${written.path} (${written.valid ? 'valid scenario' : 'scenario still INVALID: complete the TODOs'})`);
   if (written && !written.valid) for (const i of written.issues) L.push(`  - ${i}`);
   return L.join('\n');
 }
@@ -375,23 +375,23 @@ export function formatImportReport(result, written) {
  * scenario loader so the report says whether `atrezzo world` will accept it.
  */
 export function runImport(specFile, { name = 'api', base, format = 'yaml', outDir, force = false, apiPrefix = null, cwd = process.cwd() } = {}) {
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new AtrezzoError(`--name "${name}": minúsculas, dígitos y guiones`);
-  if (!['yaml', 'json'].includes(format)) throw new AtrezzoError(`--format debe ser yaml o json (es "${format}")`);
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) throw new AtrezzoError(`--name "${name}": lowercase letters, digits and hyphens`);
+  if (!['yaml', 'json'].includes(format)) throw new AtrezzoError(`--format must be yaml or json (got "${format}")`);
   const spec = loadSpec(specFile);
   const relSpec = relative(cwd, specFile);
   const result = inferScenario(spec, { name, base, file: relSpec && !relSpec.startsWith('..') ? relSpec : specFile, apiPrefix });
   const out = join(outDir, `${name}.${format === 'json' ? 'json' : 'yaml'}`);
-  if (existsSync(out) && !force) throw new AtrezzoError(`${relative(cwd, out)} ya existe; usa --force para sobrescribir o --name para otro nombre`);
+  if (existsSync(out) && !force) throw new AtrezzoError(`${relative(cwd, out)} already exists; use --force to overwrite or --name for another name`);
   let content;
   if (format === 'json') {
     const d = result.doc;
     const world = {};
     for (const e of d.entities) {
       const total = e.paginated ? 30 : 10;
-      world[e.name] = { total, ...(e.distField ? { distribucion: evenSplit(total, e.campos[e.distField].map(String)), campo_distribucion: e.distField } : {}), ...(Object.keys(e.campos).length ? { campos: e.campos } : {}) };
+      world[e.name] = { total, ...(e.distField ? { distribution: evenSplit(total, e.fields[e.distField].map(String)), distribution_field: e.distField } : {}), ...(Object.keys(e.fields).length ? { fields: e.fields } : {}) };
     }
     const endpoints = d.endpoints.map((ep) => ({ path: ep.path, entity: ep.entity, ...(ep.filters.length ? { filters: ep.filters } : {}), ...(ep.pagination ? { pagination: ep.pagination } : {}), ...(ep.pick ? { pick: ep.pick } : {}), ...(ep.detail ? {} : { detail: false }) }));
-    content = `${JSON.stringify({ name: d.name, description: `Importado de ${result.title ?? result.file}`, seed: d.seed, world, endpoints, expect: [] }, null, 2)}\n`;
+    content = `${JSON.stringify({ name: d.name, description: `Imported from ${result.title ?? result.file}`, seed: d.seed, world, endpoints, expect: [] }, null, 2)}\n`;
   } else content = scenarioYaml(result);
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, content);

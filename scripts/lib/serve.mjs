@@ -20,7 +20,7 @@ const MIME = {
 
 /** Map of scenario name -> file, by file basename and by `name:` field. */
 export function listScenarios(dir) {
-  if (!existsSync(dir)) throw new AtrezzoError(`No existe el directorio de escenarios ${dir}`);
+  if (!existsSync(dir)) throw new AtrezzoError(`Scenarios directory ${dir} does not exist`);
   const out = {};
   for (const f of readdirSync(dir).sort()) {
     if (!/\.(ya?ml|json)$/.test(f)) continue;
@@ -40,10 +40,10 @@ export function buildState(scenarioFile) {
 function summary(state, available, generatedDir, misses) {
   const d = state.dataset;
   const out = {
-    escenario: d.scenario, seed: d.seed, now: d.now, hash: d.hash,
+    scenario: d.scenario, seed: d.seed, now: d.now, hash: d.hash,
     counts: Object.fromEntries(Object.entries(d.entities).map(([k, v]) => [k, v.length])),
     endpoints: d.endpoints.map((e) => e.path),
-    disponibles: [...new Set(Object.values(available).map((f) => scenarioNameFromFile(f)))],
+    available: [...new Set(Object.values(available).map((f) => scenarioNameFromFile(f)))],
   };
   if (misses) out.misses = misses.summary();
   if (generatedDir) {
@@ -51,9 +51,9 @@ function summary(state, available, generatedDir, misses) {
     if (existsSync(gen)) {
       try {
         const h = JSON.parse(readFileSync(gen, 'utf8')).hash;
-        out.generado = h === d.hash ? 'al día' : `desactualizado (hash ${h}); ejecuta atrezzo world`;
-      } catch { out.generado = 'ilegible'; }
-    } else out.generado = 'no generado (ejecuta atrezzo world para commitear handlers)';
+        out.generated = h === d.hash ? 'up to date' : `stale (hash ${h}); run atrezzo world`;
+      } catch { out.generated = 'unreadable'; }
+    } else out.generated = 'not generated (run atrezzo world to commit the handlers)';
   }
   return out;
 }
@@ -63,7 +63,7 @@ async function readBody(req) {
   for await (const c of req) chunks.push(c);
   const text = Buffer.concat(chunks).toString('utf8');
   if (!text) return {};
-  try { return JSON.parse(text); } catch { throw new AtrezzoError('cuerpo JSON inválido'); }
+  try { return JSON.parse(text); } catch { throw new AtrezzoError('invalid JSON body'); }
 }
 
 /**
@@ -72,24 +72,24 @@ async function readBody(req) {
  *   missesFile: where gaps are recorded (null = memory only) · onMiss: 404 (log) or empty 200 (stub)
  */
 export function createMockServer({ scenariosDir, scenario, staticDir = null, generatedDir = null, missesFile = null, onMiss = 'log', log = () => {} }) {
-  if (!ON_MISS.includes(onMiss)) throw new AtrezzoError(`--on-miss debe ser ${ON_MISS.join(' o ')} (es "${onMiss}")`);
+  if (!ON_MISS.includes(onMiss)) throw new AtrezzoError(`--on-miss must be ${ON_MISS.join(' or ')} (got "${onMiss}")`);
   const misses = createMissStore(missesFile);
   let available = listScenarios(scenariosDir);
   const pick = (name) => {
     available = listScenarios(scenariosDir);
     const names = Object.keys(available);
     if (!name) {
-      if (!names.length) throw new AtrezzoError(`No hay escenarios en ${scenariosDir}`);
+      if (!names.length) throw new AtrezzoError(`No scenarios in ${scenariosDir}`);
       return available[names[0]];
     }
-    if (!available[name]) throw new AtrezzoError(`Escenario "${name}" no encontrado en ${scenariosDir} (hay: ${[...new Set(Object.values(available).map(scenarioNameFromFile))].join(', ') || 'ninguno'})`);
+    if (!available[name]) throw new AtrezzoError(`Scenario "${name}" not found in ${scenariosDir} (available: ${[...new Set(Object.values(available).map(scenarioNameFromFile))].join(', ') || 'none'})`);
     return available[name];
   };
   let state = buildState(pick(scenario));
 
   const send = (res, status, body, headers = {}) => {
     const payload = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
-    res.writeHead(status, { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-total-count, x-atrezzo-escenario, x-atrezzo-ignored, x-atrezzo-stub', 'cache-control': 'no-store', ...headers });
+    res.writeHead(status, { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-total-count, x-atrezzo-scenario, x-atrezzo-ignored, x-atrezzo-stub', 'cache-control': 'no-store', ...headers });
     res.end(res.req.method === 'HEAD' ? undefined : payload);
   };
 
@@ -99,16 +99,16 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
   const miss = (req, res, url, status = 404, extraHeaders = {}) => {
     const stub = onMiss === 'stub';
     const entry = misses.record({ method: req.method, pathname: url.pathname, query: url.searchParams, headers: req.headers, status: stub ? 200 : status });
-    const hueco = missKey(req.method, url.pathname);
-    log(`${req.method} ${url.pathname}${safeSearch(url.searchParams)} → ${stub ? '200 stub' : status} (hueco ${hueco}, ${entry.times}×)`);
+    const gap = missKey(req.method, url.pathname);
+    log(`${req.method} ${url.pathname}${safeSearch(url.searchParams)} → ${stub ? '200 stub' : status} (gap ${gap}, ${entry.times}×)`);
     if (stub) {
       const body = !isMutation(entry.method) && guessShape(entry.path) === 'collection' ? [] : {};
-      return send(res, 200, body, { ...JSON_CT, 'x-atrezzo-stub': 'true', 'x-atrezzo-escenario': state.dataset.scenario });
+      return send(res, 200, body, { ...JSON_CT, 'x-atrezzo-stub': 'true', 'x-atrezzo-scenario': state.dataset.scenario });
     }
-    const why = status === 405 ? ' (atrezzo solo proyecta lecturas)' : '';
+    const why = status === 405 ? ' (atrezzo only projects reads)' : '';
     return send(res, status, {
-      error: `${req.method} ${url.pathname} no está en el contrato del escenario "${state.dataset.scenario}"${why}`,
-      atrezzo: { miss: true, hueco, veces: entry.times, siguiente: 'atrezzo misses', endpoints: state.dataset.endpoints.map((e) => e.path) },
+      error: `${req.method} ${url.pathname} is not in the contract of scenario "${state.dataset.scenario}"${why}`,
+      atrezzo: { miss: true, gap, times: entry.times, next: 'atrezzo misses', endpoints: state.dataset.endpoints.map((e) => e.path) },
     }, { ...JSON_CT, ...extraHeaders });
   };
 
@@ -122,43 +122,43 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
       if (url.pathname === '/__atrezzo/misses') {
         if (req.method === 'GET') {
           const list = misses.list();
-          return send(res, 200, { misses: list, sinResolver: list.filter((m) => !m.resolved).length }, JSON_CT);
+          return send(res, 200, { misses: list, unresolved: list.filter((m) => !m.resolved).length }, JSON_CT);
         }
-        if (req.method === 'DELETE') { misses.clear(); log('misses borrados'); return send(res, 200, { misses: [], sinResolver: 0 }, JSON_CT); }
-        return send(res, 405, { error: 'usa GET o DELETE' }, { ...JSON_CT, allow: 'GET, DELETE' });
+        if (req.method === 'DELETE') { misses.clear(); log('misses cleared'); return send(res, 200, { misses: [], unresolved: 0 }, JSON_CT); }
+        return send(res, 405, { error: 'use GET or DELETE' }, { ...JSON_CT, allow: 'GET, DELETE' });
       }
       if (url.pathname === '/__atrezzo/reload') {
-        if (req.method !== 'POST') return send(res, 405, { error: 'usa POST' }, { ...JSON_CT, allow: 'POST' });
+        if (req.method !== 'POST') return send(res, 405, { error: 'use POST' }, { ...JSON_CT, allow: 'POST' });
         state = buildState(pick(state.dataset.scenario));
         log(`reload → ${state.dataset.scenario} (hash ${state.dataset.hash})`);
         return send(res, 200, summary(state, available, generatedDir, misses), JSON_CT);
       }
       if (url.pathname === '/__atrezzo/reset') {
-        if (req.method !== 'POST') return send(res, 405, { error: 'usa POST' }, { allow: 'POST' });
+        if (req.method !== 'POST') return send(res, 405, { error: 'use POST' }, { allow: 'POST' });
         const body = await readBody(req);
-        const name = body.escenario ?? url.searchParams.get('escenario') ?? state.dataset.scenario;
+        const name = body.scenario ?? url.searchParams.get('scenario') ?? state.dataset.scenario;
         state = buildState(pick(name));
         log(`reset → ${state.dataset.scenario}`);
         return send(res, 200, summary(state, available, generatedDir, misses), JSON_CT);
       }
-      if (url.pathname.startsWith('/__atrezzo/')) return send(res, 404, { error: `control desconocido ${url.pathname} (hay: state, reset, reload, misses)` }, JSON_CT);
+      if (url.pathname.startsWith('/__atrezzo/')) return send(res, 404, { error: `unknown control route ${url.pathname} (available: state, reset, reload, misses)` }, JSON_CT);
       const r = state.engine.handle({ method: req.method, pathname: url.pathname, query: url.searchParams });
       // A matched route with a non-GET method is a write: not in the contract either.
       if (r && r.status === 405) return miss(req, res, url, 405, { allow: 'GET' });
       if (r) {
-        if (misses.resolve(req.method, url.pathname)) log(`hueco ${missKey(req.method, url.pathname)} resuelto`);
+        if (misses.resolve(req.method, url.pathname)) log(`gap ${missKey(req.method, url.pathname)} resolved`);
         log(`${req.method} ${url.pathname}${safeSearch(url.searchParams)} → ${r.status}`);
         return send(res, r.status, r.body, r.headers);
       }
       if (staticDir && (req.method === 'GET' || req.method === 'HEAD')) {
         const root = resolve(staticDir);
         let file = resolve(root, `.${decodeURIComponent(url.pathname)}`);
-        if (file !== root && !file.startsWith(root + sep)) return send(res, 403, { error: 'ruta fuera del directorio estático' });
+        if (file !== root && !file.startsWith(root + sep)) return send(res, 403, { error: 'path outside the static directory' });
         if (existsSync(file) && statSync(file).isDirectory()) file = join(file, 'index.html');
         if (existsSync(file)) return send(res, 200, readFileSync(file), { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
       }
       if ((req.method === 'GET' || req.method === 'HEAD') && ASSET.test(url.pathname)) {
-        return send(res, 404, { error: `${url.pathname} no existe${staticDir ? ' en el directorio estático' : ''}` }, JSON_CT);
+        return send(res, 404, { error: `${url.pathname} does not exist${staticDir ? ' in the static directory' : ''}` }, JSON_CT);
       }
       return miss(req, res, url);
     } catch (e) {
