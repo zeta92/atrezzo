@@ -2,6 +2,10 @@
   <img src="./assets/readme/hero.svg" width="100%" alt="atrezzo: API mocks built from application states, not from isolated endpoints. A seeded world of 40 orders, 3 with an issue, projected onto a screen as 12 rows and 3 issue badges.">
 </p>
 
+<p align="center">
+  <a href="https://github.com/zeta92/atrezzo/actions/workflows/test.yml"><img src="https://github.com/zeta92/atrezzo/actions/workflows/test.yml/badge.svg" alt="tests"></a>
+</p>
+
 **atrezzo** is a Claude Code plugin for API mocks. You describe one application state: a seeded world of entities, such as 3 customers and 40 orders, 3 of them with an issue. Every endpoint is a deterministic projection of that world. A versioned YAML scenario ties the world to the screen and to what the screen must show. `verify` opens the screen, counts the DOM and, when the count is wrong, tells you why.
 
 ```text
