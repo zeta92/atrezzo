@@ -55,7 +55,10 @@ export function doctor(dir) {
   try {
     cfg = loadConfig(dir);
     if (cfg._missing) add('warn', `${CONFIG_FILE} no existe`, 'ejecuta: atrezzo init');
-    else add('ok', `${CONFIG_FILE} válido`);
+    else {
+      add('ok', `${CONFIG_FILE} válido`);
+      add('info', `runtime: ${[].concat(cfg.runtime).join(' + ')}${cfg.workspace ? ` · workspace: ${Object.entries(cfg.workspace).map(([k, v]) => `${k}=${v}`).join(' ')}` : ''}`, 'detalle: atrezzo runtimes');
+    }
   } catch (e) {
     add('error', `${CONFIG_FILE} inválido`, e.message);
   }
@@ -68,7 +71,7 @@ export function doctor(dir) {
     const sdir = join(dir, cfg.scenariosDir);
     if (!existsSync(sdir)) add('error', `falta ${cfg.scenariosDir}`, 'ejecuta: atrezzo init');
     else {
-      const files = readdirSync(sdir).filter((f) => /\.ya?ml$/.test(f)).sort();
+      const files = readdirSync(sdir).filter((f) => /\.(ya?ml|json)$/.test(f)).sort();
       if (!files.length) add('warn', `sin escenarios en ${cfg.scenariosDir}`, 'usa /atrezzo:escena');
       for (const f of files) {
         try {

@@ -18,7 +18,7 @@ export function listScenarios(dir) {
   if (!existsSync(dir)) throw new AtrezzoError(`No existe el directorio de escenarios ${dir}`);
   const out = {};
   for (const f of readdirSync(dir).sort()) {
-    if (!/\.ya?ml$/.test(f)) continue;
+    if (!/\.(ya?ml|json)$/.test(f)) continue;
     const file = join(dir, f);
     out[scenarioNameFromFile(f)] = file;
     try { out[loadScenario(file).name] = file; } catch { /* invalid files surface when selected */ }

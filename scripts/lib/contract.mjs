@@ -76,7 +76,7 @@ export function createEngine(dataset) {
     }
 
     const ignored = [];
-    const reserved = ep.pagination ? [ep.pagination.limit, ep.pagination.offset] : [];
+    const reserved = ep.pagination ? [ep.pagination.limit, ep.pagination.page ?? ep.pagination.offset] : [];
     let result = rows;
     for (const [key, raw] of params) {
       if (reserved.includes(key)) continue;
@@ -99,17 +99,19 @@ export function createEngine(dataset) {
     let offset = 0;
     if (ep.pagination) {
       const l = parseNonNegInt(params.get(ep.pagination.limit), ep.pagination.limit);
-      const o = parseNonNegInt(params.get(ep.pagination.offset), ep.pagination.offset);
+      const pageParam = ep.pagination.page;
+      const o = parseNonNegInt(params.get(pageParam ?? ep.pagination.offset), pageParam ?? ep.pagination.offset);
       if (l.error || o.error) return json(400, { error: l.error || o.error });
+      if (pageParam && o.value === 0) return json(400, { error: `"${pageParam}" empieza en 1; recibido "0"` });
       limit = l.value ?? ep.pagination.defaultLimit;
       if (limit !== null && ep.pagination.maxLimit !== null) limit = Math.min(limit, ep.pagination.maxLimit);
-      offset = o.value ?? 0;
+      offset = pageParam ? ((o.value ?? 1) - 1) * (limit ?? 0) : (o.value ?? 0);
       result = result.slice(offset, limit === null ? undefined : offset + limit);
     }
     const page = result.map((r) => withIncludes(r, ep));
     const headers = { 'x-total-count': String(total) };
     if (ignored.length) headers['x-atrezzo-ignored'] = ignored.join(',');
-    if (ep.shape === 'envelope') return json(200, { data: page, total, limit, offset }, headers);
+    if (ep.shape === 'envelope') return json(200, { [ep.pick ?? 'data']: page, total, limit, offset }, headers);
     return json(200, page, headers);
   }
 

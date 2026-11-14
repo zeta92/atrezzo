@@ -28,6 +28,9 @@ function readYaml(file, what) {
   try { text = readFileSync(file, 'utf8'); } catch (e) {
     throw new AtrezzoError(`No se puede leer el ${what} ${file}: ${e.code === 'ENOENT' ? 'no existe' : e.message}`);
   }
+  if (/\.json$/i.test(file)) {
+    try { return JSON.parse(text); } catch (e) { throw new AtrezzoError(`${file}: JSON inválido: ${e.message}`); }
+  }
   try { return parseYaml(text, file); } catch (e) {
     if (e instanceof YamlError) throw new AtrezzoError(e.message);
     throw e;
@@ -74,7 +77,10 @@ function normalizeExpect(item, field, issues) {
 
 // ---------- world ----------
 
-const ENTITY_KEYS = ['total', 'distribucion', 'campo_distribucion', 'valor', 'ref', 'nulos', 'valores', 'dias'];
+const ENTITY_KEYS = ['total', 'distribucion', 'campo_distribucion', 'valor', 'ref', 'nulos', 'valores', 'dias', 'campos'];
+
+/** Types accepted in `campos` (a list of values = enum). */
+export const FIELD_TYPES = ['texto', 'entero', 'numero', 'booleano', 'fecha', 'email', 'uuid', 'url'];
 
 function normalizeWorld(world, issues) {
   if (!isObj(world)) { issues.add('world', `obligatorio; debe ser un mapa entidad: cantidad (es ${typeName(world)})`); return []; }
@@ -88,7 +94,9 @@ function normalizeWorld(world, issues) {
     if (isInt(raw)) raw = { total: raw };
     if (!isObj(raw)) { issues.add(f, `debe ser un entero o un mapa con "total"; es ${typeName(raw)}`); continue; }
     issues.unknownKeys(raw, ENTITY_KEYS, f);
-    const t = templateFor(name);
+    // With explicit `campos` the entity is fully described by the scenario: the
+    // template's defaults (status, amount, default refs) do not leak into it.
+    const t = raw.campos === undefined ? templateFor(name) : {};
     const spec = { name, count: 0, refs: [], distribution: null, amount: null, nulls: {}, pools: {}, days: 90 };
     if (!isInt(raw.total) || raw.total < 0) issues.add(`${f}.total`, `obligatorio; entero >= 0 (es ${JSON.stringify(raw.total)})`);
     else spec.count = raw.total;
@@ -138,6 +146,23 @@ function normalizeWorld(world, issues) {
       if (!isInt(raw.dias) || raw.dias <= 0) issues.add(`${f}.dias`, 'debe ser un entero > 0');
       else spec.days = raw.dias;
     }
+    if (raw.campos !== undefined) {
+      if (!isObj(raw.campos) || !Object.keys(raw.campos).length) issues.add(`${f}.campos`, 'debe ser un mapa campo: tipo no vacío');
+      else {
+        const fields = {};
+        for (const [k, type] of Object.entries(raw.campos)) {
+          const ff = `${f}.campos.${k}`;
+          if (k === 'id') issues.add(ff, 'el id lo asigna atrezzo (enteros 1..n); quítalo de campos');
+          else if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) issues.add(ff, 'nombre de campo inválido (letras, dígitos, "_")');
+          else if (Array.isArray(type)) {
+            if (!type.length || type.some((v) => v !== null && typeof v === 'object')) issues.add(ff, 'una lista de valores (enum) no vacía y de escalares');
+            else fields[k] = type;
+          } else if (!FIELD_TYPES.includes(type)) issues.add(ff, `tipo desconocido ${JSON.stringify(type)} (tipos: ${FIELD_TYPES.join(', ')} o lista de valores)`);
+          else fields[k] = type;
+        }
+        spec.fields = fields;
+      }
+    }
     if (raw.valores !== undefined) {
       if (!isObj(raw.valores)) issues.add(`${f}.valores`, 'debe ser un mapa campo: [valores]');
       else for (const [k, list] of Object.entries(raw.valores)) {
@@ -171,7 +196,7 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'include', 'shape', 'detail'];
+const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'include', 'shape', 'detail', 'pick'];
 
 function parseSort(raw, fields, f, issues) {
   if (raw === undefined) return [{ field: 'id', dir: 'asc' }];
@@ -217,7 +242,7 @@ function normalizeEndpoints(endpoints, world, issues) {
     if (ep.pagination !== undefined && ep.pagination !== null) {
       if (!isObj(ep.pagination)) issues.add(`${f}.pagination`, 'debe ser un mapa { param_limit, param_offset, default_limit, max_limit }');
       else {
-        issues.unknownKeys(ep.pagination, ['param_limit', 'param_offset', 'default_limit', 'max_limit'], `${f}.pagination`);
+        issues.unknownKeys(ep.pagination, ['param_limit', 'param_offset', 'param_page', 'default_limit', 'max_limit'], `${f}.pagination`);
         pagination = {
           limit: String(ep.pagination.param_limit ?? 'limit'),
           offset: String(ep.pagination.param_offset ?? 'offset'),
@@ -230,6 +255,12 @@ function normalizeEndpoints(endpoints, world, issues) {
           if (!isInt(v) || v <= 0) issues.add(`${f}.pagination.${k}`, 'debe ser un entero > 0');
           else pagination[dest] = v;
         }
+        if (ep.pagination.param_page !== undefined) {
+          // Page-number pagination: offset = (page - 1) * limit. Needs a page size.
+          if (ep.pagination.param_offset !== undefined) issues.add(`${f}.pagination`, 'usa "param_offset" o "param_page", no ambos');
+          if (ep.pagination.default_limit === undefined) issues.add(`${f}.pagination.default_limit`, 'obligatorio con "param_page" (tamaño de página por defecto)');
+          pagination.page = String(ep.pagination.param_page);
+        }
       }
     }
     const include = [];
@@ -240,13 +271,21 @@ function normalizeEndpoints(endpoints, world, issues) {
         else include.push(inc);
       });
     }
-    const shape = ep.shape ?? 'array';
+    let shape = ep.shape ?? 'array';
     if (!['array', 'envelope'].includes(shape)) issues.add(`${f}.shape`, 'debe ser "array" o "envelope"');
+    let pick = null;
+    if (ep.pick !== undefined) {
+      if (typeof ep.pick !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ep.pick)) issues.add(`${f}.pick`, 'clave del envoltorio donde va la lista (p. ej. data, items); una sola clave');
+      else if (ep.shape === 'array') issues.add(`${f}.pick`, 'incompatible con shape: array (pick implica envoltorio)');
+      else { pick = ep.pick; shape = 'envelope'; }
+    }
     if (ep.detail !== undefined && typeof ep.detail !== 'boolean') issues.add(`${f}.detail`, 'debe ser true o false');
-    out.push({
+    const norm = {
       path, entity: spec.name, filters, pagination,
       sort: parseSort(ep.sort, fields, f, issues), include, shape, detail: ep.detail ?? true,
-    });
+    };
+    if (pick) norm.pick = pick; // only when declared: keeps 0.1 scenario hashes stable
+    out.push(norm);
   });
   return out;
 }
@@ -376,5 +415,5 @@ export function loadFlow(file, { env = process.env } = {}) {
 }
 
 export function scenarioNameFromFile(file) {
-  return basename(file).replace(/\.ya?ml$/, '');
+  return basename(file).replace(/\.(ya?ml|json)$/, '');
 }

@@ -11,9 +11,19 @@ export const DEFAULT_CONFIG = {
   scenariosDir: 'atrezzo/escenarios',
   handlersDir: 'atrezzo/handlers',
   generatedDir: 'atrezzo/.generated',
+  // Config files from 0.1 have no "runtime": they got MSW handlers on every
+  // `world`, so a missing field keeps meaning "msw". `init` always writes it.
+  runtime: 'msw',
   mock: { baseUrl: 'http://127.0.0.1:4010', port: 4010, static: null },
   verify: { driver: 'http' },
 };
+
+export const RUNTIMES = ['builtin', 'msw', 'supabase', 'prism', 'wiremock'];
+
+/** config.runtime as a list ("msw" | ["msw", "supabase"]). */
+export function runtimeList(cfg) {
+  return Array.isArray(cfg.runtime) ? cfg.runtime : [cfg.runtime];
+}
 
 export function validateConfig(cfg) {
   const issues = [];
@@ -29,6 +39,19 @@ export function validateConfig(cfg) {
     try { new URL(cfg.mock.baseUrl); } catch { issues.push('campo "mock.baseUrl": URL inválida'); }
   }
   if (!isObj(cfg.verify) || !['http', 'playwright'].includes(cfg.verify.driver)) issues.push('campo "verify.driver": "http" o "playwright"');
+  const rts = Array.isArray(cfg.runtime) ? cfg.runtime : [cfg.runtime];
+  if (!rts.length || rts.some((r) => !RUNTIMES.includes(r))) issues.push(`campo "runtime": uno de ${RUNTIMES.join(', ')} (o una lista); es ${JSON.stringify(cfg.runtime)}`);
+  if (cfg.workspace !== undefined && cfg.workspace !== null) {
+    if (!isObj(cfg.workspace)) issues.push('campo "workspace": mapa { front, backend, contract }');
+    else {
+      for (const k of Object.keys(cfg.workspace)) if (!['front', 'backend', 'contract'].includes(k)) issues.push(`campo "workspace.${k}": desconocido (permitidos: front, backend, contract)`);
+      for (const k of ['front', 'backend', 'contract']) {
+        const v = cfg.workspace[k];
+        if (v !== undefined && v !== null && (typeof v !== 'string' || !v)) issues.push(`campo "workspace.${k}": ruta relativa a la config o null`);
+      }
+    }
+  }
+  if (cfg.mock && cfg.mock.apiPrefix !== undefined && cfg.mock.apiPrefix !== null && (typeof cfg.mock.apiPrefix !== 'string' || !cfg.mock.apiPrefix.startsWith('/'))) issues.push('campo "mock.apiPrefix": ruta que empieza por "/" o null');
   return issues;
 }
 

@@ -59,10 +59,26 @@ expect:
 | `path` | lista de textos | opcional; pantallas en orden |
 | `expect` | lista | opcional |
 
-Cualquier otro campo es un error (`campo desconocido`).
+Cualquier otro campo es un error (`campo desconocido`). Un escenario también puede ser `.json` con la misma estructura (`atrezzo import --format json`).
 
 ### Entidades (`world.<nombre>`)
-Entero (= `total`) o mapa con: `total` (obligatorio), `distribucion`, `campo_distribucion` (por defecto `estado`), `valor`, `ref`, `nulos`, `valores`, `dias`.
+Entero (= `total`) o mapa con: `total` (obligatorio), `distribucion`, `campo_distribucion` (por defecto `estado`), `valor`, `ref`, `nulos`, `valores`, `dias`, `campos`.
+
+#### `campos`: campos con tipo (los escribe `atrezzo import`)
+
+```yaml
+world:
+  pets:
+    total: 30
+    distribucion: { available: 10, pending: 10, sold: 10 }
+    campo_distribucion: status
+    campos:
+      name: texto
+      status: [available, pending, sold]   # lista = enum
+      createdAt: fecha
+```
+
+Tipos: `texto`, `entero`, `numero`, `booleano`, `fecha` (ISO, dentro de `dias` antes de `now`), `email`, `uuid`, `url`, o una lista de valores. Con `campos`, la entidad tiene **exactamente** `id` + fks de sus `ref` + `campos` (+ el campo de `distribucion` y los de `valor` si los declaras): la plantilla (`clientes`, `pedidos`…) no añade los suyos ni sus valores por defecto. `id` no se puede declarar (siempre enteros 1..n). Los valores salen de un flujo propio del PRNG (`fields:<entidad>`): añadir `campos` a una entidad no altera las demás.
 
 Plantillas conocidas y sus campos:
 
@@ -82,7 +98,10 @@ Garantías del generador:
 - Cada entidad usa su propio flujo del PRNG: añadir una entidad no cambia las demás.
 
 ### Endpoints
-`path` (empieza por `/`, sin query ni `:param`), `entity` (obligatoria, declarada en `world`), `filters` (campos existentes), `pagination`, `sort`, `include` (solo entidades referenciadas), `shape`, `detail`.
+`path` (empieza por `/`, sin query ni `:param`), `entity` (obligatoria, declarada en `world`), `filters` (campos existentes), `pagination`, `sort`, `include` (solo entidades referenciadas), `shape`, `detail`, `pick`.
+
+- `pagination` por desplazamiento: `{ param_limit, param_offset, default_limit, max_limit }`. Por página: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` obligatorio; `offset = (page - 1) × limit`; `page=0` ⇒ 400; no se combina con `param_offset`).
+- `pick: items` ⇒ envoltorio con esa clave: `{ items: [...], total, limit, offset }` (implica `shape: envelope`; `shape: envelope` sin `pick` usa `data`). Una sola clave, sin rutas anidadas.
 
 Semántica de la proyección (idéntica en `serve` y en los handlers MSW, mismo fichero `runtime.mjs`):
 1. Filtros por igualdad; coma = cualquiera de los valores; `null` filtra nulos.

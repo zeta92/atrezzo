@@ -10,14 +10,20 @@ export function datasetJson(dataset) {
   return `${JSON.stringify(dataset, null, 2)}\n`;
 }
 
-export function handlersSource(dataset) {
+/**
+ * @param {object} dataset
+ * @param {{ importBase?: string }} [opts] relative path from the handlers file to the
+ *   folder holding <escenario>.json and runtime.mjs (default './': same folder).
+ */
+export function handlersSource(dataset, { importBase = './' } = {}) {
   const name = dataset.scenario;
+  const base = importBase.endsWith('/') ? importBase : `${importBase}/`;
   const lines = [
     '// Generado por atrezzo. No editar a mano: cambia el escenario y ejecuta `atrezzo world`.',
     `// Escenario: ${name} · semilla ${dataset.seed} · now ${dataset.now} · hash ${dataset.hash}`,
     "import { http, HttpResponse } from 'msw';",
-    `import dataset from './${name}.json' with { type: 'json' };`,
-    "import { createEngine } from './runtime.mjs';",
+    `import dataset from '${base}${name}.json' with { type: 'json' };`,
+    `import { createEngine } from '${base}runtime.mjs';`,
     '',
     'const engine = createEngine(dataset);',
     '',
@@ -44,16 +50,25 @@ export function handlersSource(dataset) {
   return lines.join('\n');
 }
 
-/** Write <dir>/<name>.json, <dir>/<name>.handlers.mjs and <dir>/runtime.mjs. */
-export function writeGenerated(dataset, dir) {
+export function engineSource() {
+  return readFileSync(ENGINE_FILE, 'utf8');
+}
+
+/**
+ * Write the source of truth: <dir>/<name>.json and <dir>/runtime.mjs.
+ * With `{ handlers: true }` also <dir>/<name>.handlers.mjs (0.1 behaviour).
+ */
+export function writeGenerated(dataset, dir, { handlers = true } = {}) {
   mkdirSync(dir, { recursive: true });
   const files = {
     json: join(dir, `${dataset.scenario}.json`),
-    handlers: join(dir, `${dataset.scenario}.handlers.mjs`),
     runtime: join(dir, 'runtime.mjs'),
   };
   writeFileSync(files.json, datasetJson(dataset));
-  writeFileSync(files.handlers, handlersSource(dataset));
-  writeFileSync(files.runtime, readFileSync(ENGINE_FILE, 'utf8'));
+  writeFileSync(files.runtime, engineSource());
+  if (handlers) {
+    files.handlers = join(dir, `${dataset.scenario}.handlers.mjs`);
+    writeFileSync(files.handlers, handlersSource(dataset));
+  }
   return files;
 }

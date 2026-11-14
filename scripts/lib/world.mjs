@@ -81,11 +81,17 @@ export function entityFields(spec) {
   const t = templateFor(spec.name);
   const fks = spec.refs.map((r) => templateFor(r).fk);
   const out = [];
-  for (const f of t.fields) {
-    if (f === '{fk}') out.push(...fks);
-    else out.push(f);
+  if (spec.fields) {
+    // Explicit `campos` (e.g. from `atrezzo import`): the field list is exactly
+    // id + fks + campos; the template's own fields are not added.
+    out.push('id', ...fks.filter((f) => !(f in spec.fields)), ...Object.keys(spec.fields));
+  } else {
+    for (const f of t.fields) {
+      if (f === '{fk}') out.push(...fks);
+      else out.push(f);
+    }
+    if (!t.fields.includes('{fk}')) out.push(...fks.filter((f) => !out.includes(f)));
   }
-  if (!t.fields.includes('{fk}')) out.push(...fks.filter((f) => !out.includes(f)));
   if (spec.distribution && !out.includes(spec.distribution.field)) out.push(spec.distribution.field);
   if (spec.amount) {
     const af = t.amountField || 'importe';
@@ -97,6 +103,29 @@ export function entityFields(spec) {
 }
 
 const DAY_MS = 86_400_000;
+
+const hex = (rng, n) => Array.from({ length: n }, () => rng.int(0, 15).toString(16)).join('');
+
+/** Value for a typed `campos` field. Uses its own PRNG stream (fields:<entity>). */
+function typedValue(type, field, rng, id, entity, nowMs, days) {
+  if (Array.isArray(type)) return rng.pick(type);
+  const lower = field.toLowerCase();
+  switch (type) {
+    case 'entero': return /price|precio|amount|importe|total/.test(lower) ? rng.int(1, 999) : rng.int(0, 1000);
+    case 'numero': return rng.int(0, 100_000) / 100;
+    case 'booleano': return rng.next() < 0.5;
+    case 'fecha': return new Date(nowMs - rng.int(0, days * 1440) * 60_000).toISOString();
+    case 'email': return `${slug(person(rng))}.${id}@example.com`;
+    case 'uuid': return `${hex(rng, 8)}-${hex(rng, 4)}-4${hex(rng, 3)}-${'89ab'[rng.int(0, 3)]}${hex(rng, 3)}-${hex(rng, 12)}`;
+    case 'url': return `https://example.com/${entity}/${id}`;
+    default: // texto
+      if (/(^|_)(first|last)?_?name$|nombre|^name$|fullname|username/i.test(field)) return /user/i.test(field) ? `${slug(person(rng))}${id}` : person(rng);
+      if (/compan|empresa|org/.test(lower)) return company(rng);
+      if (/city|ciudad/.test(lower)) return rng.pick(CITIES);
+      if (/title|titulo|product/.test(lower)) return `${rng.pick(PRODUCTS)} ${rng.int(1, 99)}`;
+      return `${field} ${id}`;
+  }
+}
 
 function generateEntity(spec, scenario, counts, built) {
   const t = templateFor(spec.name);
@@ -127,10 +156,13 @@ function generateEntity(spec, scenario, counts, built) {
 
   const amount = spec.amount;
   const amountField = t.amountField || 'importe';
+  const frng = spec.fields ? createRng(scenario.seed, `fields:${spec.name}`) : null;
   const rows = [];
   for (let i = 0; i < n; i++) {
     const id = i + 1;
     const base = t.make(rng, id);
+    const typed = {};
+    if (frng) for (const [f, type] of Object.entries(spec.fields)) typed[f] = typedValue(type, f, frng, id, spec.name, nowMs, spec.days);
     const row = {};
     for (const f of fields) {
       if (f === 'id') row.id = id;
@@ -148,6 +180,7 @@ function generateEntity(spec, scenario, counts, built) {
         row[f] = new Date(nowMs - rng.int(0, spanMin) * 60_000).toISOString();
       }
       else if (spec.pools && f in spec.pools) row[f] = rng.pick(spec.pools[f]);
+      else if (f in typed) row[f] = typed[f];
       else row[f] = f in base ? base[f] : null;
     }
     rows.push(row);

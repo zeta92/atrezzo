@@ -43,7 +43,7 @@ test('int, shuffle y sample respetan rangos y no mutan la entrada', () => {
 
 test('la generación no usa Math.random() ni Date.now()', () => {
   const dir = join(ROOT, 'scripts', 'lib');
-  for (const f of ['prng.mjs', 'world.mjs', 'contract.mjs', 'scenario.mjs', 'codegen.mjs']) {
+  for (const f of ['prng.mjs', 'world.mjs', 'contract.mjs', 'scenario.mjs', 'codegen.mjs', 'yaml-emit.mjs', 'openapi.mjs', ...['common', 'builtin', 'msw', 'supabase', 'prism', 'wiremock', 'index'].map((r) => `runtimes/${r}.mjs`)]) {
     const src = readFileSync(join(dir, f), 'utf8').replace(/\/\/.*$/gm, '');
     assert.ok(!/Math\.random\s*\(/.test(src), `${f} usa Math.random()`);
     assert.ok(!/Date\.now\s*\(/.test(src), `${f} usa Date.now()`);

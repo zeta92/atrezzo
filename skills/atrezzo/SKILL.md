@@ -25,7 +25,7 @@ Si no hay config, empieza siempre por `/atrezzo:init`. Si no hay contrato, `/atr
 
 1. **Mundo** — entidades, conteos, distribuciones y semilla (`world:` en el escenario).
 2. **Escenario** — endpoints como proyecciones + `path` de pantallas + `expect`. Ver `${CLAUDE_PLUGIN_ROOT}/references/escenario.md`.
-3. **Generar** — `atrezzo world <escenario.yaml>` escribe JSON + handlers MSW deterministas.
+3. **Generar** — `atrezzo world <escenario.yaml>` escribe JSON + `runtime.mjs` y lo del runtime de la config (handlers MSW, seed.sql de Supabase, OpenAPI para Prism o mappings de WireMock); `atrezzo runtimes` dice cuál y por qué.
 4. **Servir** — `atrezzo serve --escenario <nombre>` (HTTP real; `POST /__atrezzo/reset` cambia de escenario).
 5. **Verificar** — `atrezzo verify <flujo.yaml>`; si falla, `--diagnose` y diagnostica antes de tocar nada.
 

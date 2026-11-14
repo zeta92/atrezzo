@@ -7,9 +7,24 @@ description: Captura el contrato de la API (OpenAPI, tipos, HAR) para atrezzo. �
 
 Objetivo: endpoints, parámetros (filtros, paginación, orden) y campos que **el cliente lee**, con su fuente.
 
+## Si hay OpenAPI: empieza por `atrezzo import`
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs import <openapi.yaml|json> --name <escenario> [--base /api]
+# sin argumento usa workspace.contract de atrezzo.config.json
+```
+
+- Escribe `atrezzo/escenarios/<escenario>.yaml` con `world` (entidades con `campos` tipados, conteos por defecto) y `endpoints` (path con la base de `servers[0].url`, filtros = enums de query, paginación `limit/offset` o `page`, `pick` si la respuesta es `{data: […]}`/`{items: […]}`) y `expect: []`.
+- **Lee el informe entero y llévalo al usuario**: endpoints inferidos, envoltorios, `# TODO` (GET que no devuelven una colección), rutas ignoradas con su motivo (mutaciones, sin esquema, binarias, anidadas) y notas (ids no enteros, base del spec distinta del prefijo del front → `--base`).
+- Exit 3 = el escenario aún no es válido (p. ej. ninguna colección inferible): completa los `# TODO` a mano antes de `world`.
+- No edites los datos: ajusta conteos, distribuciones y `expect` (skill `/atrezzo:escena`) y regenera con `world`.
+- Después, contrasta con el código del cliente (nivel 3 abajo): qué campos lee de verdad y qué filtros manda. El spec dice lo que el servidor promete, no lo que la pantalla usa.
+
+Si no hay OpenAPI, sigue el orden de fuentes.
+
 ## Orden de fuentes (no te saltes niveles)
 
-1. **Contrato declarado**: OpenAPI/Swagger, tipos generados (`supabase gen types`, GraphQL schema, zod). Es lo que el servidor *promete*.
+1. **Contrato declarado**: OpenAPI/Swagger (→ `atrezzo import`), tipos generados (`supabase gen types`, GraphQL schema, zod). Es lo que el servidor *promete*.
 2. **Tráfico real**: HAR o grabación. Es lo que el servidor *hace*.
 3. **Lectura de código** del cliente: último recurso; dice lo que el cliente *asume*.
 

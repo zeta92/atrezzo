@@ -40,16 +40,94 @@ Requisitos: Node ≥ 22. Sin dependencias en tiempo de ejecución (parser YAML y
 ## CLI
 
 ```
-node scripts/cli.mjs init [--dir .] [--install] [--force]
+node scripts/cli.mjs init [--dir .] [--runtime auto|builtin|msw|supabase|prism|wiremock] [--front <ruta> --backend <ruta>] [--contract <spec>] [--install] [--force]
+node scripts/cli.mjs runtimes
+node scripts/cli.mjs import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
 node scripts/cli.mjs world <escenario.yaml> [--out dir]
-node scripts/cli.mjs serve [--escenario demo] [--port 4010] [--static dir]
+node scripts/cli.mjs serve [--escenario demo] [--port 4010] [--static dir] [--runtime builtin]
 node scripts/cli.mjs verify <flujo.yaml> [--url …] [--driver http|playwright] [--diagnose] [--no-reset] [--json]
 node scripts/cli.mjs doctor
 ```
 
+- `init` detecta monorepo (pnpm/npm/yarn workspaces, turbo, nx, lerna) o carpetas `client/`+`server/`, el runtime y el `baseUrl` que consume el front, e **imprime qué encontró, por qué y qué alternativas había**. Si hay dos fronts o ninguno, no adivina: tabla de candidatos y exit 2.
+- `world` escribe siempre `<escenario>.json` + `runtime.mjs` (fuente de verdad) y después lo del runtime: handlers MSW, `seed.sql`/`reset.sh`, OpenAPI para Prism o mappings de WireMock. Ver [`references/runtimes.md`](references/runtimes.md).
+- `import` infiere un escenario desde un OpenAPI (entidades, campos con tipo, envoltorios `{data: […]}` → `pick`, filtros por enum, paginación) con un informe de lo que no pudo inferir.
+
 Códigos de salida: `0` OK · `1` aserción fallida · `2` no verificable (sin mock, sin playwright o aserción sin datos; **nunca** se reporta como OK) · `3` entrada inválida.
 
 `serve` expone `GET /api/<recurso>?limit=&offset=&<filtros>`, el detalle `/<recurso>/:id`, `POST /__atrezzo/reset {"escenario":"x"}` y `GET /__atrezzo/state`. Usa el mismo motor (`scripts/lib/contract.mjs`) que los handlers MSW: `world` lo copia byte a byte como `runtime.mjs`.
+
+## Proyectos sin Supabase y proyectos con Supabase
+
+El escenario es el mismo en los dos casos; cambia **dónde se sirve**.
+
+### Sin Supabase: front Vite + API propia con OpenAPI
+
+```
+tienda/
+  package.json          react, vite, msw (dev)
+  vite.config.ts        server.proxy['/api'] → { target: 'http://localhost:3000' }
+  api/openapi.yaml      (el de tests/fixtures/petstore.yaml: GET/POST /pets, /pets/{petId}, /owners → {data: [...]}, /health, foto PNG)
+```
+
+```bash
+cd tienda
+atrezzo init
+#   Estructura:
+#     proyecto simple (sin monorepo ni carpetas front/back): todo vive en la raíz
+#     contrato encontrado: api/openapi.yaml (úsalo con: atrezzo import)
+#     baseUrl del mock: http://localhost:3000 (proxy de Vite "/api" → http://localhost:3000 en vite.config.ts)
+#   Runtime: msw — puntuación 3/3: msw en package.json
+#     → msw       3/3  msw en package.json
+#       builtin   1/3  fallback universal: HTTP real sin dependencias, vale para cualquier backend o lenguaje
+#       prism     1/3  contrato api/openapi.yaml (señal débil: mejor `atrezzo import api/openapi.yaml`; prism no es necesario para usarlo)
+atrezzo import api/openapi.yaml --name tienda
+#   Endpoints inferidos (2):
+#     GET /api/pets → pets · array            filtros: status · paginación: limit/offset · detalle: /api/pets/:id
+#     GET /api/owners → owners · envoltorio {data: [...]} → pick: data · paginación: page/per_page
+#   Ignoradas (3): POST /pets (mutación) · GET /health (200 sin esquema) · GET /pets/{petId}/photo (respuesta binaria)
+#   Escrito: atrezzo/escenarios/tienda.yaml (escenario válido)
+# ajusta conteos/distribución/expect (skill /atrezzo:escena) y genera:
+atrezzo world atrezzo/escenarios/tienda.yaml
+#   atrezzo/.generated/tienda.json · runtime.mjs · tienda.handlers.mjs
+```
+
+En `src/main.tsx` (solo desarrollo): `setupWorker(...handlers).start({ onUnhandledRequest: 'bypass' })` con `handlers` de `atrezzo/.generated/tienda.handlers.mjs`. Para E2E o si la API es de otro lenguaje: `atrezzo serve --escenario tienda --port 3000` (el proxy de Vite apunta ahí) y `atrezzo verify flujo.yaml`. Si el equipo ya tiene WireMock o Prism, `atrezzo init --force --runtime wiremock` (o `prism`) y `world` emite sus ficheros; lo que no hacen está en `references/runtimes.md`.
+
+### Con Supabase: Next + supabase-js + Supabase CLI
+
+```
+app/
+  package.json          next, @supabase/supabase-js
+  supabase/config.toml  (supabase init)
+  .env.local            NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321
+```
+
+Escenario con los nombres de tabla que consulta la app (`supabase.from('pedidos')`):
+
+```yaml
+name: pedidos-incidencias
+seed: 7712
+world:
+  clientes: 3
+  pedidos: { total: 40, distribucion: { pagado: 34, pendiente: 3, incidencia: 3 } }
+endpoints:
+  - path: /rest/v1/pedidos
+    entity: pedidos
+    filters: [estado]
+```
+
+```bash
+atrezzo init
+#   Runtime: supabase — puntuación 3/3: supabase/config.toml (proyecto Supabase CLI); @supabase/supabase-js en package.json; NEXT_PUBLIC_SUPABASE_URL en .env.local
+atrezzo world atrezzo/escenarios/pedidos-incidencias.yaml
+#   supabase/atrezzo/pedidos-incidencias/{schema.sql, seed.sql, reset.sh, README.md}
+supabase start
+DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres supabase/atrezzo/pedidos-incidencias/reset.sh
+#   atrezzo: escenario pedidos-incidencias restaurado (43 filas)
+```
+
+La app habla con su Supabase local de siempre; `pedidos` tiene exactamente 40 filas, 3 con `estado = 'incidencia'`, con los mismos ids que verías en `serve`. `reset.sh` es idempotente (truncate + inserts) y se niega a tocar una `DATABASE_URL` no local. Lo que **no** hace: simular RLS o auth, ni usar el motor de atrezzo (filtros y paginación son de PostgREST). Para tests de componentes sin base de datos, añade MSW con una fachada (`--runtime supabase,msw`; ver `references/runtimes.md`).
 
 ## Estructura
 
@@ -57,10 +135,12 @@ Códigos de salida: `0` OK · `1` aserción fallida · `2` no verificable (sin m
 .claude-plugin/plugin.json   manifiesto
 skills/                      router + 5 skills
 scripts/cli.mjs              CLI (bin: atrezzo)
-scripts/lib/                 prng, yaml, world, scenario, contract, codegen, serve, verify, doctor, init, config
-references/                  escenario.md · suposiciones.md · runtimes.md
+scripts/lib/                 prng, yaml, yaml-emit, world, scenario, contract, codegen, serve, verify, doctor, init, config,
+                             project (monorepo/front/back), openapi (import), flows
+scripts/lib/runtimes/        builtin, msw, supabase, prism, wiremock + registro (index.mjs)
+references/                  escenario.md · suposiciones.md · runtimes.md (runtimes, monorepo)
 examples/tienda/             ejemplo ejecutable end-to-end
-tests/                       node --test tests/
+tests/                       node --test tests/ (fixtures/petstore.yaml para import)
 ```
 
 ## Ejemplo
@@ -72,3 +152,5 @@ Ver [`examples/tienda`](examples/tienda/README.md): `world` → `serve` → `ver
 - YAML: subconjunto (sin anclas/alias/multi-documento); el parser lo rechaza con línea y motivo.
 - El driver `playwright` está probado con un `page` falso y con Chromium real (`tests/headers.test.mjs`, se saltan si no hay `playwright-core` + Chromium). Para apps con sesión, el flujo puede declarar `headers` (p. ej. `Cookie: "${APP_COOKIE}"`); ver `references/escenario.md`.
 - Errores HTTP, latencias y escrituras no son parte del mundo: se inyectan en el runtime (ver `references/runtimes.md`).
+- Runtimes: solo `builtin` y `msw` ejecutan la proyección. **Prism** devuelve examples (no filtra ni pagina); **WireMock** sirve combinaciones pregeneradas y responde 501 al resto; **Supabase** carga el mundo en Postgres y la forma de las respuestas es la de PostgREST. Detalle en `references/runtimes.md`.
+- `import`: solo GET de colecciones (array de objetos o envoltorio `data`/`items`/`results`/`records`/`content`); campos anidados se omiten (lo dice el informe); ids siempre enteros 1..n; `$ref` externos no; specs YAML con anclas o colecciones `{…}` multilínea → conviértelos a JSON.
