@@ -104,9 +104,10 @@ export function openapiDocument(dataset, config) {
     const list = { type: 'array', items: item };
     const schema = ep.shape === 'envelope'
       ? { type: 'object', properties: { [ep.pick ?? 'data']: list, total: { type: 'integer' }, limit: { type: ['integer', 'null'] }, offset: { type: 'integer' } }, required: [ep.pick ?? 'data', 'total', 'limit', 'offset'] }
-      : list;
+      : ep.shape === 'object' ? item : list;
     const def = engine.handle({ pathname: ep.path, query: {} });
-    const examples = { scenario: { summary: `Projection of scenario ${dataset.scenario} without a query`, value: def.body } };
+    // An empty `shape: object` singleton answers 404: it has no 200 example to give.
+    const examples = def.status === 200 ? { scenario: { summary: `Projection of scenario ${dataset.scenario} without a query`, value: def.body } } : {};
     // One example per value of the distribution field, selectable with `Prefer: example=<key>`.
     const distField = ep.filters.find((f) => columnInfo(rows, f).distinct.length <= 10 && f !== 'id');
     if (distField) {
@@ -116,13 +117,18 @@ export function openapiDocument(dataset, config) {
       }
     }
     const op = slug(ep.path).replace(/[.-]/g, '_');
-    const responses = {
-      200: {
-        description: `List of ${ep.entity}`,
-        headers: { 'X-Total-Count': { description: 'Total after filters, before pagination', schema: { type: 'integer', example: Number(def.headers['x-total-count']) } } },
-        content: { 'application/json': { schema, examples } },
-      },
-    };
+    const responses = ep.shape === 'object'
+      ? {
+        200: { description: `The first ${dataset.schema[ep.entity].singular} after filters and sort (shape: object)`, content: { 'application/json': { schema, examples } } },
+        404: { description: 'The entity has no rows, or no row matches the filters', content: { 'application/json': { schema: errorSchema } } },
+      }
+      : {
+        200: {
+          description: `List of ${ep.entity}`,
+          headers: { 'X-Total-Count': { description: 'Total after filters, before pagination', schema: { type: 'integer', example: Number(def.headers['x-total-count']) } } },
+          content: { 'application/json': { schema, examples } },
+        },
+      };
     if (ep.pagination) responses[400] = { description: 'Non-integer pagination parameter', content: { 'application/json': { schema: errorSchema } } };
     paths[ep.path] = { get: { operationId: `list_${op}`, summary: `${ep.entity} (atrezzo projection)`, parameters, responses } };
     if (ep.detail) {

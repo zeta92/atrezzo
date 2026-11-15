@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileS
 import { resolve, join, relative, dirname } from 'node:path';
 import { AtrezzoError, EXIT } from './lib/errors.mjs';
 import { loadConfig, runtimeList } from './lib/config.mjs';
-import { loadScenario, loadFlow } from './lib/scenario.mjs';
+import { loadScenario, loadFlow, MAX_LATENCY } from './lib/scenario.mjs';
 import { generateWorld, checkIntegrity } from './lib/world.mjs';
 import { writeGenerated } from './lib/codegen.mjs';
 import { createMockServer } from './lib/serve.mjs';
@@ -33,7 +33,7 @@ Commands:
       then whatever each configured runtime needs: msw handlers · supabase seed.sql/reset.sh ·
       prism <scenario>.openapi.yaml · wiremock mappings/ + __files/ · builtin nothing else.
   serve [--scenario <name>] [--port 4010] [--host 127.0.0.1] [--static <dir>] [--scenarios <dir>] [--runtime builtin]
-        [--on-miss log|stub]
+        [--on-miss log|stub] [--latency <ms>]
       HTTP server with the projections (builtin/msw runtimes). With another runtime it prints how to
       start it and exits with 2. Control: POST /__atrezzo/reset {"scenario":"x"}, POST /__atrezzo/reload,
       GET /__atrezzo/state, GET|DELETE /__atrezzo/misses. Anything outside the contract is recorded
@@ -41,6 +41,9 @@ Commands:
       --static <dir> serves the built front end; a GET that asks for HTML (a browser navigation to a
       client-side route such as /copilot) and matches no file or endpoint gets <dir>/index.html (SPA
       fallback). fetch/JSON requests, unknown API paths, missing assets and writes keep the 404.
+      --latency <ms> (default 0) delays every contract response, like a real backend (100-300 ms) would;
+      an endpoint's \`latency:\` in the scenario wins over it. Static files, /__atrezzo/* and gaps answer
+      immediately. The banner prints the effective latency.
   misses [--json] [--clear] [--dir .]
       Gaps seen by serve (routes the app requested that no scenario declares), with counts, state and
       what to do: import if the contract has the route, or the /atrezzo:gap skill.
@@ -201,10 +204,12 @@ async function cmdServe({ flags }) {
   const staticDir = flags.static ?? (cfg.mock.static ? join(cfg._dir, cfg.mock.static) : null);
   const port = Number(flags.port ?? cfg.mock.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new AtrezzoError(`invalid --port: ${flags.port}`);
+  const latency = flags.latency === undefined ? 0 : /^\d+$/.test(String(flags.latency)) ? Number(flags.latency) : Number.NaN;
+  if (!Number.isInteger(latency) || latency > MAX_LATENCY) throw new AtrezzoError(`invalid --latency: ${flags.latency} (milliseconds, an integer between 0 and ${MAX_LATENCY})`);
   const mock = createMockServer({
     scenariosDir, scenario: flags.scenario, staticDir: staticDir && resolve(staticDir),
     generatedDir: join(cfg._dir, cfg.generatedDir), log: (s) => out(`  ${s}`),
-    missesFile: missesFile(cfg), onMiss: flags['on-miss'] ?? 'log',
+    missesFile: missesFile(cfg), onMiss: flags['on-miss'] ?? 'log', latency,
   });
   let addr;
   try { addr = await mock.listen(port, flags.host ?? '127.0.0.1'); } catch (e) {
@@ -212,7 +217,9 @@ async function cmdServe({ flags }) {
   }
   const d = mock.state.dataset;
   out(`atrezzo serve · scenario "${d.scenario}" (seed ${d.seed}) · http://${addr.address}:${addr.port}`);
-  for (const ep of d.endpoints) out(`  GET ${ep.path}`);
+  for (const ep of d.endpoints) out(`  GET ${ep.path}${ep.latency !== undefined && ep.latency !== latency ? `  (latency ${ep.latency} ms)` : ''}`);
+  const overrides = d.endpoints.filter((e) => e.latency !== undefined && e.latency !== latency).length;
+  out(`  latency: ${latency} ms on contract responses${overrides ? ` (${overrides} ${overrides === 1 ? 'endpoint overrides' : 'endpoints override'} it in the scenario)` : ''}; static files and /__atrezzo/* answer immediately`);
   out('  POST /__atrezzo/reset  ·  POST /__atrezzo/reload  ·  GET /__atrezzo/state  ·  GET|DELETE /__atrezzo/misses');
   if (staticDir) out(`  static: ${resolve(staticDir)}`);
   out(`  gaps: ${relative(process.cwd(), missesFile(cfg)) || missesFile(cfg)} (--on-miss ${flags['on-miss'] ?? 'log'})`);

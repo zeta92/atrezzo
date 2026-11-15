@@ -28,8 +28,9 @@ endpoints:
     pagination: { param_limit: limit, param_offset: offset, default_limit: 50, max_limit: 100 }
     sort: -created_at                 # or a list: [status, -amount]; default id
     include: [customers]              # embeds the parent as "customer"
-    shape: array                      # array (default) | envelope → { data, total, limit, offset }
+    shape: array                      # array (default) | envelope → { data, total, limit, offset } | object → first row
     detail: true                      # also generates /api/orders/:id (default true)
+    latency: 150                      # optional: ms this endpoint waits under `serve` (wins over --latency)
   - path: /api/customers
     entity: customers
 entry: empty-dashboard
@@ -100,10 +101,55 @@ Generator guarantees:
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (starts with `/`, no query or `:param`), `entity` (required, declared in `world`), `filters` (existing fields), `pagination`, `sort`, `include` (referenced entities only), `shape`, `detail`, `pick`.
+`path` (starts with `/`, no query or `:param`), `entity` (required, declared in `world`), `filters` (existing fields), `pagination`, `sort`, `include` (referenced entities only), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`.
 
 - Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
 - `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` uses `data`). A single key, no nested paths.
+
+#### Singletons (`shape: object`)
+
+Most SPAs boot by reading objects, not lists: their config (`GET /api/v2/info`) and the current user (`GET /api/v2/user`). With `shape: object` the endpoint answers **one row of its entity as a JSON object**, not wrapped in a list:
+
+```yaml
+world:
+  info:
+    total: 1
+    fields: { version: string, frontend_url: url }
+  users: 4
+endpoints:
+  - path: /api/v2/info
+    entity: info
+    shape: object                 # → 200 { "id": 1, "version": "…", "frontend_url": "…" }
+  - path: /api/v2/user
+    entity: users
+    shape: object
+    filters: [id]                 # the flow picks the logged-in user with ?id=2
+```
+
+- The answer is the **first row after the endpoint's filters and `sort`** (default `sort: id`). When the filters match several rows (`?id=1,2`, or no filter on a 4-row entity) you get the first of them, never a list; use `sort` to choose which one comes first.
+- The entity has **no rows** ⇒ `404` with the same body as a gap (`atrezzo.miss: true`, `atrezzo.gap: "GET /api/v2/user"`), and `serve` records it in `atrezzo misses` as **unresolved**: an empty singleton is more likely a missing entity than a client error. Fix it by giving the entity `total: 1` or more. With `--on-miss stub` it answers `200 {}` like any other gap.
+- The entity has rows but **no row matches** the filters (`?id=99`) ⇒ a plain `404 { "error": "no users matches id=99 …" }`, like the detail route; that is not a gap.
+- No `X-Total-Count`; undeclared parameters still show up in `X-Atrezzo-Ignored`. `include` and `child(count)` embeds work as on a list row.
+- The detail route keeps today's behaviour: `GET /api/v2/user/3` answers row 3 (or 404), whatever the shape. `pagination` and `pick` are rejected with `shape: object`.
+- No authentication semantics: the mock does not read `Authorization`. The current user is whichever row the filters and `sort` pick.
+
+#### Latency (`latency:` and `serve --latency`)
+
+A mock that answers in 1 ms can expose races a real backend (100-300 ms) hides, or hide timing bugs the real one shows. `atrezzo serve --latency <ms>` (default `0`) delays every contract response; an endpoint's `latency:` wins over the flag for that endpoint (list and detail route):
+
+```yaml
+endpoints:
+  - path: /api/v2/info
+    entity: info
+    shape: object
+    latency: 800                  # the app's boot request arrives late, as against the real API
+  - path: /api/v2/projects
+    entity: projects              # waits whatever `serve --latency` says (0 by default)
+```
+
+- Integer milliseconds, `0`–`60000`. Applies to answers of contract endpoints (including their 400/404s); static files (`--static`), `/__atrezzo/*` control routes and gaps for undeclared routes answer immediately, so a slow mock does not make the harness crawl.
+- The serve banner prints the effective latency and each override; `GET /__atrezzo/state` returns it as `latency: { default, endpoints: { path: ms } }`.
+- Only `serve` waits: the MSW handlers ignore `latency` (wrap them with MSW's own `delay()` if you need it there). The data never changes with the latency.
 
 Projection semantics (identical in `serve` and the MSW handlers, same `runtime.mjs` file):
 1. Equality filters; a comma means any of the values; `null` matches nulls.

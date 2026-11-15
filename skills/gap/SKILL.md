@@ -30,6 +30,7 @@ CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (`atrezzo` below). Scenario fo
    - **the query it sends**: only those parameters become `filters`/`pagination`;
    - **which fields it reads** from the response (`u.name`, `data.items`, `res.total`, destructuring, table columns, the component's TS types). **Those fields define the schema; do not invent any.**
    - if it reads `res.data` / `res.items` → there is an **envelope** (`shape: envelope` + `pick`).
+   - if it reads fields straight off the response (`info.version`, `user.username`) and never iterates it → it is a **singleton** (`shape: object`: the first row after filters and `sort`). A 404 whose error says "has no rows" is a singleton whose entity is empty: give it `total: 1`.
 
 3. **Contract first.** If there is an OpenAPI spec or backend types (`workspace.contract`, `src/types/database.ts`, DTOs), they are the source of truth for the shape (names, types, enums). The front-end code only adds what the contract does not say (which filters it really uses, how many rows the screen expects). If contract and front end disagree, say so: it is a real bug, not something the mock should paper over.
 

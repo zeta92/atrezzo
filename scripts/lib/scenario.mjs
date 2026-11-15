@@ -202,7 +202,11 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'include', 'shape', 'detail', 'pick'];
+const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'include', 'shape', 'detail', 'pick', 'latency'];
+/** array: a JSON list · envelope: { data, total, limit, offset } · object: the first row as a JSON object. */
+export const SHAPES = ['array', 'envelope', 'object'];
+/** Upper bound for `latency` (scenario) and `serve --latency`: a slow backend, not a hung one. */
+export const MAX_LATENCY = 60000;
 
 function parseSort(raw, fields, f, issues) {
   if (raw === undefined) return [{ field: 'id', dir: 'asc' }];
@@ -278,19 +282,27 @@ function normalizeEndpoints(endpoints, world, issues) {
       });
     }
     let shape = ep.shape ?? 'array';
-    if (!['array', 'envelope'].includes(shape)) issues.add(`${f}.shape`, 'must be "array" or "envelope"');
+    if (!SHAPES.includes(shape)) issues.add(`${f}.shape`, `must be ${SHAPES.map((s) => `"${s}"`).join(', ')}; got ${JSON.stringify(shape)}`);
     let pick = null;
     if (ep.pick !== undefined) {
       if (typeof ep.pick !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(ep.pick)) issues.add(`${f}.pick`, 'envelope key that holds the list (e.g. data, items); a single key');
-      else if (ep.shape === 'array') issues.add(`${f}.pick`, 'incompatible with shape: array (pick implies an envelope)');
+      else if (ep.shape === 'array' || ep.shape === 'object') issues.add(`${f}.pick`, `incompatible with shape: ${ep.shape} (pick implies an envelope)`);
       else { pick = ep.pick; shape = 'envelope'; }
     }
+    // A singleton answers one row: there is no list to page through.
+    if (shape === 'object' && pagination) issues.add(`${f}.pagination`, 'incompatible with shape: object (the response is a single row, not a list)');
     if (ep.detail !== undefined && typeof ep.detail !== 'boolean') issues.add(`${f}.detail`, 'must be true or false');
+    let latency = null;
+    if (ep.latency !== undefined) {
+      if (!isInt(ep.latency) || ep.latency < 0 || ep.latency > MAX_LATENCY) issues.add(`${f}.latency`, `milliseconds, an integer between 0 and ${MAX_LATENCY}; got ${JSON.stringify(ep.latency)}`);
+      else latency = ep.latency;
+    }
     const norm = {
       path, entity: spec.name, filters, pagination,
       sort: parseSort(ep.sort, fields, f, issues), include, shape, detail: ep.detail ?? true,
     };
     if (pick) norm.pick = pick; // only when declared: keeps 0.1 scenario hashes stable
+    if (latency !== null) norm.latency = latency; // same: absent unless declared
     out.push(norm);
   });
   return out;

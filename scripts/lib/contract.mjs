@@ -114,8 +114,9 @@ export function createEngine(dataset) {
   /**
    * @param {{ method?: string, pathname: string, query?: URLSearchParams | Record<string,string>,
    *   headers?: Headers | Record<string, string | string[]> }} req
-   * @returns {{ status: number, headers: Record<string,string>, body: unknown } | null} null = not ours
-   *   (body null = no body: a count-only answer)
+   * @returns {{ status: number, headers: Record<string,string>, body: unknown, miss?: true } | null}
+   *   null = not ours (body null = no body: a count-only answer; miss = a `shape: object` endpoint
+   *   whose entity has no rows, which `serve` records as a gap)
    */
   function handle({ method = 'GET', pathname, query, headers }) {
     const m = match(pathname);
@@ -167,6 +168,27 @@ export function createEngine(dataset) {
     });
     result = indexed.map(([r]) => r);
     const total = result.length;
+
+    // Singleton (`shape: object`): the first row after filters and sort, as a JSON object.
+    if (ep.shape === 'object') {
+      const h = ignored.length ? { 'x-atrezzo-ignored': ignored.join(',') } : {};
+      if (!rows.length) {
+        // An empty singleton is a missing entity, not a client error: same body as a gap, and
+        // `miss: true` so `serve` records it in misses like any other undeclared route.
+        const gap = `GET ${ep.path}`;
+        const res = json(404, {
+          error: `${ep.entity} has no rows in scenario "${dataset.scenario}"; ${ep.path} (shape: object) answers its first row`,
+          atrezzo: { miss: true, gap, endpoints: dataset.endpoints.map((e) => e.path) },
+        }, h);
+        res.miss = true;
+        return res;
+      }
+      if (!result.length) {
+        const q = [...params].filter(([k]) => ep.filters.includes(k)).map(([k, v]) => `${k}=${v}`).join('&');
+        return json(404, { error: `no ${ep.entity} matches ${q} in scenario "${dataset.scenario}"` }, h);
+      }
+      return json(200, withCounts(withIncludes(result[0], ep), counts), h);
+    }
 
     let limit = null;
     let offset = 0;

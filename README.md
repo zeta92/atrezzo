@@ -229,7 +229,7 @@ MSW handlers then go to the front end, and the Supabase seed goes to the backend
 
 <h2><img src="https://raw.githubusercontent.com/zeta92/atrezzo/media/assets/readme/section-05-limits.png" width="100%" alt="05 Limits"></h2>
 
-- **Reads only.** The mock shapes data. It does not implement business rules: no writes (they return 405), no recomputed totals, no RLS. HTTP errors and latency are not part of the world; inject them in the runtime.
+- **Reads only.** The mock shapes data. It does not implement business rules: no writes (they return 405), no recomputed totals, no RLS. HTTP errors are not part of the world; inject them in the runtime. Latency is timing, not data: `serve --latency <ms>` or a per-endpoint `latency:` delays contract responses without changing what they contain.
 - **Only `builtin` and `msw` run the projection.** Prism returns examples without filtering or paginating. WireMock serves pre-generated combinations and answers 501 to the rest. Supabase responses take PostgREST's shape.
 - **Gaps are recorded by `atrezzo serve` only**, not by MSW, Prism, WireMock or Supabase. The same route under two prefixes (`/api/users`, `/users`) counts as two gaps. Nested routes such as `/api/customers/:id/orders` are recorded but not projected.
 - **`import` covers GET collections only:** an array of objects, or a `data`/`items`/`results`/`records`/`content` envelope. Nested fields are skipped and reported. Ids are always integers 1..n. No external `$ref`.
@@ -243,7 +243,7 @@ node scripts/cli.mjs init [--dir .] [--runtime auto|builtin|msw|supabase|prism|w
 node scripts/cli.mjs runtimes
 node scripts/cli.mjs import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
 node scripts/cli.mjs world <scenario.yaml> [--out dir]
-node scripts/cli.mjs serve [--scenario demo] [--port 4010] [--static dir] [--runtime builtin] [--on-miss log|stub]
+node scripts/cli.mjs serve [--scenario demo] [--port 4010] [--static dir] [--runtime builtin] [--on-miss log|stub] [--latency ms]
 node scripts/cli.mjs misses [--json] [--clear]
 node scripts/cli.mjs verify <flow.yaml> [--url …] [--driver http|playwright] [--header "Name: value"|@-]… [--diagnose] [--no-reset] [--json]
 node scripts/cli.mjs doctor
@@ -298,6 +298,10 @@ the two folders removes everything it wrote.
 
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
+
+### 0.8.0
+
+Two things a real SPA boot needed: `shape: object` answers the first row of the entity (after filters and `sort`) as a JSON object, for singletons such as `/info` or `/user` (empty entity ⇒ 404 recorded as a gap), and `serve --latency <ms>` plus a per-endpoint `latency:` delay contract responses like a real backend; static files and `/__atrezzo/*` answer immediately. Nothing breaks.
 
 ### 0.7.0
 

@@ -4,12 +4,13 @@ import { createServer } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, posix, resolve, sep } from 'node:path';
 import { AtrezzoError } from './errors.mjs';
-import { loadScenario, scenarioNameFromFile } from './scenario.mjs';
+import { loadScenario, scenarioNameFromFile, MAX_LATENCY } from './scenario.mjs';
 import { generateWorld } from './world.mjs';
 import { createEngine } from './contract.mjs';
 import { createMissStore, guessShape, isMutation, missKey, safeSearch } from './misses.mjs';
 
 export const ON_MISS = ['log', 'stub'];
+const wait = (ms) => new Promise((ok) => { setTimeout(ok, ms); });
 // Requests for these are the browser/bundler asking for files, not the app asking the API.
 const ASSET = /\.(ico|png|jpe?g|gif|svg|webp|avif|css|js|mjs|cjs|map|html?|woff2?|ttf|otf|txt|webmanifest)$/i;
 
@@ -55,13 +56,20 @@ export function buildState(scenarioFile) {
   return { scenario, dataset, engine: createEngine(dataset), file: scenarioFile };
 }
 
-function summary(state, available, generatedDir, misses) {
+/** Effective wait per contract endpoint: { default, endpoints: { path: ms } } (only the overrides). */
+export function latencySummary(endpoints, latency) {
+  const overrides = Object.fromEntries(endpoints.filter((e) => e.latency !== undefined).map((e) => [e.path, e.latency]));
+  return { default: latency, endpoints: overrides };
+}
+
+function summary(state, available, generatedDir, misses, latency = 0) {
   const d = state.dataset;
   const out = {
     scenario: d.scenario, seed: d.seed, now: d.now, hash: d.hash,
     counts: Object.fromEntries(Object.entries(d.entities).map(([k, v]) => [k, v.length])),
     endpoints: d.endpoints.map((e) => e.path),
     available: [...new Set(Object.values(available).map((f) => scenarioNameFromFile(f)))],
+    latency: latencySummary(d.endpoints, latency),
   };
   if (misses) out.misses = misses.summary();
   if (generatedDir) {
@@ -86,11 +94,14 @@ async function readBody(req) {
 
 /**
  * @param {{ scenariosDir: string, scenario?: string, staticDir?: string|null, generatedDir?: string|null,
- *   missesFile?: string|null, onMiss?: 'log'|'stub', log?: (s:string)=>void }} opts
+ *   missesFile?: string|null, onMiss?: 'log'|'stub', latency?: number, sleep?: (ms:number)=>Promise<void>,
+ *   log?: (s:string)=>void }} opts
  *   missesFile: where gaps are recorded (null = memory only) · onMiss: 404 (log) or empty 200 (stub)
+ *   latency: ms every contract answer waits (an endpoint's `latency:` wins) · sleep: how it waits
  */
-export function createMockServer({ scenariosDir, scenario, staticDir = null, generatedDir = null, missesFile = null, onMiss = 'log', log = () => {} }) {
+export function createMockServer({ scenariosDir, scenario, staticDir = null, generatedDir = null, missesFile = null, onMiss = 'log', latency = 0, sleep = wait, log = () => {} }) {
   if (!ON_MISS.includes(onMiss)) throw new AtrezzoError(`--on-miss must be ${ON_MISS.join(' or ')} (got "${onMiss}")`);
+  if (!Number.isInteger(latency) || latency < 0 || latency > MAX_LATENCY) throw new AtrezzoError(`--latency must be an integer between 0 and ${MAX_LATENCY} ms (got "${latency}")`);
   const misses = createMissStore(missesFile);
   let available = listScenarios(scenariosDir);
   const pick = (name) => {
@@ -114,29 +125,35 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
 
   const JSON_CT = { 'content-type': 'application/json; charset=utf-8' };
 
-  /** The request is not in the contract: record it and answer 404 (log) or an empty 200 (stub). */
-  const miss = (req, res, url, status = 404, extraHeaders = {}) => {
+  /**
+   * The request is not in the contract: record it and answer 404 (log) or an empty 200 (stub).
+   * `error`/`shape` override the message and the stub body (an empty `shape: object` singleton).
+   */
+  const miss = (req, res, url, status = 404, extraHeaders = {}, { error = null, shape = null } = {}) => {
     const stub = onMiss === 'stub';
     const entry = misses.record({ method: req.method, pathname: url.pathname, query: url.searchParams, headers: req.headers, status: stub ? 200 : status });
     const gap = missKey(req.method, url.pathname);
     log(`${req.method} ${url.pathname}${safeSearch(url.searchParams)} → ${stub ? '200 stub' : status} (gap ${gap}, ${entry.times}×)`);
     if (stub) {
-      const body = !isMutation(entry.method) && guessShape(entry.path) === 'collection' ? [] : {};
+      const body = !isMutation(entry.method) && (shape ?? guessShape(entry.path)) === 'collection' ? [] : {};
       return send(res, 200, body, { ...JSON_CT, 'x-atrezzo-stub': 'true', 'x-atrezzo-scenario': state.dataset.scenario });
     }
     const why = status === 405 ? ' (atrezzo only projects reads)' : '';
     return send(res, status, {
-      error: `${req.method} ${url.pathname} is not in the contract of scenario "${state.dataset.scenario}"${why}`,
+      error: error ?? `${req.method} ${url.pathname} is not in the contract of scenario "${state.dataset.scenario}"${why}`,
       atrezzo: { miss: true, gap, times: entry.times, next: 'atrezzo misses', endpoints: state.dataset.endpoints.map((e) => e.path) },
     }, { ...JSON_CT, ...extraHeaders });
   };
+
+  /** Milliseconds a contract answer waits: the endpoint's `latency:` wins over `serve --latency`. */
+  const latencyFor = (pathname) => state.engine.match(pathname)?.ep.latency ?? latency;
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     try {
       if (req.method === 'OPTIONS') return send(res, 204, '', { 'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE', 'access-control-allow-headers': 'content-type, authorization, prefer' });
       if (url.pathname === '/__atrezzo/state' && req.method === 'GET') {
-        return send(res, 200, summary(state, available, generatedDir, misses), JSON_CT);
+        return send(res, 200, summary(state, available, generatedDir, misses, latency), JSON_CT);
       }
       if (url.pathname === '/__atrezzo/misses') {
         if (req.method === 'GET') {
@@ -150,7 +167,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         if (req.method !== 'POST') return send(res, 405, { error: 'use POST' }, { ...JSON_CT, allow: 'POST' });
         state = buildState(pick(state.dataset.scenario));
         log(`reload → ${state.dataset.scenario} (hash ${state.dataset.hash})`);
-        return send(res, 200, summary(state, available, generatedDir, misses), JSON_CT);
+        return send(res, 200, summary(state, available, generatedDir, misses, latency), JSON_CT);
       }
       if (url.pathname === '/__atrezzo/reset') {
         if (req.method !== 'POST') return send(res, 405, { error: 'use POST' }, { allow: 'POST' });
@@ -158,12 +175,18 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         const name = body.scenario ?? url.searchParams.get('scenario') ?? state.dataset.scenario;
         state = buildState(pick(name));
         log(`reset → ${state.dataset.scenario}`);
-        return send(res, 200, summary(state, available, generatedDir, misses), JSON_CT);
+        return send(res, 200, summary(state, available, generatedDir, misses, latency), JSON_CT);
       }
       if (url.pathname.startsWith('/__atrezzo/')) return send(res, 404, { error: `unknown control route ${url.pathname} (available: state, reset, reload, misses)` }, JSON_CT);
       const r = state.engine.handle({ method: req.method, pathname: url.pathname, query: url.searchParams, headers: req.headers });
       // A matched route with a non-GET method is a write: not in the contract either.
       if (r && r.status === 405) return miss(req, res, url, 405, { allow: 'GET' });
+      // Only contract answers wait: static files, control routes and gaps answer immediately.
+      if (r) {
+        const ms = latencyFor(url.pathname);
+        if (ms > 0) await sleep(ms);
+      }
+      if (r?.miss) return miss(req, res, url, 404, {}, { error: r.body.error, shape: 'detail' });
       if (r) {
         if (misses.resolve(req.method, url.pathname)) log(`gap ${missKey(req.method, url.pathname)} resolved`);
         log(`${req.method} ${url.pathname}${safeSearch(url.searchParams)} → ${r.status}`);
@@ -196,6 +219,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
   return {
     server,
     get state() { return state; },
+    latency,
     misses,
     listen(port = 4010, host = '127.0.0.1') {
       return new Promise((ok, ko) => {
