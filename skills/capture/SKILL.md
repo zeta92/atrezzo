@@ -30,7 +30,7 @@ Without an OpenAPI spec, follow the source order.
 
 ## HAR: always with scripts
 
-Never load the whole HAR into context. Summarize it with a script and read only the summary:
+Never load the whole HAR into context. Summarize it with a local script and read only the summary. The script reads the HAR file from disk, makes no network requests and writes nothing: it parses each JSON response body only to list its field names, and prints method, path, status, query parameter names and field names. It never prints values, so tokens, cookies and personal data in bodies or headers stay out of the output and on the machine.
 
 ```bash
 node -e '
@@ -45,7 +45,7 @@ for(const[k,s]of Object.entries(seen))console.log(k,"×"+s.n,"status",[...s.stat
 ' traffic.har
 ```
 
-Strip tokens, cookies and personal data from anything you save.
+The HAR and the summary stay local. If you save anything derived from them, keep only field names and shapes: no tokens, cookies or personal data.
 
 ## Output
 

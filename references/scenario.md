@@ -170,7 +170,7 @@ scenario: scenarios/orders.yaml      # relative to the flow (optional: see "Real
 base_url: http://127.0.0.1:4010       # optional (otherwise --url or the config)
 viewport: { width: 1440, height: 1000 }  # optional, playwright only (default 1280x720)
 headers:                              # optional: sent on EVERY request of the flow
-  Authorization: "Bearer ${YOUR_API_KEY}"  # you set YOUR_API_KEY in the shell you run verify from; do not commit secrets
+  X-Tenant: "${TENANT}"               # any value can come from the shell you run verify in
 steps:
   - screen: order-list
     visit: /orders                    # route for playwright
