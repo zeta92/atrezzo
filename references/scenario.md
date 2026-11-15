@@ -113,6 +113,15 @@ Projection semantics (identical in `serve` and the MSW handlers, same `runtime.m
 5. Undeclared parameters are ignored and listed in `X-Atrezzo-Ignored`.
 6. GET/HEAD only. Writes ⇒ 405: the mock shapes data, it does not implement business rules.
 
+### Counted relations (PostgREST `select` and `head=true`)
+
+A relation is declared once, with `ref:` on the child (`documentos: { total: 6, ref: expedientes }` ⇒ every document carries `expediente_id`). Two PostgREST shapes read it:
+
+- **Embedded count**: `GET /rest/v1/expedientes?select=*,documentos(count)` adds `"documentos": [{ "count": n }]` to every returned row (list and detail), where `n` is the number of `documentos` rows in the same world whose `expediente_id` is that row's `id`. Several at once (`select=*,documentos(count),plazos(count)`) and aliased (`select=*,total:documentos(count)` ⇒ `"total": [{ "count": n }]`) work too. The count always matches `GET /rest/v1/documentos?expediente_id=<id>` on an endpoint that declares that filter.
+- **Count only**: `?head=true` (with or without `Prefer: count=exact`), or a `HEAD` request with `Prefer: count=exact`, answers `200` with an empty body and `Content-Range: 0-<n-1>/<n>`, where `n` counts the rows that pass the endpoint's filters (pagination does not apply). No rows ⇒ `Content-Range: 0-0/0`.
+
+Not supported: only the exact `child(count)` item is a count; any other embed (`documentos(id,nombre)`, `documentos(*)`, `customer:customers(*)`) and column lists (`select=id,name`) are ignored, rows keep their shape and `select` shows up in `X-Atrezzo-Ignored`. A name that is no entity, or an entity that does not `ref:` this endpoint's entity, adds nothing. Filters keep the engine's equality syntax (`?expediente_id=2`); PostgREST operators such as `eq.2` are not parsed. The MSW handlers register `GET` routes only, so there a count goes through `head=true`, not a `HEAD` request.
+
 ### Static files and the SPA fallback (`serve --static <dir>`)
 
 `serve --static dist` serves the built front end next to the projections. A single-page app routes on the client, so a deep link such as `/copilot` has no file in `dist/`: for those, `serve` answers `200` with `dist/index.html` and the app's router takes over. The fallback applies only when **all** of these hold:

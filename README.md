@@ -299,6 +299,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.7.0
+
+The engine answers PostgREST counts from the world: `select=*,child(count)` (and `alias:child(count)`) embeds `[{ "count": n }]` per row, and `head=true` returns an empty body with `Content-Range: 0-<n-1>/<n>` (see "Counted relations" in `references/scenario.md`). Nothing breaks; `select=*` is no longer listed in `X-Atrezzo-Ignored`.
+
 ### 0.6.0
 
 `serve --static` answers browser navigations to client-side routes with `index.html` (SPA fallback), and a flow's `storage:` block seeds `localStorage`/`sessionStorage` before each step with the Playwright driver. Nothing breaks.

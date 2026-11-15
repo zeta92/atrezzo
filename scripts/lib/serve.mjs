@@ -106,8 +106,9 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
   let state = buildState(pick(scenario));
 
   const send = (res, status, body, headers = {}) => {
-    const payload = typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
-    res.writeHead(status, { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-total-count, x-atrezzo-scenario, x-atrezzo-ignored, x-atrezzo-stub', 'cache-control': 'no-store', ...headers });
+    // body null = no body (a count-only answer); everything else that is not text goes out as JSON.
+    const payload = body === null ? '' : typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
+    res.writeHead(status, { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-total-count, content-range, x-atrezzo-scenario, x-atrezzo-ignored, x-atrezzo-stub', 'cache-control': 'no-store', ...headers });
     res.end(res.req.method === 'HEAD' ? undefined : payload);
   };
 
@@ -133,7 +134,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     try {
-      if (req.method === 'OPTIONS') return send(res, 204, '', { 'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE', 'access-control-allow-headers': 'content-type, authorization' });
+      if (req.method === 'OPTIONS') return send(res, 204, '', { 'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE', 'access-control-allow-headers': 'content-type, authorization, prefer' });
       if (url.pathname === '/__atrezzo/state' && req.method === 'GET') {
         return send(res, 200, summary(state, available, generatedDir, misses), JSON_CT);
       }
@@ -160,7 +161,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         return send(res, 200, summary(state, available, generatedDir, misses), JSON_CT);
       }
       if (url.pathname.startsWith('/__atrezzo/')) return send(res, 404, { error: `unknown control route ${url.pathname} (available: state, reset, reload, misses)` }, JSON_CT);
-      const r = state.engine.handle({ method: req.method, pathname: url.pathname, query: url.searchParams });
+      const r = state.engine.handle({ method: req.method, pathname: url.pathname, query: url.searchParams, headers: req.headers });
       // A matched route with a non-GET method is a write: not in the contract either.
       if (r && r.status === 405) return miss(req, res, url, 405, { allow: 'GET' });
       if (r) {
