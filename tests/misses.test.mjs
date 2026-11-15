@@ -2,14 +2,15 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
 import { createMockServer } from '../scripts/lib/serve.mjs';
 import { createMissStore, missPattern, guessShape, findInSpec, hintFor, maskQuery, safeSearch, MISS_CAP } from '../scripts/lib/misses.mjs';
 import { loadSpec } from '../scripts/lib/openapi.mjs';
 import { loadScenario } from '../scripts/lib/scenario.mjs';
 import { doctor } from '../scripts/lib/doctor.mjs';
 import { loadPlaywright, chromeExecutable } from '../scripts/lib/verify.mjs';
-import { ROOT, CLI, tmpProject, cli, cliAsync } from './helpers.mjs';
+import { ROOT, tmpProject, cli, cliAsync } from './helpers.mjs';
+import { request, getJson, postJson, del } from './helpers/http.mjs';
+import { startServe } from './helpers/serve.mjs';
 
 const CATALOGO = `name: catalogo
 seed: 3
@@ -28,8 +29,6 @@ const CONFIG = (extra = {}) => JSON.stringify({
   version: 1, runtime: 'builtin', scenariosDir: 'scenarios', handlersDir: 'atrezzo/handlers', generatedDir: 'atrezzo/.generated',
   mock: { baseUrl: 'http://127.0.0.1:4010', port: 4010, static: '.' }, verify: { driver: 'http' }, ...extra,
 }, null, 2);
-
-const json = async (r) => ({ status: r.status, headers: r.headers, body: await r.json() });
 
 async function startServer(opts = {}) {
   const dir = tmpProject({ 'scenarios/catalogo.yaml': CATALOGO });
@@ -86,7 +85,7 @@ test('gap recorded and deduplicated: 3 identical requests ⇒ times 3, one entry
   const { file, mock, url } = await startServer();
   try {
     let last;
-    for (let i = 0; i < 3; i++) last = await json(await fetch(`${url}/api/users`, { headers: { referer: 'http://localhost:5173/admin?sid=s3cr3t' } }));
+    for (let i = 0; i < 3; i++) last = await getJson(`${url}/api/users`, { headers: { referer: 'http://localhost:5173/admin?sid=s3cr3t' } });
     assert.equal(last.status, 404);
     assert.deepEqual(last.body, {
       error: 'GET /api/users is not in the contract of scenario "catalogo"',
@@ -101,21 +100,21 @@ test('gap recorded and deduplicated: 3 identical requests ⇒ times 3, one entry
     assert.ok(m.first_seen <= m.last_seen);
     for (const k of ['method', 'path', 'query', 'times', 'first_seen', 'last_seen', 'referer', 'accept', 'resolved']) assert.ok(k in m, k);
     assert.equal(readFileSync(join(file, '../.gitignore'), 'utf8'), '*\n');
-    const st = await json(await fetch(`${url}/__atrezzo/state`));
+    const st = await getJson(`${url}/__atrezzo/state`);
     assert.deepEqual(st.body.misses, { total: 1, unresolved: 1 });
-    const api = await json(await fetch(`${url}/__atrezzo/misses`));
+    const api = await getJson(`${url}/__atrezzo/misses`);
     assert.equal(api.body.unresolved, 1);
     assert.equal(api.body.misses[0].times, 3);
     // missing static files (favicon) are not API gaps
-    assert.equal((await fetch(`${url}/favicon.ico`)).status, 404);
+    assert.equal((await request(`${url}/favicon.ico`)).status, 404);
     // a write to a contract route is a gap too (405)
-    const w = await json(await fetch(`${url}/api/products`, { method: 'POST', body: '{}' }));
+    const w = await postJson(`${url}/api/products`, '{}');
     assert.equal(w.status, 405);
     assert.equal(w.body.atrezzo.gap, 'POST /api/products');
-    assert.equal((await json(await fetch(`${url}/__atrezzo/misses`))).body.misses.length, 2);
-    const del = await fetch(`${url}/__atrezzo/misses`, { method: 'DELETE' });
-    assert.equal(del.status, 200);
-    assert.deepEqual((await json(await fetch(`${url}/__atrezzo/misses`))).body, { misses: [], unresolved: 0 });
+    assert.equal((await getJson(`${url}/__atrezzo/misses`)).body.misses.length, 2);
+    const cleared = await del(`${url}/__atrezzo/misses`);
+    assert.equal(cleared.status, 200);
+    assert.deepEqual((await getJson(`${url}/__atrezzo/misses`)).body, { misses: [], unresolved: 0 });
   } finally { await mock.close(); }
 });
 
@@ -123,11 +122,11 @@ test('the 404 and misses.json do not leak query secrets (?token=abc ⇒ "***")',
   const { file, mock, url } = await startServer();
   const logs = [];
   try {
-    const r = await fetch(`${url}/api/users?token=abc&page=2`);
-    const text = await r.text();
+    const r = await request(`${url}/api/users?token=abc&page=2`);
+    const text = r.text;
     assert.equal(r.status, 404);
     assert.doesNotMatch(text, /abc/);
-    const m = (await json(await fetch(`${url}/__atrezzo/misses`))).body.misses[0];
+    const m = (await getJson(`${url}/__atrezzo/misses`)).body.misses[0];
     assert.deepEqual(m.query, { token: '***', page: '2' });
     assert.doesNotMatch(readFileSync(file, 'utf8'), /abc/);
   } finally { await mock.close(); }
@@ -135,8 +134,8 @@ test('the 404 and misses.json do not leak query secrets (?token=abc ⇒ "***")',
   const dir = tmpProject({ 'scenarios/catalogo.yaml': CATALOGO });
   const m2 = createMockServer({ scenariosDir: join(dir, 'scenarios'), log: (s) => logs.push(s) });
   const u2 = `http://127.0.0.1:${(await m2.listen(0)).port}`;
-  await fetch(`${u2}/api/users?token=abc`);
-  await fetch(`${u2}/api/products?token=abc`);
+  await request(`${u2}/api/users?token=abc`);
+  await request(`${u2}/api/products?token=abc`);
   await m2.close();
   assert.ok(logs.length >= 2);
   assert.ok(logs.every((l) => !l.includes('abc')), logs.join('\n'));
@@ -145,46 +144,46 @@ test('the 404 and misses.json do not leak query secrets (?token=abc ⇒ "***")',
 test('POST /__atrezzo/reload picks up the edited YAML without restarting; resolved turns true once served', async () => {
   const { dir, file, mock, url } = await startServer();
   try {
-    assert.equal((await fetch(`${url}/api/users`)).status, 404);
+    assert.equal((await request(`${url}/api/users`)).status, 404);
     writeFileSync(join(dir, 'scenarios/catalogo.yaml'), PATCH_WORLD(CATALOGO));
-    assert.equal((await fetch(`${url}/api/users`)).status, 404, 'without reload the old scenario stays');
-    const rl = await json(await fetch(`${url}/__atrezzo/reload`, { method: 'POST' }));
+    assert.equal((await request(`${url}/api/users`)).status, 404, 'without reload the old scenario stays');
+    const rl = await postJson(`${url}/__atrezzo/reload`);
     assert.equal(rl.status, 200);
     assert.deepEqual(rl.body.endpoints, ['/api/products', '/api/users']);
     assert.deepEqual(rl.body.counts, { users: 4, products: 5 });
     assert.deepEqual(rl.body.misses, { total: 1, unresolved: 1 }, 'reload marks nothing: serving the route does');
-    const ok = await json(await fetch(`${url}/api/users`));
+    const ok = await getJson(`${url}/api/users`);
     assert.equal(ok.status, 200);
     assert.equal(ok.body.length, 4);
     const m = JSON.parse(readFileSync(file, 'utf8'))['GET /api/users'];
     assert.equal(m.resolved, true);
     assert.equal(m.times, 2);
-    assert.deepEqual((await json(await fetch(`${url}/__atrezzo/state`))).body.misses, { total: 1, unresolved: 0 });
+    assert.deepEqual((await getJson(`${url}/__atrezzo/state`)).body.misses, { total: 1, unresolved: 0 });
     // reload with broken YAML ⇒ 400 and the previous state stays
     writeFileSync(join(dir, 'scenarios/catalogo.yaml'), 'name: catalogo\nseed: x\n');
-    const bad = await json(await fetch(`${url}/__atrezzo/reload`, { method: 'POST' }));
+    const bad = await postJson(`${url}/__atrezzo/reload`);
     assert.equal(bad.status, 400);
-    assert.equal((await fetch(`${url}/api/users`)).status, 200);
-    assert.equal((await fetch(`${url}/__atrezzo/reload`)).status, 405);
+    assert.equal((await request(`${url}/api/users`)).status, 200);
+    assert.equal((await request(`${url}/__atrezzo/reload`)).status, 405);
   } finally { await mock.close(); }
 });
 
 test('--on-miss stub: 200, [] for collections, {} for details, x-atrezzo-stub header, still recording', async () => {
   const { mock, url } = await startServer({ onMiss: 'stub' });
   try {
-    const col = await json(await fetch(`${url}/api/users`));
+    const col = await getJson(`${url}/api/users`);
     assert.equal(col.status, 200);
     assert.deepEqual(col.body, []);
     assert.equal(col.headers.get('x-atrezzo-stub'), 'true');
-    const det = await json(await fetch(`${url}/api/users/7`));
+    const det = await getJson(`${url}/api/users/7`);
     assert.deepEqual(det.body, {});
     assert.equal(det.headers.get('x-atrezzo-stub'), 'true');
-    const post = await json(await fetch(`${url}/api/products`, { method: 'POST', body: '{}' }));
+    const post = await postJson(`${url}/api/products`, '{}');
     assert.equal(post.status, 200);
     assert.deepEqual(post.body, {});
-    const real = await fetch(`${url}/api/products`);
+    const real = await request(`${url}/api/products`);
     assert.equal(real.headers.get('x-atrezzo-stub'), null, 'what is in the contract is not a stub');
-    const list = (await json(await fetch(`${url}/__atrezzo/misses`))).body;
+    const list = (await getJson(`${url}/__atrezzo/misses`)).body;
     assert.deepEqual(list.misses.map((m) => `${m.method} ${m.path}`).sort(), ['GET /api/users', 'GET /api/users/:id', 'POST /api/products']);
     assert.ok(list.misses.every((m) => m.status === 200));
   } finally { await mock.close(); }
@@ -267,26 +266,11 @@ const realPw = await loadPlaywright(ROOT);
 const realChrome = realPw && (chromeExecutable(realPw.name) ?? (realPw.name !== 'playwright-core' ? 'bundled' : null));
 const skipReal = !realPw ? 'playwright(-core) not installed in the repo' : !realChrome || (realChrome !== 'bundled' && !existsSync(realChrome)) ? 'no Chromium (set ATREZZO_CHROME)' : false;
 
-function serveChild(dir) {
-  return new Promise((ok, ko) => {
-    const child = spawn(process.execPath, [CLI, 'serve', '--port', '0'], { cwd: dir });
-    let buf = '';
-    child.stdout.on('data', (d) => {
-      buf += d;
-      const m = /http:\/\/127\.0\.0\.1:(\d+)/.exec(buf);
-      if (m && !child.url) { child.url = `http://127.0.0.1:${m[1]}`; ok(child); }
-    });
-    child.stderr.on('data', (d) => { buf += d; });
-    child.on('exit', (code) => { if (!child.url) ko(new Error(`serve exited with ${code}: ${buf}`)); });
-    child.log = () => buf;
-  });
-}
-
 test('end-to-end (real Chromium): 404 recorded → scenario patch → world + reload → the page renders and the gap is resolved', { skip: skipReal, timeout: 90_000 }, async (t) => {
   const dir = tmpProject({ 'atrezzo.config.json': CONFIG(), 'scenarios/catalogo.yaml': CATALOGO, 'index.html': PAGE, 'flow.yaml': FLOW });
   symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'));
-  const srv = await serveChild(dir);
-  t.after(() => srv.kill());
+  const srv = await startServe(dir);
+  t.after(() => srv.stop());
   const say = (s) => t.diagnostic(s);
 
   // 1) the page requests /api/users, which does not exist ⇒ red, and the gap is recorded
@@ -304,7 +288,7 @@ test('end-to-end (real Chromium): 404 recorded → scenario patch → world + re
   const w = await cliAsync(['world', 'scenarios/catalogo.yaml'], dir);
   assert.equal(w.code, 0, w.stderr);
   assert.match(w.stdout, /GET \/api\/users/);
-  const rl = await fetch(`${srv.url}/__atrezzo/reload`, { method: 'POST' }).then((r) => r.json());
+  const rl = (await postJson(`${srv.url}/__atrezzo/reload`)).body;
   say(`reload: endpoints ${rl.endpoints.join(', ')} · generated: ${rl.generated}`);
   assert.equal(rl.generated, 'up to date');
 

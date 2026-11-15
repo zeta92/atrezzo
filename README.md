@@ -14,11 +14,10 @@
 ```
 
 The first line registers this repository as a marketplace; the second installs the plugin from it.
-Or load it from a local checkout:
+If you already have a checkout of this repository, you can load the plugin straight from it instead:
 
 ```bash
-git clone https://github.com/zeta92/atrezzo
-claude --plugin-dir ./atrezzo
+claude --plugin-dir <path-to-your-checkout>
 ```
 
 <h2><img src="https://raw.githubusercontent.com/zeta92/atrezzo/media/assets/readme/section-01-see-it-work.png" width="100%" alt="01 See it work"></h2>
@@ -171,11 +170,10 @@ Only the skill descriptions load at session start: about 2 KB of frontmatter for
 ```
 
 The first line registers this repository as a marketplace; the second installs the plugin from it.
-Or load it from a local checkout:
+If you already have a checkout of this repository, you can load the plugin straight from it instead:
 
 ```bash
-git clone https://github.com/zeta92/atrezzo
-claude --plugin-dir ./atrezzo
+claude --plugin-dir <path-to-your-checkout>
 ```
 
 Requirements: Node 22 or newer. No runtime dependencies: atrezzo has its own YAML parser and HTTP server. Optional in your project: `msw` for in-browser or test handlers, and `playwright` or `playwright-core` for the DOM driver. With `playwright-core`, atrezzo uses the system Chromium (`/usr/bin/chromium`, or set `ATREZZO_CHROME=/path`).
