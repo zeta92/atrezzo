@@ -294,7 +294,7 @@ generated folder. It makes no network calls except to the mock it starts on `loc
 no telemetry, no account and no personal data involved. Uninstalling is deleting the plugin; deleting
 the two folders removes everything it wrote.
 
-**Credentials.** atrezzo asks for none and looks for none on your machine: it reads no environment variable for a header, no `.env` key other than the `*_API_URL` names that say where the API lives, no `.netrc` and no keychain. If a screen needs a session, you pass the header yourself with `verify --header "Name: value"` (or `--header @-` on stdin). Secret-looking headers print as `***` in the table, in `--json` and in error messages, and nothing is written to a log or to disk.
+**Credentials.** atrezzo asks for none and looks for none: a flow holds no secret, and the plugin reads no environment variable to fill a header. If a screen needs a session you pass the header yourself with `verify --header "Name: value"` or `--header @-` on stdin. Secret-looking headers print as `***` in the table, in `--json` and in error messages, and nothing is written to a log or to disk.
 
 <details>
 <summary><b>Upgrading from 0.3 or 0.4: breaking changes</b></summary>
