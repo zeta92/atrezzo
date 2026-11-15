@@ -22,7 +22,7 @@ export const meta = metaFrom({
   needsOpenapi: true,
   signals,
   none: 'no OpenAPI spec and no @stoplight/prism-cli',
-  startHint: 'npx @stoplight/prism-cli mock atrezzo/.generated/<scenario>.openapi.yaml',
+  startHint: 'start the Prism CLI against atrezzo/.generated/<scenario>.openapi.yaml',
 });
 
 const OAS = {
@@ -159,7 +159,7 @@ export function emit({ dataset, config }) {
   const exampleKeys = Object.values(doc.paths).flatMap((x) => Object.keys(x.get.responses[200].content['application/json'].examples ?? {})).filter((k) => k !== 'scenario');
   return {
     files: [{ path: file, content: emitYaml(doc) }],
-    start: `npx @stoplight/prism-cli mock ${file} --port ${config.mock.port}`,
+    start: `start the Prism CLI against ${file} on port ${config.mock.port}`,
     notes: [
       'Prism returns the "scenario" example (projection without a query) for any query: it does NOT filter or paginate; X-Total-Count is the example\'s',
       exampleKeys.length ? `other examples via the Prefer: example=<key> header (${[...new Set(exampleKeys)].slice(0, 6).join(', ')}${exampleKeys.length > 6 ? ', …' : ''})` : 'no per-filter examples (no field with ≤ 10 values)',

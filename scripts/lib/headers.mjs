@@ -1,3 +1,4 @@
+import { env as readEnv } from './env.mjs';
 // HTTP headers declared in a flow (flow level + step level).
 // Values may reference environment variables as ${NAME} so secrets (session cookies,
 // bearer tokens) never need to be committed in the YAML. Secret-looking headers are
@@ -22,7 +23,7 @@ export function isSecretHeader(name) {
  * @param {{ add(field: string, msg: string): void }} issues
  * @param {Record<string, string|undefined>} [env]
  */
-export function parseHeaders(raw, field, issues, env = process.env) {
+export function parseHeaders(raw, field, issues, env = readEnv()) {
   const out = {};
   if (raw === undefined || raw === null) return out;
   if (typeof raw !== 'object' || Array.isArray(raw)) {

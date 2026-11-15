@@ -13,7 +13,7 @@ node ../../scripts/cli.mjs verify flow-broken.yaml --diagnose  # red on purpose:
 curl -X POST localhost:4010/__atrezzo/reset -d '{"scenario":"empty"}'
 ```
 
-With `playwright` or `playwright-core` installed (in this repo: `npm i -D playwright-core`, uses `/usr/bin/chromium` or `ATREZZO_CHROME`), `verify flow.yaml --driver playwright` counts in the real DOM.
+With `playwright` or `playwright-core` available in the project (system Chromium, or `ATREZZO_CHROME`), `verify flow.yaml --driver playwright` counts in the real DOM.
 
 ### Headers (apps with a session)
 

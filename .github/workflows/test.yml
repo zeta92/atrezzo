@@ -14,6 +14,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm test
+      # No install step: the plugin has no runtime or dev dependencies. The browser
+      # cases skip themselves when playwright is not present in the checkout.
+      - run: node --test tests/*.test.mjs

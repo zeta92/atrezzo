@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { AtrezzoError, EXIT } from './errors.mjs';
 import { generateWorld } from './world.mjs';
 import { mergeHeaders, maskHeaders, redact, formatHeaders } from './headers.mjs';
+import { env as readEnv } from './env.mjs';
 
 // ---------- helpers ----------
 
@@ -125,7 +126,7 @@ export async function loadPlaywright(cwd) {
 }
 
 /** executablePath to use: ATREZZO_CHROME wins; playwright-core (no bundled browsers) falls back to the system Chromium. */
-export function chromeExecutable(moduleName, env = process.env) {
+export function chromeExecutable(moduleName, env = readEnv()) {
   if (env.ATREZZO_CHROME) return env.ATREZZO_CHROME;
   if (moduleName === 'playwright-core' && existsSync(DEFAULT_CHROME)) return DEFAULT_CHROME;
   return undefined;
@@ -140,7 +141,7 @@ async function defaultPageFactory(cwd, { viewport } = {}) {
   const executablePath = chromeExecutable(pw.name);
   let browser;
   try { browser = await chromium.launch({ executablePath, args: ['--no-sandbox'] }); } catch (e) {
-    const hint = executablePath ? `does ${executablePath} exist and is it executable? (override with ATREZZO_CHROME=/path)` : 'Run: npx playwright install chromium, or set ATREZZO_CHROME=/path/to/chromium';
+    const hint = executablePath ? `does ${executablePath} exist and is it executable? (override with ATREZZO_CHROME=/path)` : 'Set ATREZZO_CHROME=/path/to/chromium';
     throw new AtrezzoError(`${pw.name} is installed but cannot launch Chromium: ${e.message.split('\n')[0]}\n  ${hint}`, { exitCode: EXIT.UNVERIFIABLE });
   }
   const context = await browser.newContext(viewport ? { viewport } : {});

@@ -6,6 +6,7 @@ import { parseYaml, YamlError } from './yaml.mjs';
 import { AtrezzoError } from './errors.mjs';
 import { templateFor, entityFields, RENAMED_TEMPLATES } from './world.mjs';
 import { parseHeaders } from './headers.mjs';
+import { env as readEnv } from './env.mjs';
 
 export const DEFAULT_NOW = '2025-01-15T09:00:00.000Z';
 
@@ -351,7 +352,7 @@ export function loadScenario(file) {
  * @param {string} file
  * @param {{ env?: Record<string, string|undefined> }} [opts]  env: source for ${VAR} in headers
  */
-export function loadFlow(file, { env = process.env } = {}) {
+export function loadFlow(file, { env = readEnv() } = {}) {
   const doc = readYaml(file, 'flow');
   const issues = new Issues();
   if (!isObj(doc)) throw new AtrezzoError(`${file}: a flow must be a YAML map`);

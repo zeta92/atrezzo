@@ -87,7 +87,7 @@ test('atrezzo runtimes lists adapters, availability and start command', () => {
   for (const id of RUNTIME_IDS) assert.match(r.stdout, new RegExp(`${id}\\s+\\d/3`));
   assert.match(r.stdout, /msw\s+3\/3 detected/);
   assert.match(r.stdout, /builtin\s+1\/3 possible/);
-  assert.match(r.stdout, /start: npx @stoplight\/prism-cli mock/);
+  assert.match(r.stdout, /start: start the Prism CLI against/);
 });
 
 // ---------- emission ----------
@@ -118,7 +118,7 @@ test('world always writes JSON + runtime.mjs, then the configured runtime output
   assert.equal(r.code, 0, r.stderr);
   const gen = join(dir, 'atrezzo/.generated');
   assert.deepEqual(readdirSync(gen).sort(), ['conciliacion.json', 'conciliacion.openapi.yaml', 'runtime.mjs']);
-  assert.match(r.stdout, /Runtime prism:\n  start: npx @stoplight\/prism-cli mock atrezzo\/\.generated\/conciliacion\.openapi\.yaml --port 4010/);
+  assert.match(r.stdout, /Runtime prism:\n  start: start the Prism CLI against atrezzo\/\.generated\/conciliacion\.openapi\.yaml on port 4010/);
   assert.match(r.stdout, /does NOT filter or paginate/);
 });
 
