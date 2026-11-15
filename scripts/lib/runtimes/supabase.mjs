@@ -16,8 +16,6 @@ function signals(ctx) {
     const dir = ctx.files('supabase');
     if (dir.length) out.push({ text: `folder ${dir[0]}/`, weight: 2 });
   }
-  const envKey = Object.keys(ctx.env).sort().find((k) => /SUPABASE_URL$/.test(k));
-  if (envKey) out.push({ text: `${envKey} in ${ctx.env[envKey].file}`, weight: 2 });
   return out;
 }
 
@@ -25,8 +23,8 @@ export const meta = metaFrom({
   id: 'supabase',
   label: 'Supabase (seed.sql for Postgres + PostgREST)',
   signals,
-  none: 'no supabase/, @supabase/supabase-js or SUPABASE_URL',
-  startHint: 'DATABASE_URL=… <dir>/reset.sh (Supabase CLI or local Postgres + PostgREST)',
+  none: 'no supabase/ or @supabase/supabase-js',
+  startHint: 'DATABASE_URL=… <dir>/reset.sh (you set DATABASE_URL in your own shell; default: the local Supabase CLI database)',
 });
 
 const PG_TYPE = { integer: 'bigint', number: 'numeric', boolean: 'boolean', datetime: 'timestamptz', string: 'text' };
@@ -194,7 +192,7 @@ export function emit({ dataset, config, dir }) {
       { path: p(out, 'reset.sh'), content: resetSh(dataset, total), mode: 0o755 },
       { path: p(out, 'README.md'), content: readme(dataset, out) },
     ],
-    start: `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres ${out}/reset.sh   (after supabase start)`,
+    start: `DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres ${out}/reset.sh   (after supabase start; DATABASE_URL is yours to set in your shell, atrezzo does not read it)`,
     notes: [
       `${total} rows in ${Object.keys(dataset.entities).length} tables; stable ids 1..n (the same as in serve/msw)`,
       'the app queries /rest/v1/<entity> (PostgREST): the scenario routes are not used; PostgREST does filtering and pagination',

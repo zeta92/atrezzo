@@ -21,7 +21,7 @@ description: "Sets up atrezzo in a repo (scenario-based mocks). Use it when the 
 | runtime | signals | what `world` emits |
 |---|---|---|
 | `msw` | `msw` in deps, `public/mockServiceWorker.js` | `.mjs` handlers (in `<front>/src/mocks/atrezzo/` with a workspace) |
-| `supabase` | `supabase/config.toml`, `@supabase/supabase-js`, `supabase/`, `*SUPABASE_URL` in `.env*` | `schema.sql`, `seed.sql`, `reset.sh`, README next to `<backend>/supabase/` |
+| `supabase` | `supabase/config.toml`, `@supabase/supabase-js`, `supabase/` | `schema.sql`, `seed.sql`, `reset.sh`, README next to `<backend>/supabase/` |
 | `wiremock` | dependency, `mappings/`+`__files/`, docker-compose/scripts | pre-generated `mappings/` + `__files/` (501 for anything not enumerated) |
 | `prism` | `@stoplight/prism-cli`, `prism mock` in scripts; a spec alone scores 1 | `<scenario>.openapi.yaml` with examples |
 | `builtin` | always 1 (universal fallback) | nothing else: `atrezzo serve` |

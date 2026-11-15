@@ -6,7 +6,7 @@
 // picks its body file from the path segment. Anything else hits a 501 fallback
 // that says so — never a wrong page.
 import { existsSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { createEngine } from '../contract.mjs';
 import { columnInfo, metaFrom, p, slug } from './common.mjs';
 
@@ -37,7 +37,7 @@ export const meta = metaFrom({
   label: 'WireMock (static mappings + __files)',
   signals,
   none: 'no dependency, mappings/__files folders or docker-compose with wiremock',
-  startHint: `docker run --rm -p 4010:8080 -v "$PWD/atrezzo/.generated/wiremock/<scenario>:/home/wiremock" wiremock/wiremock:${WIREMOCK_VERSION}`,
+  startHint: `docker run --rm -p 4010:8080 -v "<project>/atrezzo/.generated/wiremock/<scenario>:/home/wiremock" wiremock/wiremock:${WIREMOCK_VERSION}`,
 });
 
 const MAX_FILTER_VALUES = 20;
@@ -92,8 +92,10 @@ const json = (v) => `${JSON.stringify(v, null, 2)}\n`;
 /**
  * @param {{ dataset, config, requests?: string[] }} args  requests: "/path?query" from flows
  */
-export function emit({ dataset, config, requests = [] }) {
+export function emit({ dataset, config, dir = '.', requests = [] }) {
   const root = p(config.generatedDir, 'wiremock', dataset.scenario);
+  // Docker needs an absolute host path for -v: we print the project's own path, resolved here.
+  const hostRoot = resolve(dir, root);
   const engine = createEngine(dataset);
   const files = [];
   const notes = [];
@@ -167,7 +169,7 @@ export function emit({ dataset, config, requests = [] }) {
   );
   return {
     files: files.sort((a, b) => a.path.localeCompare(b.path)),
-    start: `docker run --rm -p ${config.mock.port}:8080 -v "$PWD/${root}:/home/wiremock" wiremock/wiremock:${WIREMOCK_VERSION}   ·   java -jar wiremock-standalone-${WIREMOCK_VERSION}.jar --root-dir ${root} --port ${config.mock.port}`,
+    start: `docker run --rm -p ${config.mock.port}:8080 -v "${hostRoot}:/home/wiremock" wiremock/wiremock:${WIREMOCK_VERSION}   ·   java -jar wiremock-standalone-${WIREMOCK_VERSION}.jar --root-dir ${root} --port ${config.mock.port}`,
     notes,
     stubs,
   };

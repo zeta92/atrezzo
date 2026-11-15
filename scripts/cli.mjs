@@ -178,7 +178,7 @@ async function cmdServe({ flags }) {
   if (!ids.some((id) => SERVABLE.includes(id))) {
     const name = flags.scenario ?? '<scenario>';
     out(`atrezzo serve serves the builtin and msw runtimes; the config uses ${ids.join(' + ')}.`);
-    for (const id of ids) out(`  ${id}: ${getAdapter(id).meta.startHint.replaceAll('<scenario>', name)}`);
+    for (const id of ids) out(`  ${id}: ${getAdapter(id).meta.startHint.replaceAll('<scenario>', name).replaceAll('<project>', cfg._dir)}`);
     out('  (run atrezzo world <scenario.yaml> first to generate its files)');
     out('  to serve anyway with the built-in server: atrezzo serve --runtime builtin');
     return EXIT.UNVERIFIABLE;

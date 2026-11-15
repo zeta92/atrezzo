@@ -63,15 +63,15 @@ $ atrezzo verify flow-broken.yaml --diagnose
 
 ### No session means red, never green
 
-One flow, run twice with the Playwright driver (real Chromium) against a small cookie-protected app. That app is a scratch server, not part of this repo; the same case runs in `tests/headers.test.mjs` if you want to reproduce it. The flow sends `Cookie: "${APP_COOKIE}"`. Abridged: the table headers are cut.
+One flow, run twice with the Playwright driver (real Chromium) against a small cookie-protected app. That app is a scratch server, not part of this repo; the same case runs in `tests/headers.test.mjs` if you want to reproduce it. The flow sends `Cookie: "${YOUR_API_KEY}"`; you set that variable in your own shell for each run. Abridged: the table headers are cut.
 
 ```text
-$ APP_COOKIE="session=valid" atrezzo verify flow.yaml --driver playwright
+$ YOUR_API_KEY="session=valid" atrezzo verify flow.yaml --driver playwright
 Headers: Cookie: ***
 1  customers  table tbody tr (customer rows)  =6        6         OK
 1 OK · 0 KO · 0 not verified → GREEN
 
-$ APP_COOKIE="session=expired" atrezzo verify flow.yaml --driver playwright
+$ YOUR_API_KEY="session=expired" atrezzo verify flow.yaml --driver playwright
 Headers: Cookie: ***
 1  customers  table tbody tr (customer rows)  =6        0         KO
   #1: the app redirected /customers → /login?next=%2Fcustomers (login screen: no session or session expired; check the flow headers/Cookie)
@@ -211,7 +211,7 @@ The scenario does not depend on where it is served. `world` always writes the wo
 |---|---|---|---|
 | `builtin` | nothing more specific; any backend or language | real HTTP via `atrezzo serve`: filters, pagination, envelopes, detail routes, scenario reset, hot reload, gap log | writes (405), injected latency or errors |
 | `msw` | `msw` in dependencies | handlers that run the same engine as `serve`, in the browser or in Node tests | install msw or register the worker for you; record gaps |
-| `supabase` | `supabase/config.toml`, `@supabase/supabase-js`, `*SUPABASE_URL` | `schema.sql`, `seed.sql` with the world's ids, and an idempotent `reset.sh` that refuses a non-local database | simulate RLS or auth; filtering and pagination are PostgREST's, not atrezzo's |
+| `supabase` | `supabase/config.toml`, `@supabase/supabase-js`, `supabase/` | `schema.sql`, `seed.sql` with the world's ids, and an idempotent `reset.sh` that refuses a non-local database | simulate RLS or auth; filtering and pagination are PostgREST's, not atrezzo's |
 | `prism` | `@stoplight/prism-cli` (a spec alone is not enough) | an OpenAPI 3.1 file whose examples come from the world | filter or paginate: any query gets the default example |
 | `wiremock` | a WireMock dependency, `mappings/` + `__files/`, or docker-compose | mappings for every enumerable combination: each filter value, pages, and the exact requests in your flows | combined filters or unlisted pages: those get a **501** with the list of combinations it did generate, never a wrong page |
 
@@ -294,7 +294,7 @@ generated folder. It makes no network calls except to the mock it starts on `loc
 no telemetry, no account and no personal data involved. Uninstalling is deleting the plugin; deleting
 the two folders removes everything it wrote.
 
-**Credentials.** A flow can send a header whose value comes from the shell that ran the command; secret-looking headers print as `***` in the table, in `--json` and in error messages, and nothing is written to a log or to disk.
+**Credentials.** atrezzo asks for none and looks for none on your machine. A flow can send a header whose value you pass yourself, as a variable in the shell you run the command from; secret-looking headers print as `***` in the table, in `--json` and in error messages, and nothing is written to a log or to disk.
 
 <details>
 <summary><b>Upgrading from 0.3: breaking changes</b></summary>
@@ -345,7 +345,7 @@ Unchanged: the `atrezzo/flujos/` directory and flow file names, skill commands s
 <summary><b>Repository layout</b></summary>
 
 ```
-.claude-plugin/              plugin.json (manifest) · marketplace.json (zeta92/atrezzo) · icon.png
+.claude-plugin/              plugin.json (manifest) · marketplace.json (zeta92/atrezzo)
 assets/readme/               README images (SVG) and the demo GIF
 skills/                      router + 6 skills
 scripts/cli.mjs              CLI (bin: atrezzo)

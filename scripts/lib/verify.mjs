@@ -135,7 +135,7 @@ export function chromeExecutable(moduleName, env = readEnv()) {
 async function defaultPageFactory(cwd, { viewport } = {}) {
   const pw = await loadPlaywright(cwd);
   if (!pw) {
-    throw new AtrezzoError('The playwright driver needs the "playwright" (or "playwright-core") package, which is not installed in this project.\n  Install it with: npm i -D playwright-core   (uses the system Chromium; ATREZZO_CHROME=/path for another binary)\n  or: npm i -D playwright && npx playwright install chromium\n  Or use --driver http. Nothing was verified.', { exitCode: EXIT.UNVERIFIABLE });
+    throw new AtrezzoError('The playwright driver needs the "playwright" (or "playwright-core") package, which is not installed in this project.\n  Add playwright-core to the project\'s devDependencies with your package manager (it uses the system Chromium; ATREZZO_CHROME=/path for another binary),\n  or playwright together with its Chromium browser.\n  Or use --driver http. Nothing was verified.', { exitCode: EXIT.UNVERIFIABLE });
   }
   const chromium = pw.mod.chromium ?? pw.mod.default?.chromium;
   const executablePath = chromeExecutable(pw.name);

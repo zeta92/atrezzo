@@ -16,7 +16,7 @@ A 0.1 config without a `runtime` field means `msw` (the old behavior: handlers o
 | the project… | runtime | why |
 |---|---|---|
 | is a JS front end with `msw` installed (Vite, Next client, Storybook, vitest) | **msw** | intercepts `fetch` without changing URLs; same engine as `serve` |
-| uses Supabase (`supabase/`, `@supabase/supabase-js`, `SUPABASE_URL`) | **supabase** | there is no mock layer: the "API" is PostgREST over Postgres → the world is loaded into the local DB |
+| uses Supabase (`supabase/`, `@supabase/supabase-js`) | **supabase** | there is no mock layer: the "API" is PostgREST over Postgres → the world is loaded into the local DB |
 | already has WireMock (mappings/`__files`, docker-compose, dependency) | **wiremock** | static stubs the team already knows how to run |
 | already uses Prism (`@stoplight/prism-cli` in deps or scripts) | **prism** | mock from a generated OpenAPI with examples from the world |
 | has a backend in another language, E2E, apps that cannot be instrumented, or none of the above | **builtin** | `atrezzo serve`: real HTTP with no dependencies, real filtering and pagination |
@@ -29,7 +29,7 @@ Each adapter returns 0..3 with its reasons; the highest wins and, on a tie, the 
 |---|---|
 | builtin | always 1: universal fallback |
 | msw | `msw` in dependencies (3) · `public/mockServiceWorker.js` (2) |
-| supabase | `supabase/config.toml` (3) · `@supabase/supabase-js` (2) · `supabase/` folder (2) · `*SUPABASE_URL` in `.env*` (2) |
+| supabase | `supabase/config.toml` (3) · `@supabase/supabase-js` (2) · `supabase/` folder (2) |
 | prism | `@stoplight/prism-cli` (3) · `prism mock/proxy` in scripts (2) · an OpenAPI spec in the repo (1) |
 | wiremock | `*wiremock*` dependency (3) · `mappings/` + `__files/` at the root or in `wiremock/` (3) · `wiremock` in scripts or docker-compose (2) |
 
@@ -80,14 +80,14 @@ Tested against a real PostgreSQL 17 (test `supabase: reset.sh …`, skipped with
 
 #### Alternative: a PostgREST facade over `serve`/MSW
 
-If you do not want to run Postgres, you can point `SUPABASE_URL` at the mock and translate what the app uses in front of `engine.handle`: `status=eq.x` → `status=x`, `in.(a,b)` → `a,b`, `Range: 0-11` → `offset=0&limit=12` (and answer `Content-Range`), `Accept: application/vnd.pgrst.object+json` → detail. GoTrue: `POST /auth/v1/token` with a fixed session for a world user. Do not reimplement PostgREST: only what the screen uses.
+If you do not want to run Postgres, you can point the app's Supabase URL (in your app's own config) at the mock and translate what the app uses in front of `engine.handle`: `status=eq.x` → `status=x`, `in.(a,b)` → `a,b`, `Range: 0-11` → `offset=0&limit=12` (and answer `Content-Range`), `Accept: application/vnd.pgrst.object+json` → detail. GoTrue: `POST /auth/v1/token` with a fixed session for a world user. Do not reimplement PostgREST: only what the screen uses.
 
 ### prism
 
 - **Does**: `world` writes `<generatedDir>/<scenario>.openapi.yaml` (OpenAPI 3.1) from the scenario endpoints: one schema per entity with `required` = fields never null in the world, filter and pagination parameters, `X-Total-Count`, `/{id}` detail with 404, and `examples` computed by the engine (the projection without a query, plus one per value of the first filter with ≤ 10 values, e.g. `status-issue`).
 - **Does not**: filter or paginate. Prism returns the default example for **any** query (`?status=issue` returns all 40 orders); another example only with the `Prefer: example=status-issue` header. The detail always returns the first id (`/api/orders/999` → 200 with id 1) unless you send `Prefer: code=404`. With `-d` (dynamic) it generates data that is not the world. Filters are declared as `string` without `enum` because with an enum Prism would reject the `a,b` lists the engine accepts.
 - **Does (Prism's own)**: validate requests against the parameters: `?limit=abc` → 400.
-- **Start**: `npx @stoplight/prism-cli mock atrezzo/.generated/orders.openapi.yaml --port 4010`.
+- **Start**: with `@stoplight/prism-cli` already among your project's dev dependencies, `prism mock atrezzo/.generated/orders.openapi.yaml --port 4010`.
 
 The generated OpenAPI is covered by the automated `prism: …` tests (parseable OpenAPI 3.1, paths, `required`, and read identically by PyYAML). The Prism behavior described above was checked by hand with `@stoplight/prism-cli` 5.16.0 on an earlier version of the example (0.3, built on the old Spanish templates); it has not been re-run against the current `orders` scenario.
 
@@ -104,7 +104,7 @@ WireMock cannot run the projection: Handlebars has no sane way to filter + sort 
 - **Does not**: combined filters, `a,b` lists, other sort orders or pages not enumerated. Those requests fall into a low-priority mapping that answers **501** with `{"error": …, "generated": [...]}`: never a wrong page. If a screen requests a new combination, add it to a flow and run `world` again. It does not emit `X-Atrezzo-Ignored` either. Do not mix two scenarios in the same `mappings/` folder (routes clash): each scenario is its own root.
 - **Start**:
   ```bash
-  docker run --rm -p 4010:8080 -v "$PWD/atrezzo/.generated/wiremock/orders:/home/wiremock" wiremock/wiremock:3.13.2
+  docker run --rm -p 4010:8080 -v "/path/to/your/project/atrezzo/.generated/wiremock/orders:/home/wiremock" wiremock/wiremock:3.13.2
   # or: java -jar wiremock-standalone-3.13.2.jar --root-dir atrezzo/.generated/wiremock/orders --port 4010
   ```
   To switch scenarios without restarting: `POST /__admin/mappings/reset` + `POST /__admin/mappings/import` with the other scenario's mappings.
@@ -217,4 +217,4 @@ With explicit `--front`/`--backend` nothing is guessed; whatever you do not pass
 
 ### Path base: front end vs spec
 
-The spec's `servers[0].url` can be relative (`/api`) or absolute (`https://api.x.com/v2`): `import` keeps the path, prepends it to every path and notes it in the report (`Base: /v2 (servers[0].url = "https://api.x.com/v2", absolute: keeping the path)`). If the front end uses another prefix (`mock.apiPrefix`, e.g. a proxy that rewrites `/api` → `/v2`), the report warns you: re-import with `--base /api`.
+The spec's `servers[0].url` can be relative (`/api`) or absolute (`https://api.example.com/v2`): `import` keeps the path, prepends it to every path and notes it in the report (`Base: /v2 (servers[0].url = "https://api.example.com/v2", absolute: keeping the path)`). If the front end uses another prefix (`mock.apiPrefix`, e.g. a proxy that rewrites `/api` → `/v2`), the report warns you: re-import with `--base /api`.

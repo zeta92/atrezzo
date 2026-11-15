@@ -154,8 +154,8 @@ export function candidatesTable(candidates) {
 }
 
 const ENV_FILES = ['.env', '.env.local', '.env.development', '.env.development.local', '.env.example'];
-// Only the keys that say where the API lives reach memory; secrets in the same file are skipped unread.
-const ENV_KEY = /(API|BASE|URL|HOST|PORT|ORIGIN)/i;
+// Only the named keys that say where the API lives are kept; every other line (keys, tokens,
+// passwords) is skipped without its value being stored.
 const API_ENV = ['NEXT_PUBLIC_API_URL', 'VITE_API_URL', 'VITE_API_BASE_URL', 'REACT_APP_API_URL', 'PUBLIC_API_URL', 'NUXT_PUBLIC_API_BASE'];
 
 export function envKeys(dir) {
@@ -165,7 +165,7 @@ export function envKeys(dir) {
     if (!text) continue;
     for (const line of text.split(/\r?\n/)) {
       const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
-      if (m && ENV_KEY.test(m[1]) && !(m[1] in out)) out[m[1]] = { file: f, value: m[2].trim().replace(/^['"]|['"]$/g, '') };
+      if (m && API_ENV.includes(m[1]) && !(m[1] in out)) out[m[1]] = { file: f, value: m[2].trim().replace(/^['"]|['"]$/g, '') };
     }
   }
   return out;
@@ -213,8 +213,6 @@ export function projectContext(root, workspace = {}) {
     for (const [k, v] of Object.entries(pkg?.scripts ?? {})) scripts.push({ where: `${label(p)}package.json#scripts.${k}`, text: String(v) });
   }
   const files = (relPath) => places.filter((p) => existsSync(join(p.dir, relPath))).map((p) => `${label(p)}${relPath}`);
-  const env = {};
-  for (const p of places) for (const [k, v] of Object.entries(envKeys(p.dir))) env[k] ??= { ...v, file: `${label(p)}${v.file}` };
   const compose = [];
   for (const p of places) for (const f of ['docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml']) {
     const t = readText(join(p.dir, f));
@@ -227,6 +225,6 @@ export function projectContext(root, workspace = {}) {
     root, workspace, places,
     dep: (name) => deps[name]?.[0] ?? null,
     depMatching: (re) => Object.keys(deps).filter((d) => re.test(d)).sort().map((d) => ({ name: d, where: deps[d][0] })),
-    files, env, scripts, compose, specs,
+    files, scripts, compose, specs,
   };
 }

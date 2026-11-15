@@ -22,7 +22,7 @@ This shop has no login, but a flow can declare headers to authenticate against a
 ```yaml
 viewport: { width: 1440, height: 1000 }
 headers:                          # every request in the flow
-  Cookie: "${APP_COOKIE}"         # from the environment: APP_COOKIE="$(cat /tmp/cookie.txt)" atrezzo verify …
+  Authorization: "Bearer ${YOUR_API_KEY}"   # you pass it yourself: YOUR_API_KEY=… atrezzo verify …
 steps:
   - screen: customers
     visit: /customers

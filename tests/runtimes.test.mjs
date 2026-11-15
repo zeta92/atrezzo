@@ -35,7 +35,7 @@ test('detection matrix: project with supabase/ → supabase', () => {
   const c = choose({ 'package.json': pkg({ react: '18' }), 'supabase/migrations/001.sql': 'select 1;' });
   assert.equal(c.id, 'supabase');
   assert.match(c.why, /folder supabase\//);
-  const full = choose({ 'package.json': pkg({ '@supabase/supabase-js': '2' }), 'supabase/config.toml': 'project_id = "x"\n', '.env.local': 'NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:54321\n' });
+  const full = choose({ 'package.json': pkg({ '@supabase/supabase-js': '2' }), 'supabase/config.toml': 'project_id = "x"\n' });
   assert.equal(full.id, 'supabase');
   assert.equal(full.ranking.find((r) => r.id === 'supabase').score, 3);
 });
@@ -126,7 +126,7 @@ test('serve: with a non-servable runtime it prints how to start it and exits wit
   const dir = tmpProject({ 'atrezzo.config.json': JSON.stringify({ ...DEFAULT_CONFIG, runtime: 'wiremock' }), 'atrezzo/scenarios/conciliacion.yaml': SCENARIO });
   const r = cli(['serve', '--scenario', 'conciliacion'], dir);
   assert.equal(r.code, 2);
-  assert.match(r.stdout, /wiremock: docker run --rm -p 4010:8080 -v "\$PWD\/atrezzo\/\.generated\/wiremock\/conciliacion:\/home\/wiremock"/);
+  assert.ok(r.stdout.includes(`wiremock: docker run --rm -p 4010:8080 -v "${dir}/atrezzo/.generated/wiremock/conciliacion:/home/wiremock"`), r.stdout);
   assert.match(r.stdout, /atrezzo serve --runtime builtin/);
 });
 

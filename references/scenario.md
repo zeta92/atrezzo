@@ -170,7 +170,7 @@ scenario: scenarios/orders.yaml      # relative to the flow (optional: see "Real
 base_url: http://127.0.0.1:4010       # optional (otherwise --url or the config)
 viewport: { width: 1440, height: 1000 }  # optional, playwright only (default 1280x720)
 headers:                              # optional: sent on EVERY request of the flow
-  Cookie: "${APP_COOKIE}"             # ${VAR} comes from the environment; do not commit secrets
+  Authorization: "Bearer ${YOUR_API_KEY}"  # you set YOUR_API_KEY in the shell you run verify from; do not commit secrets
 steps:
   - screen: order-list
     visit: /orders                    # route for playwright
@@ -188,7 +188,7 @@ Scenario assertions are added to the step of their `screen` (default: the last o
 
 - At flow level and/or step level. A step's effective headers = the flow's + the step's; if a name repeats (case-insensitive), the step wins.
 - `playwright` driver: `context.setExtraHTTPHeaders()` with the effective headers before opening each `visit` (every request of the page gets them: document, fetch, RSC…). `http` driver: the same headers on every `fetch` of `requests`.
-- `${NAME}` in a value is replaced by the environment variable. If it is not set, the flow is invalid (exit 3) rather than sending an empty header.
+- `${NAME}` in a value is replaced by the variable you set in the shell that runs the command. If it is not set, the flow is invalid (exit 3) rather than sending an empty header.
 - Secrets: `Cookie`, `Authorization`, `Proxy-Authorization`, `X-Api-Key` and any name containing `token`, `secret`, `session`, `auth`, `password` or `api-key` print as `***` in the table, in `--json` and in error messages. Values are never written to logs.
 - Values: single-line text (numbers and booleans are converted to text). Names per RFC 7230.
 
