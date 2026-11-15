@@ -294,6 +294,11 @@ generated folder. It makes no network calls except to the mock it starts on `loc
 no telemetry, no account and no personal data involved. Uninstalling is deleting the plugin; deleting
 the two folders removes everything it wrote.
 
+**Credentials.** atrezzo reads no credential file: not `.env`, not `.netrc`, not the keychain. A
+flow can send a header such as `Cookie: "${APP_COOKIE}"`, and that value is whatever you exported in
+the shell that ran the command; secret-looking headers print as `***` in the table, in `--json` and
+in error messages, and are never written to a log or to disk.
+
 <details>
 <summary><b>Upgrading from 0.3: breaking changes</b></summary>
 

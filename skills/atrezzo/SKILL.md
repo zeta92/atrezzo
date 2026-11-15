@@ -1,6 +1,6 @@
 ---
 name: atrezzo
-description: API mocks from app states (world + scenario). Use it when the user asks for mocks, fixtures, test data or to "simulate the API" for a screen or flow, wants to reproduce a specific state ("12 rows, 3 with an issue"), or wants to check that a screen renders what it should. Decides which atrezzo skill applies.
+description: "API mocks from app states (world + scenario). Use it when the user asks for mocks, fixtures, test data or to \"simulate the API\" for a screen or flow, wants to reproduce a specific state (\"12 rows, 3 with an issue\"), or wants to check that a screen renders what it should. Decides which atrezzo skill applies."
 ---
 
 # atrezzo — router

@@ -154,6 +154,8 @@ export function candidatesTable(candidates) {
 }
 
 const ENV_FILES = ['.env', '.env.local', '.env.development', '.env.development.local', '.env.example'];
+// Only the keys that say where the API lives reach memory; secrets in the same file are skipped unread.
+const ENV_KEY = /(API|BASE|URL|HOST|PORT|ORIGIN)/i;
 const API_ENV = ['NEXT_PUBLIC_API_URL', 'VITE_API_URL', 'VITE_API_BASE_URL', 'REACT_APP_API_URL', 'PUBLIC_API_URL', 'NUXT_PUBLIC_API_BASE'];
 
 export function envKeys(dir) {
@@ -163,7 +165,7 @@ export function envKeys(dir) {
     if (!text) continue;
     for (const line of text.split(/\r?\n/)) {
       const m = /^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*)$/.exec(line);
-      if (m && !(m[1] in out)) out[m[1]] = { file: f, value: m[2].trim().replace(/^['"]|['"]$/g, '') };
+      if (m && ENV_KEY.test(m[1]) && !(m[1] in out)) out[m[1]] = { file: f, value: m[2].trim().replace(/^['"]|['"]$/g, '') };
     }
   }
   return out;

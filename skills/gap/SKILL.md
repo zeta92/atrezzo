@@ -1,6 +1,6 @@
 ---
 name: gap
-description: Fills a gap in the atrezzo mock (the app requests a route the scenario does not declare) from the code that consumes it and the contract. Use it when the mock answers 404 with `atrezzo.miss: true` and the missing route in `atrezzo.gap`, `atrezzo misses` or `doctor` show unresolved gaps, "the app requests a route that doesn't exist", "mock 404", "incomplete mock", or an endpoint is missing from the scenario.
+description: "Fills a gap in the atrezzo mock (the app requests a route the scenario does not declare) from the code that consumes it and the contract. Use it when the mock answers 404 with `atrezzo.miss: true` and the missing route in `atrezzo.gap`, `atrezzo misses` or `doctor` show unresolved gaps, \"the app requests a route that doesn't exist\", \"mock 404\", \"incomplete mock\", or an endpoint is missing from the scenario."
 ---
 
 # /atrezzo:gap

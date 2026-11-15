@@ -1,6 +1,6 @@
 ---
 name: init
-description: Sets up atrezzo in a repo (scenario-based mocks). Use it when the user wants to start with atrezzo, there is no atrezzo.config.json, they ask to detect the stack or the runtime (MSW, Supabase, Prism, WireMock, serve), or the project is a monorepo or has a separate front end and backend.
+description: "Sets up atrezzo in a repo (scenario-based mocks). Use it when the user wants to start with atrezzo, there is no atrezzo.config.json, they ask to detect the stack or the runtime (MSW, Supabase, Prism, WireMock, serve), or the project is a monorepo or has a separate front end and backend."
 ---
 
 # /atrezzo:init

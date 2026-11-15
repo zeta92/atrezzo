@@ -1,6 +1,6 @@
 ---
 name: capture
-description: Captures the API contract (OpenAPI, types, HAR) for atrezzo. Use it when you need to know which endpoints and fields a screen consumes before writing a scenario, or when the user provides an OpenAPI spec, a HAR or a traffic recording.
+description: "Captures the API contract (OpenAPI, types, HAR) for atrezzo. Use it when you need to know which endpoints and fields a screen consumes before writing a scenario, or when the user provides an OpenAPI spec, a HAR or a traffic recording."
 ---
 
 # /atrezzo:capture

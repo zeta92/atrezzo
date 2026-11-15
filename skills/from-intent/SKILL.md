@@ -1,6 +1,6 @@
 ---
 name: from-intent
-description: Plans atrezzo states to get from screen X to goal Y. Use it when the user describes a journey ("I'm on the dashboard and want to reconcile the issues") and you need to derive the screen path, one scenario per step and the coverage gaps.
+description: "Plans atrezzo states to get from screen X to goal Y. Use it when the user describes a journey (\"I'm on the dashboard and want to reconcile the issues\") and you need to derive the screen path, one scenario per step and the coverage gaps."
 ---
 
 # /atrezzo:from-intent

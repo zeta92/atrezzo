@@ -1,6 +1,6 @@
 ---
 name: scene
-description: Creates an atrezzo scenario from an intent ("12 rows, 3 with an issue"). Use it when the user describes a screen state they want to see or test (empty, with errors, paginated, lots of data) and it has to become a versioned world + assertions.
+description: "Creates an atrezzo scenario from an intent (\"12 rows, 3 with an issue\"). Use it when the user describes a screen state they want to see or test (empty, with errors, paginated, lots of data) and it has to become a versioned world + assertions."
 ---
 
 # /atrezzo:scene

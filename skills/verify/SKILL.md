@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Verifies a screen against an atrezzo scenario and diagnoses failures. Use it when the user wants to check that a screen renders what it should, when "the rows don't show up" or "badges are missing", or before accepting a change that affects displayed data.
+description: "Verifies a screen against an atrezzo scenario and diagnoses failures. Use it when the user wants to check that a screen renders what it should, when \"the rows don't show up\" or \"badges are missing\", or before accepting a change that affects displayed data."
 ---
 
 # /atrezzo:verify
