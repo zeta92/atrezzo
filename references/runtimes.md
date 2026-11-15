@@ -65,14 +65,14 @@ Supabase has no mock layer: its API is PostgREST over Postgres. The "runtime" is
 - **Does**: `world` writes to `<backend>/supabase/atrezzo/<scenario>/` (or `supabase/atrezzo/…` at the root; without a `supabase/` folder, to `.generated/supabase/<scenario>/`):
   - `schema.sql`: minimal `CREATE TABLE IF NOT EXISTS` with types inferred from the data and FKs (so PostgREST can join); `GRANT SELECT … TO anon` if the role exists.
   - `seed.sql`: in one transaction, `TRUNCATE … RESTART IDENTITY CASCADE` + `INSERT … OVERRIDING SYSTEM VALUE` with the world's ids (the same as in `serve`/MSW) and `setval` on the sequence if the `id` column is serial/identity.
-  - `reset.sh`: applies both with `psql`, is idempotent and **refuses to touch a `DATABASE_URL` that does not look local** (exit 2; `ATREZZO_ALLOW_REMOTE=1` to force it).
+  - `reset.sh`: applies both with `psql`, is idempotent and **refuses a connection string that does not look local** unless you pass `--allow-remote` (exit 2).
   - `README.md`: steps with the Supabase CLI or standalone Postgres + PostgREST.
   - Your `supabase/seed.sql` is left alone.
 - **Does not**: project with the atrezzo engine. PostgREST handles filters, sorting, pagination (`Range`, `limit/offset`) and embeds; the scenario routes (`/api/orders`) do not exist there (supabase-js queries `/rest/v1/<entity>`). The data is identical; the response shape is PostgREST's. It does not simulate RLS or auth either: with RLS on, `anon` only sees what your policies allow. If your migrations already create the tables with other columns, `seed.sql` fails with `column … does not exist` (the scenario does not match your schema; adjust it).
 - **Start**:
   ```bash
   supabase start
-  DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres services/api/supabase/atrezzo/orders/reset.sh
+  services/api/supabase/atrezzo/orders/reset.sh postgresql://postgres@127.0.0.1:54322/postgres
   ```
   Or with `supabase db reset`: in `config.toml`, `[db.seed] sql_paths = ["./atrezzo/orders/seed.sql"]` (if your CLI version supports `sql_paths`).
 

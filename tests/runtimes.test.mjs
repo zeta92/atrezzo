@@ -155,7 +155,7 @@ test('supabase: seed.sql with as many rows as the world, stable ids and well-for
   assert.equal((stripped.match(/\(/g) || []).length, (stripped.match(/\)/g) || []).length, 'unbalanced parentheses');
   const reset = files.find((f) => f.path.endsWith('reset.sh'));
   assert.equal(reset.mode, 0o755);
-  assert.match(reset.content, /ATREZZO_ALLOW_REMOTE/);
+  assert.match(reset.content, /--allow-remote/);
 });
 
 const PG_BIN = ['17', '16', '15', '14'].map((v) => `/usr/lib/postgresql/${v}/bin`).find((d) => existsSync(join(d, 'initdb')));
@@ -171,14 +171,15 @@ test('supabase: reset.sh loads the seed into a real Postgres, twice (idempotent)
   try {
     assert.equal(su(`${PG_BIN}/initdb -D ${pg}/data -A trust -U postgres`).status, 0);
     assert.equal(su(`${PG_BIN}/pg_ctl -D ${pg}/data -w -o "-p ${port} -k ${pg} -c listen_addresses=" -l ${pg}/log start`).status, 0);
-    const env = { ...process.env, DATABASE_URL: `postgresql://postgres@localhost:${port}/postgres?host=${pg}` };
+    const dsn = `postgresql://postgres@localhost:${port}/postgres?host=${pg}`;
+    const env = { ...process.env };
     const reset = join(proj, 'atrezzo/.generated/supabase/conciliacion/reset.sh');
     for (let i = 0; i < 2; i++) {
-      const r = spawnSync('sh', [reset], { env, encoding: 'utf8' });
+      const r = spawnSync('sh', [reset, dsn], { env, encoding: 'utf8' });
       assert.equal(r.status, 0, r.stderr);
       assert.match(r.stdout, /restored \(45 rows\)/);
     }
-    const q = spawnSync('psql', [env.DATABASE_URL, '-tAc', "select (select count(*) from customers)||','||(select count(*) from orders)||','||(select count(*) from orders where status='issue')||','||(select reference from orders where id=1)"], { encoding: 'utf8' });
+    const q = spawnSync('psql', [dsn, '-tAc', "select (select count(*) from customers)||','||(select count(*) from orders)||','||(select count(*) from orders where status='issue')||','||(select reference from orders where id=1)"], { encoding: 'utf8' });
     assert.equal(q.stdout.trim(), `3,40,3,${dataset.entities.orders[0].reference}`);
   } finally {
     su(`${PG_BIN}/pg_ctl -D ${pg}/data -m immediate stop`);
