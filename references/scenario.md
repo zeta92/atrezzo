@@ -260,6 +260,19 @@ Rules:
 - Nested routes (gap `GET /api/customers/:id/orders`): declare the path with a named parameter, `path: /api/customers/:customer_id/orders` (or `/api/customers/:id/orders`: a bare `:id` names the segment before it when it is the only parameter), on an entity that carries `customer_id` (`ref: customers`). If the row reads a list of children (`customer.orders[]`), add `embed: [orders]` to the parent's endpoint.
 - Writes (POST/PUT/PATCH/DELETE): not declared. `serve --on-miss stub` answers 200 `{}` for exploring.
 
+#### Discovering and filling gaps with a browser (`atrezzo harvest`)
+
+```bash
+atrezzo harvest <url> --scenario <file> [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
+```
+
+`harvest` starts the built-in mock on a free port (unless `--port`), opens `<url>` in Chromium (using `ATREZZO_CHROME` like `verify`), collects every 404 gap the mock records (and any request retried after a failure), infers endpoints and entities, reloads the mock (`/__atrezzo/reload`), and repeats until a round adds nothing, `--until` appears, or `--rounds` is reached.
+
+- **Path and query keys**: path parameters become `:name` segments; pagination (`limit`/`offset` or `page`/`per_page`) and equality query params become `pagination` and `filters`.
+- **Fields preference**: (1) `--types <file.ts>` (`interface X` / `type X = { … }`: `string → string`, `number → integer`, `boolean → boolean`, ISO date strings → `date`, string literal unions → enum list, primitive arrays → `values:` repeated array); (2) `select=` query columns; (3) plural of the last path segment plus `id`.
+- **Singletons (`shape: object`)**: paths ending in `info`, `user`, `me`, `config`, `settings`, or a `--types` response type with no `items`/`data` key.
+- **Output**: prints a table (`endpoint`, `entity`, `shape`, `source`, `fields`) and anything it could not infer (including `POST`/`PUT`/`DELETE` writes, which are never mocked). With `--write`, merges into `<file>` keeping existing keys; without it, writes to a temporary copy.
+
 ### Assertions (`expect`)
 | field | rule |
 |---|---|

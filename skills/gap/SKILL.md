@@ -17,6 +17,8 @@ CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (`atrezzo` below). Scenario fo
 
 (405 with the same body if the route exists but the method is a write.) With `--on-miss stub` it answers 200 with `[]`/`{}` and `x-atrezzo-stub: true`: useful for exploring, but it **does not fill the gap** (it stays unresolved).
 
+> **Shortcut for blank screens:** when a screen renders blank and `atrezzo misses` lists missing routes (or chained boot calls fail one after another), run `atrezzo harvest <url> --scenario <file> [--types <file.ts>] [--until <css|text=…>] --write` to watch the browser's network in a loop, infer entities and endpoints, reload the mock, and repeat until the view renders.
+
 ## The loop (short and verifiable)
 
 1. **Pick the gap.** `atrezzo misses` → the **unresolved** one with the most `times`. Each line's suggestion tells you whether the contract already has it (`→ atrezzo import <spec>`: do it and jump to step 5), whether a scenario already declares it (only `world` + reload are missing) or whether it is a mutation. `atrezzo misses --json` gives `query`, `referer` (which screen requested it) and `accept`.

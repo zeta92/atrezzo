@@ -138,7 +138,7 @@ A mock built endpoint by endpoint is a set of canned responses. They drift apart
 - **The scenario carries its assertions.** `expect` says what the screen must show (`=12` rows, `3` badges) and which request feeds each count. That link lets `verify` tell a data problem from a rendering problem.
 - **Diagnosis, not regeneration.** A failed count produces typed hypotheses: `pagination-mismatch`, `client-side-filter`, `dedupe-by-id`, `undeclared-filter`, `null-field`, `navigation` and others. The skills forbid hand-writing data JSON: you change the scenario and regenerate.
 
-### Five commands
+### Six commands
 
 | command | what it does |
 |---|---|
@@ -146,6 +146,7 @@ A mock built endpoint by endpoint is a set of canned responses. They drift apart
 | `atrezzo import` | infers a scenario from an OpenAPI spec and reports what it could not infer |
 | `atrezzo world` | builds the world and writes the files each adapter needs |
 | `atrezzo serve` | serves the projections over HTTP, switches scenarios without a restart, records gaps |
+| `atrezzo harvest` | opens a URL in Chromium, discovers 404 gaps across rounds, infers entities/fields (`--types`, `select=`, or guess), and updates the scenario |
 | `atrezzo verify` | runs a flow against the screen, compares counts, diagnoses failures |
 
 Helpers: `atrezzo misses` (recorded gaps), `atrezzo runtimes` (adapter scores for this project), `atrezzo doctor` (what is installed, valid or stale).
@@ -245,6 +246,7 @@ node scripts/cli.mjs import [<openapi.yaml|json>] [--name api] [--base /api] [--
 node scripts/cli.mjs world <scenario.yaml> [--out dir]
 node scripts/cli.mjs serve [--scenario demo] [--port 4010] [--static dir] [--runtime builtin] [--on-miss log|stub] [--latency ms]
 node scripts/cli.mjs misses [--json] [--clear]
+node scripts/cli.mjs harvest <url> --scenario <file> [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
 node scripts/cli.mjs verify <flow.yaml> [--url …] [--driver http|playwright] [--header "Name: value"|@-]… [--diagnose] [--no-reset] [--json]
 node scripts/cli.mjs doctor
 ```
@@ -298,6 +300,10 @@ the two folders removes everything it wrote.
 
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
+
+### 0.9.0
+
+Nested paths with `:name` parameters in the middle (`/projects/:project_id/views/:view_id/tasks`), `embed: [views]` to inline child rows into each parent row, and `atrezzo harvest <url> --scenario <file>`: opens the page in Chromium, collects 404 gaps and retries, infers endpoints and entities (`--types` TypeScript interfaces → `select=` → guess; singletons with `shape: object`), reloads the mock and repeats until `--until`, no new gaps, or `--rounds`. Writes are reported, never mocked; `--write` merges into the scenario. Nothing breaks.
 
 ### 0.8.0
 

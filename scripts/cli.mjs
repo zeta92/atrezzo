@@ -17,6 +17,7 @@ import { flowRequests } from './lib/flows.mjs';
 import { runImport, formatImportReport, loadSpec } from './lib/openapi.mjs';
 import { createMissStore, missesFile, hintFor, formatMisses } from './lib/misses.mjs';
 import { parseHeaderArgs, headerLines } from './lib/headers.mjs';
+import { runHarvest, formatHarvestReport } from './lib/harvest.mjs';
 
 const HELP = `atrezzo — API mocks from application states
 
@@ -47,6 +48,11 @@ Commands:
   misses [--json] [--clear] [--dir .]
       Gaps seen by serve (routes the app requested that no scenario declares), with counts, state and
       what to do: import if the contract has the route, or the /atrezzo:gap skill.
+  harvest <url> --scenario <file> [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
+          [--static <dir>] [--port <n>] [--host 127.0.0.1]
+      Serves the scenario, opens <url> in Chromium, collects 404 gaps and retries, infers endpoints and
+      entities (--types -> select= -> guess), reloads the mock and repeats until done. Without --write,
+      prints the result and leaves a temporary copy; with --write, merges into <file>.
   runtimes [--dir .]
       Lists the adapters, their score in this project, the reason and how to start each one.
   import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
@@ -69,7 +75,7 @@ Commands:
 
 Exit codes: 0 OK · 1 assertion failed · 2 not verifiable (missing tool or mock) · 3 invalid input`;
 
-const BOOLEAN = new Set(['install', 'force', 'diagnose', 'no-reset', 'json', 'help', 'clear']);
+const BOOLEAN = new Set(['install', 'force', 'diagnose', 'no-reset', 'json', 'help', 'clear', 'write']);
 const REPEATABLE = new Set(['header']);
 
 export function parseArgs(argv) {
@@ -329,10 +335,36 @@ function cmdDoctor({ flags }) {
   return r.ok ? EXIT.OK : EXIT.INVALID;
 }
 
+async function cmdHarvest({ pos, flags }) {
+  if (!pos[0] || !flags.scenario) {
+    throw new AtrezzoError('Usage: atrezzo harvest <url> --scenario <file> [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]');
+  }
+  const cfg = loadConfig(flags.dir ?? '.');
+  const rounds = flags.rounds === undefined ? 5 : /^\d+$/.test(String(flags.rounds)) ? Number(flags.rounds) : Number.NaN;
+  if (!Number.isInteger(rounds) || rounds < 1) throw new AtrezzoError(`invalid --rounds: ${flags.rounds} (integer >= 1)`);
+  const port = flags.port === undefined ? 0 : /^\d+$/.test(String(flags.port)) ? Number(flags.port) : Number.NaN;
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new AtrezzoError(`invalid --port: ${flags.port}`);
+  const staticDir = flags.static ?? (cfg.mock.static ? join(cfg._dir, cfg.mock.static) : null);
+  const result = await runHarvest({
+    url: pos[0],
+    scenarioFile: flags.scenario,
+    until: flags.until ?? null,
+    rounds,
+    typesFile: flags.types ?? null,
+    write: !!flags.write,
+    port,
+    host: flags.host ?? '127.0.0.1',
+    staticDir,
+    cwd: cfg._dir,
+  });
+  out(formatHarvestReport(result));
+  return EXIT.OK;
+}
+
 export async function main(argv) {
   const args = parseArgs(argv);
   if (!args.cmd || args.flags.help || args.cmd === 'help') { out(HELP); return EXIT.OK; }
-  const cmds = { init: cmdInit, world: cmdWorld, serve: cmdServe, verify: cmdVerify, doctor: cmdDoctor, runtimes: cmdRuntimes, import: cmdImport, misses: cmdMisses };
+  const cmds = { init: cmdInit, world: cmdWorld, serve: cmdServe, verify: cmdVerify, doctor: cmdDoctor, runtimes: cmdRuntimes, import: cmdImport, misses: cmdMisses, harvest: cmdHarvest };
   const fn = cmds[args.cmd];
   if (!fn) throw new AtrezzoError(`Unknown command "${args.cmd}". Commands: ${Object.keys(cmds).join(', ')}`);
   return fn(args);
