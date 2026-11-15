@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/readme/hero.png" width="100%" alt="atrezzo: API mocks built from application states, not from isolated endpoints. A seeded world of 40 orders, 3 with an issue, projected onto a screen as 12 rows and 3 issue badges.">
+  <img src="https://raw.githubusercontent.com/zeta92/atrezzo/media/assets/readme/hero.png" width="100%" alt="atrezzo: API mocks built from application states, not from isolated endpoints. A seeded world of 40 orders, 3 with an issue, projected onto a screen as 12 rows and 3 issue badges.">
 </p>
 
 <p align="center">
@@ -21,7 +21,7 @@ git clone https://github.com/zeta92/atrezzo
 claude --plugin-dir ./atrezzo
 ```
 
-<h2><img src="./assets/readme/section-01-see-it-work.png" width="100%" alt="01 See it work"></h2>
+<h2><img src="https://raw.githubusercontent.com/zeta92/atrezzo/media/assets/readme/section-01-see-it-work.png" width="100%" alt="01 See it work"></h2>
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/zeta92/atrezzo/media/assets/readme/atrezzo-story.gif" width="100%" alt="18-second explainer in five beats: per-endpoint fixtures drift apart while one seeded world stays locked; every endpoint is a projection of that world; the projections populate the real page; verify counts the rendered DOM and reports 2 against 3 as a pagination mismatch with the mock untouched; the fixed flow is green.">
@@ -124,10 +124,10 @@ GET /api/users   1 time     resolved    5 s ago
 
 Run `atrezzo world` afterwards so the committed `.generated/` files match the new scenario. `doctor` flags them as stale until you do.
 
-<h2><img src="./assets/readme/section-02-how-it-works.png" width="100%" alt="02 How it works"></h2>
+<h2><img src="https://raw.githubusercontent.com/zeta92/atrezzo/media/assets/readme/section-02-how-it-works.png" width="100%" alt="02 How it works"></h2>
 
 <p align="center">
-  <img src="./assets/readme/how-it-works.png" width="100%" alt="Four stages: scenario, world, projection, screen. verify --diagnose and atrezzo misses lead back from the screen to the scenario.">
+  <img src="https://raw.githubusercontent.com/zeta92/atrezzo/media/assets/readme/how-it-works.png" width="100%" alt="Four stages: scenario, world, projection, screen. verify --diagnose and atrezzo misses lead back from the screen to the scenario.">
 </p>
 
 A mock built endpoint by endpoint is a set of canned responses. They drift apart, ids point nowhere, and a list of 40 orders has no reason to agree with a badge that says 3 issues. atrezzo starts from the state instead:
@@ -163,7 +163,7 @@ Helpers: `atrezzo misses` (recorded gaps), `atrezzo runtimes` (adapter scores fo
 
 Only the skill descriptions load at session start: about 2 KB of frontmatter for all seven.
 
-<h2><img src="./assets/readme/section-03-install.png" width="100%" alt="03 Install"></h2>
+<h2><img src="https://raw.githubusercontent.com/zeta92/atrezzo/media/assets/readme/section-03-install.png" width="100%" alt="03 Install"></h2>
 
 ```text
 /plugin marketplace add zeta92/atrezzo
@@ -203,7 +203,7 @@ node ../../scripts/cli.mjs verify flow-broken.yaml --diagnose        # red on pu
 
 Exit codes: `0` OK · `1` assertion failed · `2` not verifiable (no mock, no Playwright, or an assertion without data; never reported as OK) · `3` invalid input.
 
-<h2><img src="./assets/readme/section-04-adapters.png" width="100%" alt="04 Adapters"></h2>
+<h2><img src="https://raw.githubusercontent.com/zeta92/atrezzo/media/assets/readme/section-04-adapters.png" width="100%" alt="04 Adapters"></h2>
 
 The scenario does not depend on where it is served. `world` always writes the world (`<scenario>.json`) and the engine (`runtime.mjs`), then whatever each configured adapter needs. `init` chooses from what it finds in the repo and prints its reasons. You can override it with `--runtime`, and you can combine adapters, as in `--runtime msw,supabase`.
 
@@ -227,7 +227,7 @@ The `prism` and `wiremock` rows describe behaviour checked by hand against 0.3; 
 
 MSW handlers then go to the front end, and the Supabase seed goes to the backend. With two candidate front ends, or none, `init` does not guess: it prints the candidates and exits with 2, and you pass `--front <path> --backend <path>`.
 
-<h2><img src="./assets/readme/section-05-limits.png" width="100%" alt="05 Limits"></h2>
+<h2><img src="https://raw.githubusercontent.com/zeta92/atrezzo/media/assets/readme/section-05-limits.png" width="100%" alt="05 Limits"></h2>
 
 - **Reads only.** The mock shapes data. It does not implement business rules: no writes (they return 405), no recomputed totals, no RLS. HTTP errors and latency are not part of the world; inject them in the runtime.
 - **Only `builtin` and `msw` run the projection.** Prism returns examples without filtering or paginating. WireMock serves pre-generated combinations and answers 501 to the rest. Supabase responses take PostgREST's shape.
@@ -294,10 +294,7 @@ generated folder. It makes no network calls except to the mock it starts on `loc
 no telemetry, no account and no personal data involved. Uninstalling is deleting the plugin; deleting
 the two folders removes everything it wrote.
 
-**Credentials.** atrezzo reads no credential file: not `.env`, not `.netrc`, not the keychain. A
-flow can send a header such as `Cookie: "${APP_COOKIE}"`, and that value is whatever you exported in
-the shell that ran the command; secret-looking headers print as `***` in the table, in `--json` and
-in error messages, and are never written to a log or to disk.
+**Credentials.** A flow can send a header whose value comes from the shell that ran the command; secret-looking headers print as `***` in the table, in `--json` and in error messages, and nothing is written to a log or to disk.
 
 <details>
 <summary><b>Upgrading from 0.3: breaking changes</b></summary>
