@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { existsSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseTsTypes, mapTsType, resolveTypeForSegment } from '../scripts/lib/ts-types.mjs';
@@ -402,4 +403,169 @@ test('real Chromium: --until stops harvest early as soon as selector appears', {
 
   const sc = loadScenario(join(dir, 'scenario.yaml'));
   assert.equal(sc.endpoints.length, 1, 'stopped early before adding /api/projects or /api/projects/:project_id/tasks');
+});
+
+test('harvest --storage: ${…} in storage file or key exits 3 without navigating and never expands env', async () => {
+  const seen = [];
+  const server = createServer((req, res) => {
+    seen.push(req.url);
+    res.writeHead(200, { 'content-type': 'text/html' });
+    res.end('ok');
+  });
+  await new Promise((ok) => server.listen(0, '127.0.0.1', ok));
+  const appUrl = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const dir = tmpProject({
+      's.yaml': 'name: app\nseed: 1\nworld:\n  health: 1\nendpoints:\n  - path: /api/health\n    entity: health\n',
+      'bad-val.json': '{"local":{"token":"${API_TOKEN}"},"session":{}}',
+      'bad-key.json': '{"local":{},"session":{"${KEY}":"v"}}',
+    });
+
+    const r1 = await cliAsync(['harvest', appUrl, '--scenario', 's.yaml', '--storage', 'bad-val.json'], dir, { API_TOKEN: 'env-secret-must-not-leak' });
+    assert.equal(r1.code, 3, r1.stdout + r1.stderr);
+    assert.match(r1.stderr, /storage\.local\.token.*\$\{…\} is not expanded: atrezzo reads no environment variables/s);
+    assert.equal(seen.length, 0, 'must not navigate when storage is invalid');
+    assert.ok(!(r1.stdout + r1.stderr).includes('env-secret-must-not-leak'));
+
+    const r2 = await cliAsync(['harvest', appUrl, '--scenario', 's.yaml', '--storage', 'bad-key.json'], dir);
+    assert.equal(r2.code, 3, r2.stdout + r2.stderr);
+    assert.match(r2.stderr, /storage\.session\.\$\{KEY\}.*\$\{…\} is not expanded/s);
+    assert.equal(seen.length, 0);
+
+    const r3 = await cliAsync(['harvest', appUrl, '--scenario', 's.yaml', '--storage', '@-'], dir, { API_TOKEN: 'env-secret-must-not-leak' }, '{"local":{"token":"${API_TOKEN}"}}');
+    assert.equal(r3.code, 3, r3.stdout + r3.stderr);
+    assert.match(r3.stderr, /storage\.local\.token.*\$\{…\} is not expanded/s);
+    assert.equal(seen.length, 0);
+    assert.ok(!(r3.stdout + r3.stderr).includes('env-secret-must-not-leak'));
+  } finally {
+    await new Promise((ok) => server.close(ok));
+  }
+});
+
+test('harvest --storage: report prints storage keys and never prints values', async () => {
+  const dir = tmpProject({
+    's.yaml': 'name: app\nseed: 1\nworld:\n  health: 1\nendpoints:\n  - path: /api/health\n    entity: health\n',
+    'storage.json': '{"local":{"token":"super-secret-jwt-999"},"session":{"csrf":"secret-csrf-123"}}',
+  });
+  const initScripts = [];
+  const res = await runHarvest({
+    url: '/',
+    scenarioFile: 's.yaml',
+    storageFile: 'storage.json',
+    cwd: dir,
+    pageFactory: async () => ({
+      context: { addInitScript: async (s) => { initScripts.push(s); } },
+      page: {
+        on: () => {},
+        off: () => {},
+        goto: async () => {},
+      },
+      close: async () => {},
+    }),
+  });
+  try {
+    assert.equal(initScripts.length, 1);
+    assert.deepEqual(res.storage, { local: ['token'], session: ['csrf'] });
+    const report = formatHarvestReport(res);
+    assert.match(report, /Storage \(keys\): local: token · session: csrf/);
+    assert.ok(!report.includes('super-secret-jwt-999'), 'local value must never be printed');
+    assert.ok(!report.includes('secret-csrf-123'), 'session value must never be printed');
+    assert.ok(!JSON.stringify(res).includes('super-secret-jwt-999'), 'result must not expose values');
+    assert.ok(!JSON.stringify(res).includes('secret-csrf-123'), 'result must not expose values');
+  } finally {
+    rmSync(join(res.tempFile, '..'), { recursive: true, force: true });
+  }
+});
+
+const GUARDED_HTML = `<!doctype html>
+<html>
+<body>
+  <div id="app">loading</div>
+  <ul id="projects"></ul>
+  <script>
+    (async () => {
+      if (location.pathname === '/login') {
+        document.getElementById('app').setAttribute('data-view', 'login');
+        document.getElementById('app').textContent = 'login-screen';
+        return;
+      }
+      if (!localStorage.getItem('token')) {
+        location.replace('/login');
+        return;
+      }
+      const r1 = await fetch('/api/me');
+      if (!r1.ok) { document.getElementById('app').textContent = 'missing-me'; return; }
+      const me = await r1.json();
+
+      const r2 = await fetch('/api/projects');
+      if (!r2.ok) { document.getElementById('app').textContent = 'missing-projects'; return; }
+      const projects = await r2.json();
+
+      const ul = document.getElementById('projects');
+      for (const p of projects) {
+        const li = document.createElement('li');
+        li.textContent = p.name || String(p.id);
+        ul.appendChild(li);
+      }
+      document.getElementById('app').setAttribute('data-view', 'dashboard');
+      document.getElementById('app').textContent = 'dashboard:' + me.id + ':' + projects.length;
+    })();
+  </script>
+</body>
+</html>
+`;
+
+test('real Chromium: guarded page without --storage only sees /login; with --storage discovers both endpoints and mounts view', { skip: skipReal, timeout: 90_000 }, async () => {
+  const dir = tmpProject({
+    'index.html': GUARDED_HTML,
+    'scenario.yaml': 'name: guarded\nseed: 4\nworld:\n  health: 1\nendpoints:\n  - path: /api/health\n    entity: health\n',
+    'storage.json': '{"local":{"token":"jwt-secret-fixture-value"},"session":{}}',
+  });
+  symlinkSync(join(ROOT, 'node_modules'), join(dir, 'node_modules'));
+
+  // Without --storage: guard redirects to /login, never hits /api/me or /api/projects.
+  const withoutStorage = await runHarvest({
+    url: '/',
+    scenarioFile: 'scenario.yaml',
+    staticDir: '.',
+    until: '[data-view=login]',
+    cwd: dir,
+  });
+  try {
+    assert.equal(withoutStorage.stoppedReason, 'until');
+    assert.equal(withoutStorage.roundsRun, 1);
+    assert.deepEqual(withoutStorage.discovered, []);
+    assert.equal(withoutStorage.storage, undefined);
+    assert.doesNotMatch(formatHarvestReport(withoutStorage), /Storage \(keys\)/);
+  } finally {
+    if (withoutStorage.tempFile) rmSync(join(withoutStorage.tempFile, '..'), { recursive: true, force: true });
+  }
+
+  // With --storage: addInitScript seeds localStorage.token before first navigation,
+  // discovers both endpoints, finishes with the dashboard mounted, and prints keys only.
+  const withStorage = await cliAsync(
+    ['harvest', '/', '--scenario', 'scenario.yaml', '--static', '.', '--storage', 'storage.json', '--until', '[data-view=dashboard]', '--write'],
+    dir,
+  );
+  assert.equal(withStorage.code, 0, withStorage.stdout + withStorage.stderr);
+  assert.match(withStorage.stdout, /Storage \(keys\): local: token/);
+  assert.match(withStorage.stdout, /stopped: until/);
+  assert.match(withStorage.stdout, /GET \/api\/me/);
+  assert.match(withStorage.stdout, /GET \/api\/projects/);
+  assert.ok(!(withStorage.stdout + withStorage.stderr).includes('jwt-secret-fixture-value'));
+
+  const sc = loadScenario(join(dir, 'scenario.yaml'));
+  assert.deepEqual(sc.endpoints.map((e) => e.path), ['/api/health', '/api/me', '/api/projects']);
+
+  // Also verify --storage @- reads storage from stdin and keeps the value out of output.
+  const fromStdin = await cliAsync(
+    ['harvest', '/', '--scenario', 'scenario.yaml', '--static', '.', '--storage', '@-', '--until', '[data-view=dashboard]', '--write'],
+    dir,
+    {},
+    '{"local":{"token":"stdin-secret-value-777"},"session":{}}',
+  );
+  assert.equal(fromStdin.code, 0, fromStdin.stdout + fromStdin.stderr);
+  assert.match(fromStdin.stdout, /Storage \(keys\): local: token/);
+  assert.match(fromStdin.stdout, /1 round · stopped: until/);
+  assert.ok(!(fromStdin.stdout + fromStdin.stderr).includes('stdin-secret-value-777'));
 });

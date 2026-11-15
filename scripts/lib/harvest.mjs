@@ -14,6 +14,7 @@ import { createMockServer } from './serve.mjs';
 import { isMutation, isSecretParam, missKey } from './misses.mjs';
 import { loadPlaywright, chromeExecutable } from './verify.mjs';
 import { parseTsTypes, resolveTypeForSegment } from './ts-types.mjs';
+import { formatStorage, hasStorage, parseStorageJson, storageKeys, storageScript, validateStorage } from './storage.mjs';
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const ID_SEGMENT = /^(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{16,})$/i;
@@ -500,6 +501,8 @@ export async function runHarvest({
   port = 0,
   host = '127.0.0.1',
   staticDir = null,
+  storageFile = null,
+  storage = null,
   cwd = process.cwd(),
   pageFactory = null,
 }) {
@@ -530,6 +533,20 @@ export async function runHarvest({
     parsedTypes = parseTsTypes(readFileSync(absTypes, 'utf8'), typesLabel);
   }
 
+  let parsedStorage = null;
+  if (storageFile !== null && storageFile !== undefined) {
+    if (!storageFile) throw new AtrezzoError('--storage: file path cannot be empty');
+    const absStorage = resolve(cwd, storageFile);
+    let text;
+    try { text = readFileSync(absStorage, 'utf8'); } catch (e) {
+      throw new AtrezzoError(`Cannot read storage ${storageFile}: ${e.code === 'ENOENT' ? 'file does not exist' : e.message}`);
+    }
+    parsedStorage = parseStorageJson(text, storageFile);
+  } else if (storage !== null && storage !== undefined) {
+    parsedStorage = validateStorage(storage, 'storage');
+  }
+  const seedStorage = parsedStorage && hasStorage(parsedStorage);
+
   const tmpDir = mkdtempSync(join(tmpdir(), 'atrezzo-harvest-'));
   const tmpScenarioName = `${initialNormalized.name}.yaml`;
   const tmpScenarioPath = join(tmpDir, tmpScenarioName);
@@ -557,6 +574,12 @@ export async function runHarvest({
     const mockBaseUrl = `http://${addr.address}:${addr.port}`;
     targetUrl = url.startsWith('/') ? new URL(url, mockBaseUrl).toString() : url;
     pw = await (pageFactory ? pageFactory() : defaultPageFactory(cwd));
+    if (seedStorage) {
+      const script = storageScript(new URL(targetUrl).origin, parsedStorage);
+      if (pw.context?.addInitScript) await pw.context.addInitScript(script);
+      else if (pw.page?.addInitScript) await pw.page.addInitScript(script);
+      else throw new AtrezzoError('the playwright context has no addInitScript: cannot seed storage', { exitCode: EXIT.UNVERIFIABLE });
+    }
 
     let roundObs = null;
     pw.page.on?.('response', (res) => {
@@ -686,6 +709,7 @@ export async function runHarvest({
     tempFile = tmpScenarioPath;
   }
 
+  const storageSummary = seedStorage ? storageKeys(parsedStorage) : undefined;
   return {
     scenarioName: workingDoc.name,
     targetUrl,
@@ -695,6 +719,7 @@ export async function runHarvest({
     discovered,
     mutations: [...mutations.values()],
     uninferrable: [...new Set(globalNotes)],
+    ...(storageSummary ? { storage: storageSummary } : {}),
     scenario: workingDoc,
     yaml: outputText,
     written,
@@ -707,6 +732,7 @@ export function formatHarvestReport(res) {
   const lines = [
     `atrezzo harvest · ${res.targetUrl} · scenario "${res.scenarioName}" (${res.roundsRun} ${res.roundsRun === 1 ? 'round' : 'rounds'} · stopped: ${res.stoppedReason})`,
   ];
+  if (res.storage) lines.push(`Storage (keys): ${formatStorage(res.storage)}`);
 
   if (res.discovered.length) {
     const cols = ['endpoint', 'entity', 'shape', 'source', 'fields'];

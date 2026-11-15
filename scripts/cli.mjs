@@ -17,6 +17,7 @@ import { flowRequests } from './lib/flows.mjs';
 import { runImport, formatImportReport, loadSpec } from './lib/openapi.mjs';
 import { createMissStore, missesFile, hintFor, formatMisses } from './lib/misses.mjs';
 import { parseHeaderArgs, headerLines } from './lib/headers.mjs';
+import { parseStorageJson } from './lib/storage.mjs';
 import { runHarvest, formatHarvestReport } from './lib/harvest.mjs';
 
 const HELP = `atrezzo — API mocks from application states
@@ -48,11 +49,13 @@ Commands:
   misses [--json] [--clear] [--dir .]
       Gaps seen by serve (routes the app requested that no scenario declares), with counts, state and
       what to do: import if the contract has the route, or the /atrezzo:gap skill.
-  harvest <url> --scenario <file> [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
+  harvest <url> --scenario <file> [--storage <file.json|@->] [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
           [--static <dir>] [--port <n>] [--host 127.0.0.1]
       Serves the scenario, opens <url> in Chromium, collects 404 gaps and retries, infers endpoints and
       entities (--types -> select= -> guess), reloads the mock and repeats until done. Without --write,
       prints the result and leaves a temporary copy; with --write, merges into <file>.
+      --storage <file.json> (or @- from stdin) seeds localStorage/sessionStorage before the first
+      navigation from { "local": {…}, "session": {…} }; \${…} is invalid (exit 3) and only keys are printed.
   runtimes [--dir .]
       Lists the adapters, their score in this project, the reason and how to start each one.
   import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
@@ -337,13 +340,22 @@ function cmdDoctor({ flags }) {
 
 async function cmdHarvest({ pos, flags }) {
   if (!pos[0] || !flags.scenario) {
-    throw new AtrezzoError('Usage: atrezzo harvest <url> --scenario <file> [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]');
+    throw new AtrezzoError('Usage: atrezzo harvest <url> --scenario <file> [--storage <file.json|@->] [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]');
   }
   const cfg = loadConfig(flags.dir ?? '.');
   const rounds = flags.rounds === undefined ? 5 : /^\d+$/.test(String(flags.rounds)) ? Number(flags.rounds) : Number.NaN;
   if (!Number.isInteger(rounds) || rounds < 1) throw new AtrezzoError(`invalid --rounds: ${flags.rounds} (integer >= 1)`);
   const port = flags.port === undefined ? 0 : /^\d+$/.test(String(flags.port)) ? Number(flags.port) : Number.NaN;
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new AtrezzoError(`invalid --port: ${flags.port}`);
+  let storage = null;
+  let storageFile = null;
+  if (flags.storage === '@-') {
+    const text = readFileSync(0, 'utf8');
+    if (!text.trim()) throw new AtrezzoError('--storage @-: stdin was empty');
+    storage = parseStorageJson(text, '--storage @-');
+  } else if (flags.storage !== undefined) {
+    storageFile = flags.storage;
+  }
   const staticDir = flags.static ?? (cfg.mock.static ? join(cfg._dir, cfg.mock.static) : null);
   const result = await runHarvest({
     url: pos[0],
@@ -355,6 +367,8 @@ async function cmdHarvest({ pos, flags }) {
     port,
     host: flags.host ?? '127.0.0.1',
     staticDir,
+    storageFile,
+    storage,
     cwd: cfg._dir,
   });
   out(formatHarvestReport(result));

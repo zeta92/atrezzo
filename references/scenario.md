@@ -263,10 +263,12 @@ Rules:
 #### Discovering and filling gaps with a browser (`atrezzo harvest`)
 
 ```bash
-atrezzo harvest <url> --scenario <file> [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
+atrezzo harvest <url> --scenario <file> [--storage <file.json|@->] [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
 ```
 
 `harvest` starts the built-in mock on a free port (unless `--port`), opens `<url>` in Chromium (using `ATREZZO_CHROME` like `verify`), collects every 404 gap the mock records (and any request retried after a failure), infers endpoints and entities, reloads the mock (`/__atrezzo/reload`), and repeats until a round adds nothing, `--until` appears, or `--rounds` is reached.
+
+- **Authenticated apps (`--storage`)**: `--storage <file.json>` (or `@-` from stdin) reads a `{ "local": {…}, "session": {…} }` map with the same parser as flow `storage:` and applies it via `context.addInitScript` before the first navigation, so router guards see the session on initial load. `${…}` in a key or value is invalid (exit 3), and the report prints only the keys (`Storage (keys): …`).
 
 - **Path and query keys**: path parameters become `:name` segments; pagination (`limit`/`offset` or `page`/`per_page`) and equality query params become `pagination` and `filters`.
 - **Fields preference**: (1) `--types <file.ts>` (`interface X` / `type X = { … }`: `string → string`, `number → integer`, `boolean → boolean`, ISO date strings → `date`, string literal unions → enum list, primitive arrays → `values:` repeated array); (2) `select=` query columns; (3) plural of the last path segment plus `id`.

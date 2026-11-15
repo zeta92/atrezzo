@@ -1,3 +1,5 @@
+import { AtrezzoError } from './errors.mjs';
+
 // Browser storage a flow seeds before the page loads: `storage: { local: {…}, session: {…} }`,
 // at flow level and step level. The playwright driver writes it through an init script on the
 // browser context, so every document of the step's origin already sees it, reloads included.
@@ -43,6 +45,32 @@ export function parseStorage(raw, field, issues) {
     }
   }
   return out;
+}
+
+/**
+ * Validate a parsed storage object `{ local?: {...}, session?: {...} }` with the same
+ * field-naming and `${…}` errors as flows. Throws AtrezzoError (exit 3) on any problem.
+ */
+export function validateStorage(raw, label = 'storage') {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new AtrezzoError(`${label}: invalid storage`, {
+      issues: ['field "storage": must be a map { local: { key: "value" }, session: { key: "value" } }'],
+    });
+  }
+  const list = [];
+  const issues = { add: (field, reason) => list.push(`field "${field}": ${reason}`) };
+  const parsed = parseStorage(raw, 'storage', issues);
+  if (list.length) throw new AtrezzoError(`${label}: invalid storage`, { issues: list });
+  return parsed;
+}
+
+/** Parse and validate JSON text in the DSL storage shape `{ local?: {...}, session?: {...} }`. */
+export function parseStorageJson(text, label = 'storage') {
+  let raw;
+  try { raw = JSON.parse(text); } catch (e) {
+    throw new AtrezzoError(`${label}: invalid JSON: ${e.message}`);
+  }
+  return validateStorage(raw, label);
 }
 
 /** Effective storage for a step: the flow's, overridden key by key by the step's. Keys are case-sensitive. */

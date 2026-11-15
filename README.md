@@ -246,7 +246,7 @@ node scripts/cli.mjs import [<openapi.yaml|json>] [--name api] [--base /api] [--
 node scripts/cli.mjs world <scenario.yaml> [--out dir]
 node scripts/cli.mjs serve [--scenario demo] [--port 4010] [--static dir] [--runtime builtin] [--on-miss log|stub] [--latency ms]
 node scripts/cli.mjs misses [--json] [--clear]
-node scripts/cli.mjs harvest <url> --scenario <file> [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
+node scripts/cli.mjs harvest <url> --scenario <file> [--storage <file.json|@->] [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
 node scripts/cli.mjs verify <flow.yaml> [--url …] [--driver http|playwright] [--header "Name: value"|@-]… [--diagnose] [--no-reset] [--json]
 node scripts/cli.mjs doctor
 ```
@@ -300,6 +300,10 @@ the two folders removes everything it wrote.
 
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
+
+### 0.9.1
+
+`atrezzo harvest --storage <file.json>` (or `@-` from stdin) seeds `localStorage`/`sessionStorage` via `context.addInitScript` before the first navigation so screens behind login guards can be harvested; `${…}` is rejected (exit 3) and only keys are printed.
 
 ### 0.9.0
 
