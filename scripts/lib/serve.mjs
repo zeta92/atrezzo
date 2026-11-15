@@ -101,7 +101,7 @@ async function readBody(req) {
  *   missesFile: where gaps are recorded (null = memory only) · onMiss: 404 (log) or empty 200 (stub)
  *   latency: ms every contract answer waits (an endpoint's `latency:` wins) · sleep: how it waits
  */
-export function createMockServer({ scenariosDir, scenario, staticDir = null, generatedDir = null, missesFile = null, onMiss = 'log', latency = 0, sleep = wait, log = () => {} }) {
+export function createMockServer({ scenariosDir, scenario, staticDir = null, generatedDir = null, missesFile = null, onMiss = 'log', latency = 0, sleep = wait, log = () => {}, onRequest = () => {} }) {
   if (!ON_MISS.includes(onMiss)) throw new AtrezzoError(`--on-miss must be ${ON_MISS.join(' or ')} (got "${onMiss}")`);
   if (!Number.isInteger(latency) || latency < 0 || latency > MAX_LATENCY) throw new AtrezzoError(`--latency must be an integer between 0 and ${MAX_LATENCY} ms (got "${latency}")`);
   const misses = createMissStore(missesFile);
@@ -153,6 +153,8 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
   const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://localhost');
     try {
+      // Every request the app makes, as the mock sees it (harvest uses it to tell whether a view advanced).
+      if (req.method !== 'OPTIONS' && !url.pathname.startsWith('/__atrezzo/')) onRequest({ method: req.method, pathname: url.pathname });
       if (req.method === 'OPTIONS') return send(res, 204, '', { 'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE', 'access-control-allow-headers': 'content-type, authorization, prefer' });
       if (url.pathname === '/__atrezzo/state' && req.method === 'GET') {
         return send(res, 200, summary(state, available, generatedDir, misses, latency), JSON_CT);

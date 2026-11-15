@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.9.4
+
+`atrezzo harvest` closes four gaps that kept a harvested view from rendering. A path with parameters always gets `filters` in the map form with every parameter bound by name (`":widget_id": widget_id, ":gadget_id": gadget_id`, plus `field: field` for query filters), so both segments filter; a segment the world does not model gets a field of its own name instead of `null`. A new list endpoint the page requests but does not advance with is retried as `shape: envelope` with `pick: items`, `data`, `results`, `records`, `rows` (one per round), keeping the first that makes the page advance and reporting which attempt won, or leaving the array and saying so. Query keys starting with `sort`/`order`/`filter`/`with`/`is_`/`has_`, ending in `_by`, or sent with a boolean value are reported as flags, not filters (`*_id` keys stay filters). A numeric detail id widens the entity to `total >= id` before the detail is judged (up to 1000, was 50); only a non-numeric id is left out. The mock server takes an `onRequest` hook. Nothing breaks.
+
 ### 0.9.3
 
 `atrezzo harvest --types` names an embedded relation after the **property**, not the type: `items?: Array<StoreItem> | null` gives `embed: [items]` and an `items` entity with `StoreItem`'s fields, the parent FK (`shelf_id`, added when the type lacks it) and `ref: shelves`; a world `items` that already refs the parent is reused as is. `X[]`, `Array<X>`, `X[] | null`, `Array<X> | null` and `X[] | undefined` count the same. Each relation is reported with both names (`Shelf.items → embed [items] (type StoreItem, …)`). Singulars of the English `-f/-fe → -ves` nouns are now right (`shelves` → `shelf`, FK `shelf_id`, was `shelve_id`); other `-ves` words are unchanged (`drives` → `drive`).

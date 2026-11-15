@@ -24,6 +24,9 @@ const LIMIT_KEYS = ['limit', 'per_page', 'perPage', 'page_size', 'pageSize', 'si
 const OFFSET_KEYS = ['offset', 'skip'];
 const VALID_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const ENTITY_NAME = /^[a-z][a-z0-9_]*$/; // same rule as the scenario validator
+const MAX_DETAIL_ID = 1000;
+// Envelope keys tried, in this order, when the page does not advance with a plain array.
+export const ENVELOPE_KEYS = ['items', 'data', 'results', 'records', 'rows'];
 
 const snake = (s) => String(s).replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').toLowerCase();
 
@@ -141,8 +144,40 @@ export function inferPathShape(examplePath) {
   return { path, params, lastSeg, detailId };
 }
 
+/**
+ * Can the world hold the row this detail id names? atrezzo numbers rows 1..total, so any integer id
+ * >= 1 can be reached by widening `total` (up to MAX_DETAIL_ID, so that an id taken from a timestamp or
+ * a database sequence does not make a list endpoint answer millions of rows).
+ */
+function detailIdNumber(raw) {
+  if (!/^\d+$/.test(String(raw))) return { ok: false, reason: 'not numeric: atrezzo rows have ids 1..total' };
+  const value = Number(raw);
+  if (value < 1) return { ok: false, reason: 'atrezzo rows have ids from 1' };
+  if (value > MAX_DETAIL_ID) return { ok: false, reason: `above ${MAX_DETAIL_ID}, the most rows harvest seeds for a detail` };
+  return { ok: true, value };
+}
+
 function shapeKey(path) {
   return path.replace(/\/:[^/]+/g, '/:');
+}
+
+// A query key is only a filter when it looks like one. Flags (`is_archived=true`, `expand=permissions`,
+// `sort_by=due`) name a behaviour of the client, not a subset of rows: declaring them as equality filters
+// returns zero rows and hides the very screen we are trying to render.
+const FLAG_KEYS = new Set(['expand', 'include', 'exclude', 'with', 'fields', 'filter', 'sort', 'order',
+  'search', 'q', 'meta', 'count', 'permissions', 'format']);
+const FLAG_PREFIX = /^(sort|order|filter|with|is_|has_)/i;
+const FLAG_SUFFIX = /_by$/i;
+
+/**
+ * A flag: a known behaviour key, a key that starts with sort/order/filter/with/is_/has_ or ends in `_by`,
+ * or any key sent with a boolean value. A key ending in `_id` names a foreign key, so it stays a filter
+ * whatever its prefix (`order_id=3` is a subset of rows, `order_by=id` is not).
+ */
+export function isQueryFlag(key, values = []) {
+  if (values.some((v) => /^(true|false)$/i.test(String(v)))) return true;
+  if (FLAG_KEYS.has(key) || FLAG_SUFFIX.test(key)) return true;
+  return FLAG_PREFIX.test(key) && !/_id$/i.test(key);
 }
 
 /** Collect query values across all observed requests (and miss.query fallback). */
@@ -175,53 +210,38 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
   const existingEp = doc.endpoints.find((ep) => shapeKey(ep.path.replace(/\/+$/, '') || '/') === key);
 
   if (existingEp) {
-    let changed = false;
+    // The rows are widened to the requested id FIRST, and only then is the detail judged: an entity that
+    // has no rows yet (or fewer than the id) is not a reason to drop the route. Only an id atrezzo cannot
+    // number (not an integer, below 1, or beyond MAX_DETAIL_ID) is left out, and the report says why.
     const entEntry = doc.world[existingEp.entity];
-    if (existingEp.shape === 'object' && entityTotal(entEntry) === 0) {
-      const ent = ensureEntityObject(doc.world, existingEp.entity, 1);
-      ent.total = 1;
-      changed = true;
-      return {
-        changed,
-        record: {
-          method: 'GET', path: existingEp.path, entity: existingEp.entity, shape: 'object',
-          source: 'existing (total 0 → 1)', fields: ['id', ...Object.keys(ent.fields ?? {})],
-          uninferrable: [],
-        },
-        notes,
-      };
-    }
+    const curTotal = entityTotal(entEntry);
+    const how = [];
     if (detailId !== null && existingEp.detail === false) {
       delete existingEp.detail;
-      changed = true;
-      return {
-        changed,
-        record: {
-          method: 'GET', path: existingEp.path, entity: existingEp.entity, shape: existingEp.shape ?? 'array',
-          source: 'existing (detail enabled)', fields: ['id'], uninferrable: [],
-        },
-        notes,
-      };
+      how.push('detail enabled');
     }
-    if (detailId !== null && /^\d+$/.test(detailId)) {
-      const wantId = Number(detailId);
-      const curTotal = entityTotal(entEntry);
-      if (wantId > curTotal && wantId <= 50) {
-        const ent = ensureEntityObject(doc.world, existingEp.entity, wantId);
-        ent.total = wantId;
-        changed = true;
-        return {
-          changed,
-          record: {
-            method: 'GET', path: existingEp.path, entity: existingEp.entity, shape: existingEp.shape ?? 'array',
-            source: `existing (total ${curTotal} → ${wantId})`, fields: ['id'], uninferrable: [],
-          },
-          notes,
-        };
-      }
-      notes.push(`GET ${miss.example ?? miss.path}: detail id ${detailId} not in "${existingEp.entity}"`);
+    let want = existingEp.shape === 'object' ? 1 : 0;
+    if (detailId !== null) {
+      const id = detailIdNumber(detailId);
+      if (id.ok) want = Math.max(want, id.value);
+      else notes.push(`GET ${miss.example ?? miss.path}: detail id ${detailId} not mocked (${id.reason})`);
     }
-    return { changed, notes };
+    let ent = isObj(entEntry) ? entEntry : null;
+    if (want > curTotal) {
+      ent = ensureEntityObject(doc.world, existingEp.entity, want);
+      ent.total = want;
+      how.push(`total ${curTotal} → ${want}`);
+    }
+    if (!how.length) return { changed: false, notes };
+    return {
+      changed: true,
+      record: {
+        method: 'GET', path: existingEp.path, entity: existingEp.entity, shape: existingEp.shape ?? 'array',
+        source: `existing (${how.join(', ')})`, fields: ['id', ...Object.keys(ent?.fields ?? {})],
+        uninferrable: [],
+      },
+      notes,
+    };
   }
 
   // Choose entity name: reuse exact snake(lastSeg) if already in world, else pluralize.
@@ -269,16 +289,12 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
     pagination = { param_limit: limitKey ?? 'limit', param_offset: offsetKey ?? 'offset' };
   }
 
-  // A query key is only a filter when it looks like one. Flags (`is_archived=true`, `expand=permissions`)
-  // name a behaviour of the client, not a subset of rows: declaring them as equality filters returns zero
-  // rows and hides the very screen we are trying to render.
-  const FLAG_KEYS = new Set(['expand', 'include', 'exclude', 'with', 'fields', 'filter', 'sort', 'order',
-    'search', 'q', 'meta', 'count', 'permissions', 'format']);
+  // Query keys -> equality filters, except flags (see isQueryFlag), which only go to the report.
   const queryFilters = [];
   for (const [k, vals] of qMap.entries()) {
     if (k === 'select' || k === 'head' || k === 'page' || LIMIT_KEYS.includes(k) || OFFSET_KEYS.includes(k)) continue;
     if (!VALID_IDENT.test(k)) { epUninferrable.push(`query parameter "${k}" (not a valid field name)`); continue; }
-    if (FLAG_KEYS.has(k) || /^is_|^with_|^has_/.test(k) || (vals.length && /^(true|false)$/i.test(vals[0]))) {
+    if (isQueryFlag(k, vals)) {
       epUninferrable.push(`query parameter "${k}" left out of the filters (a flag, not a subset of rows)`);
       continue;
     }
@@ -287,7 +303,12 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
 
   // Prepare/merge world entity (keeping all existing keys when entity already exists).
   const minTotal = shape === 'object' ? 1 : pagination ? 20 : 5;
-  const detailNum = detailId && /^\d+$/.test(detailId) && Number(detailId) <= 50 ? Number(detailId) : 0;
+  let detailNum = 0;
+  if (detailId !== null) {
+    const id = detailIdNumber(detailId);
+    if (id.ok) detailNum = id.value;
+    else notes.push(`GET ${miss.example ?? miss.path}: detail id ${detailId} not mocked (${id.reason})`);
+  }
   const entObj = ensureEntityObject(doc.world, entityName, Math.max(minTotal, detailNum));
   if (detailNum > entObj.total) entObj.total = detailNum;
 
@@ -302,7 +323,11 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
     entObj.fields = { ...inferredFields, ...entObj.fields };
   }
 
-  // Bind path parameters (:<parent>_id, ...) to refs, fields, or null filter.
+  // Bind every path parameter (:<parent>_id, ...) BY NAME to a field of the entity: the parent's FK when
+  // the parameter names a world entity (ref:), else the field of that name (created when the entity is
+  // still ours to shape). The binding is always written out in the map form of `filters`, because the
+  // list form binds nothing once a path has two or more parameters. `null` (accept any value, no
+  // filtering) is the last resort, only for an entity another endpoint already projects, and it is reported.
   const paramBindings = {};
   for (const { name: pname, observed } of params) {
     const base = pname.replace(/_id$/, '');
@@ -316,17 +341,30 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
       if (!existingRefs.includes(parent)) existingRefs.push(parent);
       entObj.ref = existingRefs.length === 1 ? existingRefs[0] : existingRefs;
       if (entObj.total < parentCount) entObj.total = Math.max(entObj.total, parentCount * 2);
-    } else {
-      const candidateFields = pname.endsWith('_id') ? [pname] : [pname, `${pname}_id`];
-      const existingField = isObj(entObj.fields) ? candidateFields.find((f) => f in entObj.fields) : null;
-      if (existingField) {
+      paramBindings[`:${pname}`] = templateFor(parent).fk;
+      continue;
+    }
+    const candidateFields = pname.endsWith('_id') ? [pname] : [pname, `${pname}_id`];
+    const known = new Set(rawEntityFields(entityName, entObj));
+    const existingField = candidateFields.find((f) => known.has(f));
+    if (existingField) {
+      // A declared field (e.g. from --types): seed the observed value so the observed URL has rows.
+      if (isObj(entObj.fields) && existingField in entObj.fields) {
         entObj.values = isObj(entObj.values) ? entObj.values : {};
-        if (!(existingField in entObj.values)) {
-          entObj.values[existingField] = [obsNum ?? observed];
-        }
-      } else {
-        paramBindings[`:${pname}`] = null;
+        if (!(existingField in entObj.values)) entObj.values[existingField] = [obsNum ?? observed];
       }
+      paramBindings[`:${pname}`] = existingField;
+    } else if (!entityLocked) {
+      // A segment the world does not model yet: the entity gets a field of the parameter's name, every row
+      // carrying the observed value, so the observed URL answers rows and any other value answers [].
+      if (!isObj(entObj.fields)) entObj.fields = { name: 'string' };
+      entObj.fields[pname] = obsNum !== null ? 'integer' : 'string';
+      entObj.values = isObj(entObj.values) ? entObj.values : {};
+      entObj.values[pname] = [obsNum ?? observed];
+      paramBindings[`:${pname}`] = pname;
+    } else {
+      paramBindings[`:${pname}`] = null;
+      epUninferrable.push(`path parameter ":${pname}" accepts any value (world.${entityName} has no field "${pname}" and another endpoint already projects it)`);
     }
   }
 
@@ -359,7 +397,8 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
   const relations = tsMatch?.relations?.length
     ? applyTypeRelations(doc, { entityName, entObj, entityLocked, ep, tsMatch, parsedTypes, typesLabel, uninferrable: epUninferrable })
     : [];
-  if (Object.keys(paramBindings).length > 0) {
+  if (params.length > 0) {
+    // Path with parameters: always the map form, every parameter bound by name, then `field: field`.
     const fMap = { ...paramBindings };
     for (const qk of queryFilters) fMap[qk] = qk;
     ep.filters = fMap;
@@ -369,10 +408,7 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
   if (pagination) ep.pagination = pagination;
   if (pick) ep.pick = pick;
   else if (shape !== 'array') ep.shape = shape;
-  // Key order of the emitted endpoint: path, entity, filters, pagination, shape/pick, include, embed.
-  for (const k of ['include', 'embed']) {
-    if (ep[k]) { const v = ep[k]; delete ep[k]; ep[k] = v; }
-  }
+  orderEndpointKeys(ep);
   doc.endpoints.push(ep);
 
   // Collect final field list for report table.
@@ -399,8 +435,27 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
       relations,
       uninferrable: epUninferrable,
     },
+    endpoint: ep,
     notes,
   };
+}
+
+// Key order of an emitted endpoint: path, entity, filters, pagination, shape, pick, include, embed (the rest after).
+const EP_ORDER = ['path', 'entity', 'filters', 'pagination', 'shape', 'pick', 'include', 'embed'];
+function orderEndpointKeys(ep) {
+  const entries = Object.entries(ep);
+  for (const k of Object.keys(ep)) delete ep[k];
+  for (const k of EP_ORDER) { const e = entries.find(([key]) => key === k); if (e) ep[k] = e[1]; }
+  for (const [k, v] of entries) if (!EP_ORDER.includes(k)) ep[k] = v;
+  return ep;
+}
+
+/** Answer `ep` as a plain array (`form: 'array'`) or as an envelope `{ <form>: [...], total, ... }`. */
+export function setResponseForm(ep, form) {
+  delete ep.shape;
+  delete ep.pick;
+  if (form !== 'array') { ep.shape = 'envelope'; ep.pick = form; }
+  return orderEndpointKeys(ep);
 }
 
 const refsOf = (entry) => {
@@ -589,6 +644,85 @@ function createPageWaiter(page, maxMs = 10_000, quietMs = 350) {
   };
 }
 
+/** Does concrete `pathname` fit endpoint `pattern` (`:name` = one segment)? */
+function pathMatches(pattern, pathname) {
+  const body = pattern.replace(/\/+$/, '').split('/')
+    .map((s) => (s.startsWith(':') ? '[^/]+' : s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('/');
+  return new RegExp(`^${body}/?$`).test(pathname);
+}
+
+/**
+ * The selectors present in the page (`tag#id.class[data-testid]`, one per distinct element), so a round
+ * can tell whether something new appeared. `null` when the page cannot be read (no `evaluate`, or it
+ * failed): then a round without new requests proves nothing, since the view may simply be complete.
+ */
+async function domSignature(page) {
+  if (typeof page?.evaluate !== 'function') return null;
+  try {
+    const sig = await page.evaluate(() => {
+      const out = new Set();
+      for (const el of document.querySelectorAll('body *')) {
+        if (/^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(el.tagName)) continue;
+        let s = el.tagName.toLowerCase();
+        if (el.id) s += `#${el.id}`;
+        for (const c of el.classList) s += `.${c}`;
+        const t = el.getAttribute('data-testid');
+        if (t) s += `[data-testid="${t}"]`;
+        out.add(s);
+      }
+      return [...out];
+    });
+    return Array.isArray(sig) ? sig.map(String) : null;
+  } catch {
+    return null;
+  }
+}
+
+// Response forms tried, in order, for a new list endpoint: the plain array first, then the envelopes.
+const RESPONSE_FORMS = ['array', ...ENVELOPE_KEYS];
+
+function settleTrial(t, result) {
+  t.status = result;
+  if (result === 'kept') return; // the array worked, or nothing asked for it: nothing to report
+  const attempts = RESPONSE_FORMS.slice(0, t.idx + 1);
+  if (result === 'advanced') {
+    const form = RESPONSE_FORMS[t.idx];
+    Object.assign(t.record, { shape: 'envelope', pick: form, responseShape: { result, attempts, form } });
+  } else {
+    setResponseForm(t.ep, 'array');
+    t.record.responseShape = { result, attempts, form: 'array' };
+  }
+}
+
+/**
+ * After a round, decide the endpoints on trial. Returns true when the scenario changed and the page must
+ * be loaded again with the next form.
+ * - not requested this round: nothing to judge (a form on trial goes back to the array);
+ * - the view advanced: every requested trial keeps its current form (an envelope that did it is reported);
+ * - it did not: the first requested trial moves to its next form; one that ran out of forms goes back to
+ *   the array (reported) and the next trial starts. One change per round, so a win names its form.
+ */
+function judgeShapeTrials(trials, { advanced, requests }) {
+  const judged = [];
+  for (const t of trials.filter((x) => x.status === 'pending')) {
+    if (requests.some((o) => o.method === 'GET' && pathMatches(t.ep.path, o.pathname))) judged.push(t);
+    else settleTrial(t, t.idx > 0 ? 'unsettled' : 'kept');
+  }
+  if (advanced) {
+    for (const t of judged) settleTrial(t, t.idx > 0 ? 'advanced' : 'kept');
+    return false;
+  }
+  for (const t of judged) {
+    if (t.idx + 1 < RESPONSE_FORMS.length) {
+      t.idx++;
+      setResponseForm(t.ep, RESPONSE_FORMS[t.idx]);
+      return true;
+    }
+    settleTrial(t, 'none');
+  }
+  return false;
+}
+
 function readRawScenario(file) {
   let text;
   try { text = readFileSync(file, 'utf8'); } catch (e) {
@@ -660,6 +794,7 @@ export async function runHarvest({
   }
   const seedStorage = parsedStorage && hasStorage(parsedStorage);
 
+  let roundRequests = null; // what the mock itself served this round (independent of browser events)
   const tmpDir = mkdtempSync(join(tmpdir(), 'atrezzo-harvest-'));
   const tmpScenarioName = `${initialNormalized.name}.yaml`;
   const tmpScenarioPath = join(tmpDir, tmpScenarioName);
@@ -672,10 +807,14 @@ export async function runHarvest({
     staticDir: staticDir ? resolve(cwd, staticDir) : null,
     generatedDir: null,
     missesFile: missesPath,
+    onRequest: (r) => { if (roundRequests && !ASSET.test(r.pathname)) roundRequests.push(r); },
   });
 
   let pw = null;
   const discovered = [];
+  const shapeTrials = [];
+  const seenRequests = new Set();
+  const seenSelectors = new Set();
   const mutations = new Map();
   const globalNotes = [];
   let stoppedReason = 'max-rounds';
@@ -729,22 +868,36 @@ export async function runHarvest({
     for (let round = 1; round <= rounds; round++) {
       roundsRun = round;
       roundObs = { observed: [], sawFailure: false, failedKeys: new Set() };
-      try {
-        const waiter = createPageWaiter(pw.page);
-        await pw.page.goto(targetUrl);
-        await waiter.wait();
-        if (until) {
-          await pw.page.locator(until).first().waitFor({ state: 'attached', timeout: 300 }).catch(() => {});
-          if ((await pw.page.locator(until).count()) > 0) {
-            stoppedReason = 'until';
-            break;
-          }
-        }
-      } finally {
-        // Snapshot and disarm listener between rounds.
+      roundRequests = [];
+      let untilHit = false;
+      const waiter = createPageWaiter(pw.page);
+      await pw.page.goto(targetUrl);
+      await waiter.wait();
+      if (until) {
+        await pw.page.locator(until).first().waitFor({ state: 'attached', timeout: 300 }).catch(() => {});
+        untilHit = (await pw.page.locator(until).count()) > 0;
       }
       const { observed } = roundObs;
       roundObs = null;
+      const requests = [...roundRequests, ...observed.map(({ method, pathname }) => ({ method, pathname }))];
+      roundRequests = null;
+
+      // Did the view advance this round? A request (method + path) or a selector never seen before.
+      // Requests to an endpoint whose response form is on trial do not count: they are the question.
+      const selectors = await domSignature(pw.page);
+      const onTrial = shapeTrials.filter((t) => t.status === 'pending');
+      const newRequest = requests.some((o) => !seenRequests.has(missKey(o.method, o.pathname)) &&
+        !onTrial.some((t) => pathMatches(t.ep.path, o.pathname)));
+      // An unreadable page counts as advanced: without its selectors, "stuck" and "done" look the same,
+      // and the plain array is kept rather than replaced on a guess.
+      const newSelector = selectors === null || selectors.some((s) => !seenSelectors.has(s));
+      for (const o of requests) seenRequests.add(missKey(o.method, o.pathname));
+      for (const s of selectors ?? []) seenSelectors.add(s);
+      const shapeChanged = judgeShapeTrials(shapeTrials, { advanced: untilHit || newRequest || newSelector, requests });
+      if (untilHit) {
+        stoppedReason = 'until';
+        break;
+      }
 
       // Collect authoritative unresolved gaps from the mock's miss log, plus requests
       // observed again after a failure.
@@ -788,11 +941,19 @@ export async function runHarvest({
         for (const n of merged.notes) if (!globalNotes.includes(n)) globalNotes.push(n);
         if (merged.changed) {
           addedThisRound = true;
-          if (merged.record) discovered.push({ ...merged.record, round });
+          if (merged.record) {
+            const record = { ...merged.record, round };
+            discovered.push(record);
+            // A new list endpoint answered as a plain array goes on trial: if the view does not advance
+            // with it, the next rounds try the common envelopes before giving up.
+            if (merged.endpoint && record.shape === 'array' && !merged.endpoint.pick) {
+              shapeTrials.push({ ep: merged.endpoint, record, idx: 0, status: 'pending' });
+            }
+          }
         }
       }
 
-      if (!addedThisRound) {
+      if (!addedThisRound && !shapeChanged) {
         stoppedReason = 'no-new-gaps';
         break;
       }
@@ -812,6 +973,11 @@ export async function runHarvest({
   } finally {
     if (pw) await pw.close().catch(() => {});
     await mock.close().catch(() => {});
+  }
+
+  // A form still on trial when the rounds run out was never seen to work: back to the plain array.
+  for (const t of shapeTrials) {
+    if (t.status === 'pending' && t.idx > 0) settleTrial(t, 'unsettled');
   }
 
   const outputText = isJson ? `${JSON.stringify(workingDoc, null, 2)}\n` : emitYaml(workingDoc);
@@ -879,8 +1045,21 @@ export function formatHarvestReport(res) {
     }
   }
 
+  const forms = (rs) => rs.attempts.join(' → ');
+  const won = res.discovered.filter((d) => d.responseShape?.result === 'advanced');
+  if (won.length) {
+    lines.push('', 'Response shape (the page did not advance with a plain array):');
+    for (const d of won) {
+      const rs = d.responseShape;
+      lines.push(`  - ${d.method} ${d.path}: shape: envelope, pick: ${rs.form} (attempt ${rs.attempts.length} of ${RESPONSE_FORMS.length}: ${forms(rs)}; the first form that made the page advance)`);
+    }
+  }
+
   const uninferrable = [];
   for (const d of res.discovered) {
+    const rs = d.responseShape;
+    if (rs?.result === 'none') uninferrable.push(`${d.method} ${d.path}: the page did not advance with any response form (${forms(rs)}); left as array`);
+    else if (rs?.result === 'unsettled') uninferrable.push(`${d.method} ${d.path}: response form not settled (tried ${forms(rs)}, none seen to make the page advance); left as array`);
     for (const r of d.relations ?? []) {
       if (!r.emitted) uninferrable.push(`${d.method} ${d.path}: ${r.text} → relation not mocked (missing entity + ref): ${r.reason} (${r.source})`);
     }
