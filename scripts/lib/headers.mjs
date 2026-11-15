@@ -1,8 +1,9 @@
-import { env as readEnv } from './env.mjs';
-// HTTP headers declared in a flow (flow level + step level).
-// Values may reference environment variables as ${NAME} so secrets (session cookies,
-// bearer tokens) never need to be committed in the YAML. Secret-looking headers are
-// always masked when printed.
+import { AtrezzoError, EXIT } from './errors.mjs';
+// HTTP headers: declared in a flow (flow level + step level) or passed at run time with
+// `verify --header "Name: value"`. A flow holds only values that are safe to commit; a secret
+// (session cookie, bearer token) is passed with --header, where the user's own shell supplies
+// it. atrezzo reads no environment variable for a header. Secret-looking headers are always
+// masked when printed.
 
 const SECRET_NAMES = new Set(['cookie', 'authorization', 'proxy-authorization', 'set-cookie', 'x-api-key', 'x-auth-token', 'x-csrf-token']);
 const SECRET_PATTERN = /token|secret|password|passwd|api[-_]?key|session|auth/i;
@@ -21,9 +22,8 @@ export function isSecretHeader(name) {
  * @param {unknown} raw
  * @param {string} field   e.g. "headers" or "steps[0].headers"
  * @param {{ add(field: string, msg: string): void }} issues
- * @param {Record<string, string|undefined>} [env]
  */
-export function parseHeaders(raw, field, issues, env = readEnv()) {
+export function parseHeaders(raw, field, issues) {
   const out = {};
   if (raw === undefined || raw === null) return out;
   if (typeof raw !== 'object' || Array.isArray(raw)) {
@@ -37,16 +37,39 @@ export function parseHeaders(raw, field, issues, env = readEnv()) {
       issues.add(f, `must be a string; got ${Array.isArray(value) ? 'a list' : value === null ? 'null' : typeof value}`);
       continue;
     }
-    let missing = null;
-    const expanded = String(value).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, v) => {
-      if (env[v] === undefined) { missing ??= v; return ''; }
-      return env[v];
-    });
-    if (missing) { issues.add(f, `uses \${${missing}} but that environment variable is not set`); continue; }
-    if (/[\r\n]/.test(expanded)) { issues.add(f, 'the value cannot contain line breaks'); continue; }
-    out[name] = expanded.trim();
+    const text = String(value);
+    if (/\$\{[^}]*\}/.test(text)) { issues.add(f, `\${…} is not expanded: atrezzo reads no environment variables. Remove this header from the flow and pass it at run time: verify --header "${name}: <value>"`); continue; }
+    if (/[\r\n]/.test(text)) { issues.add(f, 'the value cannot contain line breaks'); continue; }
+    out[name] = text.trim();
   }
   return out;
+}
+
+/**
+ * Headers passed on the command line: each item is "Name: value", as in curl -H.
+ * Errors name the header, never its value. Later items win (case-insensitive).
+ * @param {string[]} items
+ * @returns {Record<string, string>}
+ */
+export function parseHeaderArgs(items) {
+  const layers = [];
+  const problems = [];
+  for (const item of items) {
+    const i = item.indexOf(':');
+    const name = i < 0 ? '' : item.slice(0, i).trim();
+    const value = i < 0 ? '' : item.slice(i + 1).trim();
+    if (!name || !TOKEN.test(name)) { problems.push(`--header: expected "Name: value"${name && !TOKEN.test(name) ? ' with a valid header name' : ''}`); continue; }
+    if (/[\r\n]/.test(value)) { problems.push(`--header ${name}: the value cannot contain line breaks`); continue; }
+    if (!value) { problems.push(`--header ${name}: the value is empty (is the shell variable you used set?)`); continue; }
+    layers.push({ [name]: value });
+  }
+  if (problems.length) throw new AtrezzoError(problems.join('\n'), { exitCode: EXIT.INVALID });
+  return mergeHeaders(...layers);
+}
+
+/** Header lines read from stdin for `--header @-`: one "Name: value" per non-empty line. */
+export function headerLines(text) {
+  return String(text).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
 }
 
 /**

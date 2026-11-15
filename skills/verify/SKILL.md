@@ -9,7 +9,8 @@ CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (`atrezzo` below).
 
 1. `atrezzo world <scenario.yaml>` if `doctor` says "STALE".
 2. Serve in the background: `atrezzo serve --scenario <name> [--static <dir>]`. If the app runs on its own dev server, point its API at `mock.baseUrl` (or use the generated MSW handlers).
-3. Verify: `atrezzo verify <flow.yaml> --driver http` (data) and, if `playwright` or `playwright-core` is available, `--driver playwright` (real DOM; `headers` in the flow for apps with a session, `${VAR}` so secrets are not committed). `verify` resets to the flow's scenario before starting.
+3. Verify: `atrezzo verify <flow.yaml> --driver http` (data) and, if `playwright` or `playwright-core` is available, `--driver playwright` (real DOM). `verify` resets to the flow's scenario before starting.
+   - **App with a session**: never write the cookie or token into the flow and never ask the user for its value. Flow `headers:` hold only committable values (`Accept-Language`, `X-Tenant: acme`); `${…}` in a flow is rejected. The user passes the secret at run time: `atrezzo verify <flow.yaml> --header "Cookie: $SESSION"`, or `--header @-` with `Name: value` lines on stdin. Give the user that command to run themselves (in their terminal, or with `!` in the prompt so the masked report lands in the conversation); do not run it yourself with a value from the environment. Secret-looking headers print as `***`.
 4. Read the exit code: `0` green · `1` some assertion KO · `2` not verifiable (no mock, no playwright, assertion without `data`) · `3` invalid flow/scenario. **A 2 is never an OK**: say so.
 5. On KO: `atrezzo verify <flow.yaml> --diagnose` and reason about the hypotheses **before** touching the scenario:
    - `render` / `client-side-filter`: the mock delivers what was expected; the failure is in the screen. Do not touch the scenario.

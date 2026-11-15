@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { AtrezzoError, EXIT } from './errors.mjs';
 import { generateWorld } from './world.mjs';
 import { mergeHeaders, maskHeaders, redact, formatHeaders } from './headers.mjs';
-import { env as readEnv } from './env.mjs';
+import { chromePath } from './env.mjs';
 
 // ---------- helpers ----------
 
@@ -126,8 +126,8 @@ export async function loadPlaywright(cwd) {
 }
 
 /** executablePath to use: ATREZZO_CHROME wins; playwright-core (no bundled browsers) falls back to the system Chromium. */
-export function chromeExecutable(moduleName, env = readEnv()) {
-  if (env.ATREZZO_CHROME) return env.ATREZZO_CHROME;
+export function chromeExecutable(moduleName, override = chromePath()) {
+  if (override) return override;
   if (moduleName === 'playwright-core' && existsSync(DEFAULT_CHROME)) return DEFAULT_CHROME;
   return undefined;
 }
@@ -187,13 +187,14 @@ async function openStep(pw, url, step, headers) {
 
 /**
  * @param {object} flow   result of loadFlow()
- * @param {{ url: string, driver?: 'http'|'playwright', diagnose?: boolean, reset?: boolean,
+ * @param {{ url: string, driver?: 'http'|'playwright', diagnose?: boolean, reset?: boolean, headers?: Record<string, string>,
  *           fetchImpl?: typeof fetch, pageFactory?: (opts: {viewport: object|null}) => Promise<{page:any, context?:any, close:()=>Promise<void>}>, cwd?: string }} opts
  */
 export async function runVerify(flow, opts) {
   const { url, driver = 'http', diagnose: wantDiag = false, fetchImpl = fetch, cwd = process.cwd() } = opts;
   const reset = (opts.reset ?? true) && !!flow.scenario; // without a scenario there is no mock to reset
   const flowHeaders = flow.headers ?? {};
+  const runHeaders = opts.headers ?? {}; // verify --header: on every request, over flow and step headers
   const warnings = [];
 
   try {
@@ -215,7 +216,7 @@ export async function runVerify(flow, opts) {
   const rows = [];
   try {
     for (const step of flow.steps) {
-      const headers = mergeHeaders(flowHeaders, step.headers);
+      const headers = mergeHeaders(flowHeaders, step.headers, runHeaders);
       const fetchOpts = Object.keys(headers).length ? { headers } : undefined;
       const get = (u) => getJson(fetchImpl, u, fetchOpts);
       const responses = {};
@@ -280,7 +281,7 @@ export async function runVerify(flow, opts) {
   const ko = rows.filter((r) => r.status === 'KO').length;
   const nv = rows.filter((r) => r.status === 'N/V').length;
   const exitCode = ko ? EXIT.FAIL : nv || !rows.length ? EXIT.UNVERIFIABLE : EXIT.OK;
-  const shownHeaders = maskHeaders(mergeHeaders(flowHeaders, ...flow.steps.map((st) => st.headers)));
+  const shownHeaders = maskHeaders(mergeHeaders(flowHeaders, ...flow.steps.map((st) => st.headers), runHeaders));
   return { rows, exitCode, warnings, scenario: flow.scenario?.name ?? null, seed: flow.scenario?.seed ?? null, url, driver, viewport: flow.viewport ?? null, headers: shownHeaders };
 }
 

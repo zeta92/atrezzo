@@ -62,15 +62,15 @@ $ atrezzo verify flow-broken.yaml --diagnose
 
 ### No session means red, never green
 
-One flow, run twice with the Playwright driver (real Chromium) against a small cookie-protected app. That app is a scratch server, not part of this repo; the same case runs in `tests/headers.test.mjs` if you want to reproduce it. The flow sends `Cookie: "${SESSION}"`; you set that variable in your own shell for each run. Abridged: the table headers are cut.
+One flow, run twice with the Playwright driver (real Chromium) against a small cookie-protected app. That app is a scratch server, not part of this repo; the same case runs in `tests/headers.test.mjs` if you want to reproduce it. The flow holds no session; you hand it to `verify` with `--header`, and your shell fills in the value. atrezzo reads no environment variable. Abridged: the table headers are cut.
 
 ```text
-$ SESSION="session=valid" atrezzo verify flow.yaml --driver playwright
+$ atrezzo verify flow.yaml --driver playwright --header "Cookie: $SESSION"     # SESSION=session=valid
 Headers: Cookie: ***
 1  customers  table tbody tr (customer rows)  =6        6         OK
 1 OK · 0 KO · 0 not verified → GREEN
 
-$ SESSION="session=expired" atrezzo verify flow.yaml --driver playwright
+$ atrezzo verify flow.yaml --driver playwright --header "Cookie: $SESSION"     # SESSION=session=expired
 Headers: Cookie: ***
 1  customers  table tbody tr (customer rows)  =6        0         KO
   #1: the app redirected /customers → /login?next=%2Fcustomers (login screen: no session or session expired; check the flow headers/Cookie)
@@ -78,6 +78,8 @@ Headers: Cookie: ***
 ```
 
 If the final URL is not the one the step asked for, the step fails even when the count would match. Secrets in `Cookie` and `Authorization` print as `***`.
+
+`--header "Cookie: $SESSION"` keeps the value out of your shell history (the history holds `$SESSION`), but the expanded value is in the process arguments, which `ps` shows while `verify` runs. To keep it out of those as well, pipe it in: `printf 'Cookie: %s\n' "$SESSION" | atrezzo verify flow.yaml --header @-` (`printf` is a shell builtin, so it never shows up as a process).
 
 ### A scenario from an OpenAPI spec
 
@@ -243,7 +245,7 @@ node scripts/cli.mjs import [<openapi.yaml|json>] [--name api] [--base /api] [--
 node scripts/cli.mjs world <scenario.yaml> [--out dir]
 node scripts/cli.mjs serve [--scenario demo] [--port 4010] [--static dir] [--runtime builtin] [--on-miss log|stub]
 node scripts/cli.mjs misses [--json] [--clear]
-node scripts/cli.mjs verify <flow.yaml> [--url …] [--driver http|playwright] [--diagnose] [--no-reset] [--json]
+node scripts/cli.mjs verify <flow.yaml> [--url …] [--driver http|playwright] [--header "Name: value"|@-]… [--diagnose] [--no-reset] [--json]
 node scripts/cli.mjs doctor
 ```
 
@@ -292,10 +294,20 @@ generated folder. It makes no network calls except to the mock it starts on `loc
 no telemetry, no account and no personal data involved. Uninstalling is deleting the plugin; deleting
 the two folders removes everything it wrote.
 
-**Credentials.** atrezzo asks for none and looks for none on your machine. A flow can send a header whose value you pass yourself, as a variable in the shell you run the command from; secret-looking headers print as `***` in the table, in `--json` and in error messages, and nothing is written to a log or to disk.
+**Credentials.** atrezzo asks for none and looks for none on your machine: it reads no environment variable for a header, no `.env` key other than the `*_API_URL` names that say where the API lives, no `.netrc` and no keychain. If a screen needs a session, you pass the header yourself with `verify --header "Name: value"` (or `--header @-` on stdin). Secret-looking headers print as `***` in the table, in `--json` and in error messages, and nothing is written to a log or to disk.
 
 <details>
-<summary><b>Upgrading from 0.3: breaking changes</b></summary>
+<summary><b>Upgrading from 0.3 or 0.4: breaking changes</b></summary>
+
+### 0.5.0: header values come from `--header`, not the environment
+
+atrezzo no longer expands `${…}` references in flow `headers:`; a flow that still has one is invalid (exit 3) and the error names the header. Keep only committable values in the flow and pass the secret at run time:
+
+| before (0.4) | after (0.5) |
+|---|---|
+| flow: a `Cookie` whose value is a `${…}` reference · run: `atrezzo verify flow.yaml` | flow: no `Cookie` · run: `atrezzo verify flow.yaml --header "Cookie: $SESSION"` |
+
+`--header` is repeatable, applies to every request and wins over flow and step headers with the same name. `--header @-` reads `Name: value` lines from stdin. `ATREZZO_CHROME` (a browser path) is the only environment variable atrezzo still reads.
 
 ### 0.4.0: English DSL, CLI and output
 

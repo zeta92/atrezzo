@@ -6,7 +6,7 @@ import { CONFIG_FILE, loadConfig } from './config.mjs';
 import { loadScenario } from './scenario.mjs';
 import { generateWorld } from './world.mjs';
 import { missesFile, readMisses } from './misses.mjs';
-import { env as readEnv } from './env.mjs';
+import { chromePath } from './env.mjs';
 
 function readPkg(dir) {
   const f = join(dir, 'package.json');
@@ -67,7 +67,7 @@ export function doctor(dir) {
 
   add(resolvable(dir, 'msw') ? 'ok' : 'warn', `msw ${resolvable(dir, 'msw') ? 'installed' : 'not installed'}`, 'browser/test handlers (optional: serve does not need it)');
   const pwMod = ['playwright', '@playwright/test', 'playwright-core'].find((m) => resolvable(dir, m));
-  add(pwMod ? 'ok' : 'warn', pwMod ? `${pwMod} installed` : 'playwright not installed', `verify playwright driver (optional)${pwMod === 'playwright-core' ? `; Chromium: ${readEnv().ATREZZO_CHROME || '/usr/bin/chromium'}` : ''}`);
+  add(pwMod ? 'ok' : 'warn', pwMod ? `${pwMod} installed` : 'playwright not installed', `verify playwright driver (optional)${pwMod === 'playwright-core' ? `; Chromium: ${chromePath() || '/usr/bin/chromium'}` : ''}`);
 
   if (cfg && !cfg._missing) {
     const sdir = join(dir, cfg.scenariosDir);

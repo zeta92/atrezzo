@@ -6,7 +6,6 @@ import { parseYaml, YamlError } from './yaml.mjs';
 import { AtrezzoError } from './errors.mjs';
 import { templateFor, entityFields, RENAMED_TEMPLATES } from './world.mjs';
 import { parseHeaders } from './headers.mjs';
-import { env as readEnv } from './env.mjs';
 
 export const DEFAULT_NOW = '2025-01-15T09:00:00.000Z';
 
@@ -348,11 +347,8 @@ export function loadScenario(file) {
 
 // ---------- flow ----------
 
-/**
- * @param {string} file
- * @param {{ env?: Record<string, string|undefined> }} [opts]  env: source for ${VAR} in headers
- */
-export function loadFlow(file, { env = readEnv() } = {}) {
+/** @param {string} file */
+export function loadFlow(file) {
   const doc = readYaml(file, 'flow');
   const issues = new Issues();
   if (!isObj(doc)) throw new AtrezzoError(`${file}: a flow must be a YAML map`);
@@ -360,7 +356,7 @@ export function loadFlow(file, { env = readEnv() } = {}) {
   if (doc.scenario !== undefined && typeof doc.scenario !== 'string') issues.add('scenario', 'path to the scenario YAML (relative to the flow); omit it only to verify a real app without a mock');
   if (doc.base_url !== undefined && typeof doc.base_url !== 'string') issues.add('base_url', 'must be a URL');
   if (!Array.isArray(doc.steps) || !doc.steps.length) issues.add('steps', 'required; a list with at least one step');
-  const headers = parseHeaders(doc.headers, 'headers', issues, env);
+  const headers = parseHeaders(doc.headers, 'headers', issues);
   let viewport = null;
   if (doc.viewport !== undefined) {
     if (!isObj(doc.viewport)) issues.add('viewport', 'must be a map { width, height }');
@@ -396,7 +392,7 @@ export function loadFlow(file, { env = readEnv() } = {}) {
       const e = normalizeExpect(it, `${f}.expect[${j}]`, issues);
       if (e) expect.push(e);
     });
-    const stepHeaders = parseHeaders(st.headers, `${f}.headers`, issues, env);
+    const stepHeaders = parseHeaders(st.headers, `${f}.headers`, issues);
     steps.push({ screen: st.screen, visit: st.visit ?? null, waitFor: st.wait_for ?? null, headers: stepHeaders, requests, expect });
   });
 

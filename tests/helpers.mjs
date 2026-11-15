@@ -82,9 +82,10 @@ export function cli(args, cwd) {
 
 /** Async variant: required when the child talks to a server running in this process
  * (spawnSync would block our event loop and deadlock). */
-export function cliAsync(args, cwd, env = {}) {
+export function cliAsync(args, cwd, env = {}, stdin = '') {
   return new Promise((ok) => {
     const child = spawn(process.execPath, [CLI, ...args], { cwd, env: { ...process.env, ...env } });
+    child.stdin.end(stdin);
     let stdout = ''; let stderr = '';
     child.stdout.on('data', (d) => { stdout += d; });
     child.stderr.on('data', (d) => { stderr += d; });

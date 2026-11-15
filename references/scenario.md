@@ -170,7 +170,7 @@ scenario: scenarios/orders.yaml      # relative to the flow (optional: see "Real
 base_url: http://127.0.0.1:4010       # optional (otherwise --url or the config)
 viewport: { width: 1440, height: 1000 }  # optional, playwright only (default 1280x720)
 headers:                              # optional: sent on EVERY request of the flow
-  X-Tenant: "${TENANT}"               # any value can come from the shell you run verify in
+  X-Tenant: acme                      # only values safe to commit; a session goes in verify --header
 steps:
   - screen: order-list
     visit: /orders                    # route for playwright
@@ -188,13 +188,15 @@ Scenario assertions are added to the step of their `screen` (default: the last o
 
 - At flow level and/or step level. A step's effective headers = the flow's + the step's; if a name repeats (case-insensitive), the step wins.
 - `playwright` driver: `context.setExtraHTTPHeaders()` with the effective headers before opening each `visit` (every request of the page gets them: document, fetch, RSC…). `http` driver: the same headers on every `fetch` of `requests`.
-- `${NAME}` in a value is replaced by the variable you set in the shell that runs the command. If it is not set, the flow is invalid (exit 3) rather than sending an empty header.
+- Values are literal: atrezzo reads no environment variable, and a value containing `${…}` makes the flow invalid (exit 3) rather than sending it as is.
+- **Secrets (session cookie, bearer token) never go in the flow.** Pass them at run time: `atrezzo verify flow.yaml --header "Cookie: $SESSION"`. Your shell expands `$SESSION` before atrezzo starts. `--header` is repeatable, applies to every request of every step, and wins over flow and step headers with the same name. Effective headers = flow + step + `--header`.
+- `--header @-` reads `Name: value` lines from stdin instead, so the value is in neither the process arguments (`ps`) nor the shell history: `printf 'Cookie: %s\n' "$SESSION" | atrezzo verify flow.yaml --header @-`.
 - Secrets: `Cookie`, `Authorization`, `Proxy-Authorization`, `X-Api-Key` and any name containing `token`, `secret`, `session`, `auth`, `password` or `api-key` print as `***` in the table, in `--json` and in error messages. Values are never written to logs.
 - Values: single-line text (numbers and booleans are converted to text). Names per RFC 7230.
 
 ### Real app (no `scenario`)
 
-If the flow declares no `scenario`, `verify` does not `reset` or compare hashes: it verifies the app as it is at `base_url` (useful to validate selectors against the real app, with its session in `headers`). `data` assertions still work if the app exposes the JSON.
+If the flow declares no `scenario`, `verify` does not `reset` or compare hashes: it verifies the app as it is at `base_url` (useful to validate selectors against the real app, with its session passed as `--header "Cookie: …"`). `data` assertions still work if the app exposes the JSON.
 
 ### Navigation with playwright: never green by accident
 

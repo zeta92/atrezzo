@@ -20,4 +20,11 @@ With `playwright` or `playwright-core` available in the project (system Chromium
 
 ### Headers
 
-This shop needs none, but a flow can declare headers for every request and per step (format in `references/scenario.md`). Secret-looking header values print as `***` in the report. If the app redirects to `/login` (missing or expired session), the step fails with the reason, never green.
+This shop needs none, but a flow can declare headers for every request and per step, and `verify` adds more with `--header` (format in `references/scenario.md`). The flow holds only values you would commit; a session is passed when you run it, and your shell fills in the value:
+
+```bash
+node ../../scripts/cli.mjs verify flow.yaml --driver playwright --header "Cookie: $SESSION"
+printf 'Cookie: %s\n' "$SESSION" | node ../../scripts/cli.mjs verify flow.yaml --header @-   # not visible in ps
+```
+
+atrezzo reads no environment variable for a header. Secret-looking header values print as `***` in the report. If the app redirects to `/login` (missing or expired session), the step fails with the reason, never green.

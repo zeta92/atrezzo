@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // atrezzo CLI.
-import { chmodSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { resolve, join, relative, dirname } from 'node:path';
 import { AtrezzoError, EXIT } from './lib/errors.mjs';
 import { loadConfig, runtimeList } from './lib/config.mjs';
@@ -16,6 +16,7 @@ import { detectWorkspace, projectContext } from './lib/project.mjs';
 import { flowRequests } from './lib/flows.mjs';
 import { runImport, formatImportReport, loadSpec } from './lib/openapi.mjs';
 import { createMissStore, missesFile, hintFor, formatMisses } from './lib/misses.mjs';
+import { parseHeaderArgs, headerLines } from './lib/headers.mjs';
 
 const HELP = `atrezzo — API mocks from application states
 
@@ -45,9 +46,15 @@ Commands:
   import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
       Infers a scenario from an OpenAPI spec (no argument: uses workspace.contract) and writes
       <scenariosDir>/<name>.yaml with a report: endpoints, envelopes, TODOs and ignored routes.
-  verify <flow.yaml> [--url http://127.0.0.1:4010] [--driver http|playwright] [--diagnose] [--no-reset] [--json]
+  verify <flow.yaml> [--url http://127.0.0.1:4010] [--driver http|playwright] [--header "Name: value"]… [--diagnose]
+         [--no-reset] [--json]
       Runs the flow against the mock (or against the real app if the flow has no scenario) and compares.
-      The flow may declare headers (\${VAR} from the environment; Cookie/Authorization print as ***).
+      --header adds a header to every request (repeatable; it wins over the flow's headers). Use it for a
+      session: the flow keeps only values safe to commit, and atrezzo reads no environment variable.
+        --header "Cookie: $SESSION"   your shell fills in the value (visible in ps while verify runs)
+        --header @-                   reads "Name: value" lines from stdin (nothing in ps or history):
+                                      printf 'Cookie: %s\\n' "$SESSION" | atrezzo verify flow.yaml --header @-
+      Cookie, Authorization and other secret-looking headers print as *** in the table, --json and errors.
       Playwright driver: playwright or playwright-core; system Chromium or ATREZZO_CHROME=/path.
   doctor [--dir .]
       What is installed, what is missing, and whether the config and scenarios are valid.
@@ -55,6 +62,7 @@ Commands:
 Exit codes: 0 OK · 1 assertion failed · 2 not verifiable (missing tool or mock) · 3 invalid input`;
 
 const BOOLEAN = new Set(['install', 'force', 'diagnose', 'no-reset', 'json', 'help', 'clear']);
+const REPEATABLE = new Set(['header']);
 
 export function parseArgs(argv) {
   const pos = [];
@@ -67,7 +75,8 @@ export function parseArgs(argv) {
     if (BOOLEAN.has(k)) { flags[k] = true; continue; }
     const v = inline ?? argv[++i];
     if (v === undefined || (inline === undefined && v.startsWith('--'))) throw new AtrezzoError(`Option --${k} needs a value`);
-    flags[k] = v;
+    if (REPEATABLE.has(k)) (flags[k] ??= []).push(v);
+    else flags[k] = v;
   }
   return { cmd: pos.shift(), pos, flags };
 }
@@ -215,7 +224,11 @@ async function cmdVerify({ pos, flags }) {
   const driver = flags.driver ?? cfg.verify.driver;
   if (!['http', 'playwright'].includes(driver)) throw new AtrezzoError(`--driver must be http or playwright (got "${driver}")`);
   const url = flags.url ?? flow.baseUrl ?? cfg.mock.baseUrl;
-  const result = await runVerify(flow, { url, driver, diagnose: !!flags.diagnose, reset: !flags['no-reset'], cwd: cfg._dir });
+  // --header @- takes the header lines from stdin, so the value never sits in argv (ps) or history.
+  const items = (flags.header ?? []).flatMap((h) => (h === '@-' ? headerLines(readFileSync(0, 'utf8')) : [h]));
+  if (flags.header?.includes('@-') && !items.length) throw new AtrezzoError('--header @-: stdin had no "Name: value" line');
+  const headers = parseHeaderArgs(items);
+  const result = await runVerify(flow, { url, driver, headers, diagnose: !!flags.diagnose, reset: !flags['no-reset'], cwd: cfg._dir });
   out(flags.json ? JSON.stringify(result, null, 2) : formatReport(result));
   return result.exitCode;
 }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseHeaders, mergeHeaders, maskHeaders, isSecretHeader, redact, MASK } from '../scripts/lib/headers.mjs';
+import { parseHeaders, parseHeaderArgs, headerLines, mergeHeaders, maskHeaders, isSecretHeader, redact, MASK } from '../scripts/lib/headers.mjs';
 import { loadFlow } from '../scripts/lib/scenario.mjs';
 import { runVerify, formatReport, loadPlaywright, chromeExecutable } from '../scripts/lib/verify.mjs';
 import { AtrezzoError } from '../scripts/lib/errors.mjs';
@@ -14,24 +14,37 @@ const collect = () => { const list = []; return { list, add: (f, m) => list.push
 
 // ---------- parsing ----------
 
-test('parseHeaders: valid map, numbers to strings, ${VAR} from the environment', () => {
+test('parseHeaders: valid map, numbers to strings, values taken literally', () => {
   const is = collect();
-  const h = parseHeaders({ Cookie: '${C}', 'X-Num': 3, 'Accept-Language': ' es-ES ' }, 'headers', is, { C: SECRET });
+  const h = parseHeaders({ 'X-Tenant': 'acme', 'X-Num': 3, 'Accept-Language': ' es-ES ' }, 'headers', is);
   assert.deepEqual(is.list, []);
-  assert.deepEqual(h, { Cookie: SECRET, 'X-Num': '3', 'Accept-Language': 'es-ES' });
+  assert.deepEqual(h, { 'X-Tenant': 'acme', 'X-Num': '3', 'Accept-Language': 'es-ES' });
   assert.deepEqual(parseHeaders(undefined, 'headers', is), {});
 });
 
 test('parseHeaders: errors with field and reason', () => {
   const is = collect();
   parseHeaders(['Cookie: x'], 'headers', is);
-  parseHeaders({ 'Bad Name': 'x', Obj: { a: 1 }, Cookie: '${NOT_SET}', Break: 'a\r\nInjected: 1' }, 'steps[0].headers', is, {});
+  parseHeaders({ 'Bad Name': 'x', Obj: { a: 1 }, Cookie: '${SESSION}', Break: 'a\r\nInjected: 1' }, 'steps[0].headers', is);
   assert.equal(is.list.length, 5, is.list.join('\n'));
   assert.match(is.list[0], /^headers: must be a map/);
   assert.ok(is.list.some((l) => /steps\[0\]\.headers\.Bad Name: invalid header name/.test(l)));
   assert.ok(is.list.some((l) => /Obj: must be a string/.test(l)));
-  assert.ok(is.list.some((l) => /\$\{NOT_SET\}.*is not set/.test(l)));
+  assert.ok(is.list.some((l) => /steps\[0\]\.headers\.Cookie: \$\{…\} is not expanded.*--header "Cookie: <value>"/.test(l)));
   assert.ok(is.list.some((l) => /line breaks/.test(l)));
+});
+
+test('parseHeaderArgs: "Name: value" like curl -H; the value may contain colons; later wins', () => {
+  assert.deepEqual(parseHeaderArgs([`Cookie: ${SECRET}`, 'X-Url: http://a:1/b', 'cookie: last=1']), { cookie: 'last=1', 'X-Url': 'http://a:1/b' });
+  assert.deepEqual(parseHeaderArgs([]), {});
+  assert.deepEqual(headerLines(`Cookie: ${SECRET}\r\n\n  X-Tenant: acme \n`), [`Cookie: ${SECRET}`, 'X-Tenant: acme']);
+});
+
+test('parseHeaderArgs: bad input is exit 3, names the header and never echoes the value', () => {
+  for (const [items, re] of [[['no-colon'], /expected "Name: value"/], [['Bad Name: x'], /valid header name/], [['Cookie:   '], /--header Cookie: the value is empty/]]) {
+    assert.throws(() => parseHeaderArgs(items), (e) => e instanceof AtrezzoError && e.exitCode === 3 && re.test(e.message), items[0]);
+  }
+  assert.throws(() => parseHeaderArgs([`Cookie: ${SECRET}`, 'Oops']), (e) => !e.message.includes('s3cr3t'));
 });
 
 // ---------- merge ----------
@@ -59,7 +72,7 @@ test('loadFlow: flow and step headers, viewport, and optional scenario', () => {
   const dir = tmpProject({ 'f.yaml': `base_url: http://127.0.0.1:1
 viewport: { width: 1440, height: 1000 }
 headers:
-  Cookie: "\${MY_COOKIE}"
+  X-Tenant: acme
 steps:
   - screen: customers
     visit: /customers
@@ -68,10 +81,10 @@ steps:
       - selector: "table tbody tr"
         count: 6
 ` });
-  const f = loadFlow(join(dir, 'f.yaml'), { env: { MY_COOKIE: SECRET } });
+  const f = loadFlow(join(dir, 'f.yaml'));
   assert.equal(f.scenario, null);
   assert.deepEqual(f.viewport, { width: 1440, height: 1000 });
-  assert.deepEqual(f.headers, { Cookie: SECRET });
+  assert.deepEqual(f.headers, { 'X-Tenant': 'acme' });
   assert.deepEqual(f.steps[0].headers, { 'Accept-Language': 'es-ES' });
 });
 
@@ -86,9 +99,9 @@ test('loadFlow: existing flows (without headers) still load the same', () => {
 
 test('loadFlow: invalid headers or viewport ⇒ AtrezzoError naming the field, without leaking the value', () => {
   const dir = tmpProject({ 'f.yaml': `headers: [Cookie]\nviewport: { width: 10 }\nsteps:\n  - screen: a\n    visit: /\n    headers: { Cookie: "\${NOPE}" }\n    expect: [{ selector: x, count: 1 }]\n` });
-  assert.throws(() => loadFlow(join(dir, 'f.yaml'), { env: {} }), (e) => e instanceof AtrezzoError && /field "headers"/.test(e.message) && /viewport\.width/.test(e.message) && /viewport\.height/.test(e.message));
+  assert.throws(() => loadFlow(join(dir, 'f.yaml')), (e) => e instanceof AtrezzoError && /field "headers"/.test(e.message) && /viewport\.width/.test(e.message) && /viewport\.height/.test(e.message));
   const dir2 = tmpProject({ 'f.yaml': `steps:\n  - screen: a\n    visit: /\n    headers: { Cookie: "\${NOPE}" }\n    expect: [{ selector: x, count: 1 }]\n` });
-  assert.throws(() => loadFlow(join(dir2, 'f.yaml'), { env: {} }), /steps\[0\]\.headers\.Cookie.*NOPE/);
+  assert.throws(() => loadFlow(join(dir2, 'f.yaml')), /steps\[0\]\.headers\.Cookie.*not expanded.*--header/s);
 });
 
 // ---------- http driver: sends the headers ----------
@@ -97,7 +110,7 @@ let app; let appUrl; const seen = [];
 before(async () => {
   // Minimal "real" app: without a valid cookie, /api/* returns 401 and pages redirect to /login.
   app = createServer((req, res) => {
-    seen.push({ url: req.url, cookie: req.headers.cookie, lang: req.headers['accept-language'] });
+    seen.push({ url: req.url, cookie: req.headers.cookie, lang: req.headers['accept-language'], tenant: req.headers['x-tenant'] });
     const ok = req.headers.cookie === SECRET;
     if (req.url.startsWith('/api/items')) {
       res.writeHead(ok ? 200 : 401, { 'content-type': 'application/json' });
@@ -113,8 +126,9 @@ before(async () => {
 });
 after(() => app.close());
 
+// The flow commits only what is safe (X-Tenant, Accept-Language); the session comes from --header.
 const flowFile = (extra = '') => tmpProject({ 'f.yaml': `headers:
-  Cookie: "\${T_COOKIE}"
+  X-Tenant: acme
 ${extra}steps:
   - screen: items
     visit: /items
@@ -128,33 +142,58 @@ ${extra}steps:
         data: { request: items }
 ` });
 
-test('http driver: the effective headers travel in fetch and the report hides the secret', async () => {
+test('http driver: --header joins the flow and step headers in fetch; the report hides the secret', async () => {
   const dir = flowFile();
   seen.length = 0;
-  const r = await runVerify(loadFlow(join(dir, 'f.yaml'), { env: { T_COOKIE: SECRET } }), { url: appUrl, driver: 'http' });
+  const r = await runVerify(loadFlow(join(dir, 'f.yaml')), { url: appUrl, driver: 'http', headers: { Cookie: SECRET } });
   assert.equal(r.exitCode, 0);
-  assert.deepEqual(seen.map((s) => [s.url, s.cookie, s.lang]), [['/api/items', SECRET, 'es-ES']]);
+  assert.deepEqual(seen.map((s) => [s.url, s.cookie, s.lang, s.tenant]), [['/api/items', SECRET, 'es-ES', 'acme']]);
   const report = formatReport(r);
-  assert.match(report, /Headers: Cookie: \*\*\* · Accept-Language: es-ES/);
+  assert.match(report, /Headers: X-Tenant: acme · Accept-Language: es-ES · Cookie: \*\*\*/);
   assert.ok(!report.includes('s3cr3t') && !JSON.stringify(r).includes('s3cr3t'));
 });
 
 test('http driver: without a valid cookie ⇒ RED (401), not green', async () => {
   const dir = flowFile();
-  const r = await runVerify(loadFlow(join(dir, 'f.yaml'), { env: { T_COOKIE: 'other=1' } }), { url: appUrl, driver: 'http', diagnose: true });
+  const r = await runVerify(loadFlow(join(dir, 'f.yaml')), { url: appUrl, driver: 'http', diagnose: true, headers: { Cookie: 'other=1' } });
   assert.equal(r.exitCode, 1);
   assert.ok(r.rows[0].hypotheses.some((h) => h.type === 'non-200-response'));
 });
 
-test('CLI verify --json: the secret appears in neither stdout nor stderr', async () => {
+test('CLI verify --header: combined with the flow headers; the secret appears in neither stdout nor stderr', async () => {
   const dir = flowFile();
-  const env = { T_COOKIE: SECRET };
   for (const extra of [[], ['--json']]) {
-    const r = await cliAsync(['verify', 'f.yaml', '--url', appUrl, ...extra], dir, env);
+    seen.length = 0;
+    const r = await cliAsync(['verify', 'f.yaml', '--url', appUrl, '--header', `Cookie: ${SECRET}`, '--header', 'X-Trace: 42', ...extra], dir);
     assert.equal(r.code, 0, r.stderr + r.stdout);
+    assert.deepEqual(seen.map((s) => [s.cookie, s.tenant, s.lang]), [[SECRET, 'acme', 'es-ES']]);
     assert.ok(!(r.stdout + r.stderr).includes('s3cr3t'), r.stdout);
-    assert.match(r.stdout, /\*\*\*/);
+    if (extra.length) assert.deepEqual(JSON.parse(r.stdout).headers, { 'X-Tenant': 'acme', 'Accept-Language': 'es-ES', Cookie: MASK, 'X-Trace': '42' });
+    else assert.match(r.stdout, /Headers: X-Tenant: acme · Accept-Language: es-ES · Cookie: \*\*\* · X-Trace: 42/);
   }
+});
+
+test('CLI verify --header @-: the header comes from stdin, never from argv or the environment', async () => {
+  const dir = flowFile();
+  seen.length = 0;
+  const r = await cliAsync(['verify', 'f.yaml', '--url', appUrl, '--header', '@-'], dir, { SESSION: 'ignored=1' }, `Cookie: ${SECRET}\n`);
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.equal(seen[0].cookie, SECRET);
+  assert.match(r.stdout, /Cookie: \*\*\*/);
+  assert.ok(!(r.stdout + r.stderr).includes('s3cr3t'));
+  const empty = await cliAsync(['verify', 'f.yaml', '--url', appUrl, '--header', '@-'], dir, {}, '');
+  assert.equal(empty.code, 3);
+  assert.match(empty.stderr, /stdin had no "Name: value" line/);
+});
+
+test('CLI verify: a flow that still says ${VAR} is invalid (exit 3) and the environment is not read', async () => {
+  const dir = tmpProject({ 'f.yaml': 'headers:\n  Cookie: "${SESSION}"\nsteps:\n  - screen: a\n    requests: { items: GET /api/items }\n    expect: [{ selector: x, count: 3, data: { request: items } }]\n' });
+  seen.length = 0;
+  const r = await cliAsync(['verify', 'f.yaml', '--url', appUrl], dir, { SESSION: SECRET });
+  assert.equal(r.code, 3, r.stderr + r.stdout);
+  assert.match(r.stderr, /headers\.Cookie.*not expanded.*--header "Cookie: <value>"/s);
+  assert.equal(seen.length, 0);
+  assert.ok(!(r.stdout + r.stderr).includes('s3cr3t'));
 });
 
 // ---------- driver playwright (page fake): headers, viewport, redirect ----------
@@ -184,10 +223,10 @@ function fakePw({ finalPath = null, counts = {} } = {}) {
 test('playwright driver: context.setExtraHTTPHeaders with the step headers and the flow viewport', async () => {
   const dir = flowFile('viewport: { width: 1440, height: 1000 }\n');
   const fp = fakePw({ counts: { 'table tbody tr': 3 } });
-  const r = await runVerify(loadFlow(join(dir, 'f.yaml'), { env: { T_COOKIE: SECRET } }), { url: appUrl, driver: 'playwright', pageFactory: fp.factory });
+  const r = await runVerify(loadFlow(join(dir, 'f.yaml')), { url: appUrl, driver: 'playwright', pageFactory: fp.factory, headers: { Cookie: SECRET } });
   assert.equal(r.exitCode, 0, formatReport(r));
   assert.deepEqual(fp.calls.viewport, { width: 1440, height: 1000 });
-  assert.deepEqual(fp.calls.headers, [{ Cookie: SECRET, 'Accept-Language': 'es-ES' }]);
+  assert.deepEqual(fp.calls.headers, [{ 'X-Tenant': 'acme', 'Accept-Language': 'es-ES', Cookie: SECRET }]);
 });
 
 test('playwright driver: redirect to /login ⇒ KO even if the count happens to match', async () => {
@@ -202,9 +241,9 @@ test('playwright driver: redirect to /login ⇒ KO even if the count happens to 
 });
 
 test('chromeExecutable: ATREZZO_CHROME wins; playwright-core uses the system Chromium', () => {
-  assert.equal(chromeExecutable('playwright', { ATREZZO_CHROME: '/x/chrome' }), '/x/chrome');
-  assert.equal(chromeExecutable('playwright', {}), undefined);
-  if (existsSync('/usr/bin/chromium')) assert.equal(chromeExecutable('playwright-core', {}), '/usr/bin/chromium');
+  assert.equal(chromeExecutable('playwright', '/x/chrome'), '/x/chrome');
+  assert.equal(chromeExecutable('playwright', undefined), undefined);
+  if (existsSync('/usr/bin/chromium')) assert.equal(chromeExecutable('playwright-core', undefined), '/usr/bin/chromium');
 });
 
 // ---------- REAL playwright driver (actual Chromium), when available ----------
@@ -215,14 +254,14 @@ const skipReal = !realPw ? 'playwright(-core) not installed in the repo' : !real
 
 test('real playwright driver: counts in the DOM with the flow cookie', { skip: skipReal, timeout: 60_000 }, async () => {
   const dir = flowFile('viewport: { width: 1440, height: 1000 }\n');
-  const r = await runVerify(loadFlow(join(dir, 'f.yaml'), { env: { T_COOKIE: SECRET } }), { url: appUrl, driver: 'playwright', cwd: ROOT });
+  const r = await runVerify(loadFlow(join(dir, 'f.yaml')), { url: appUrl, driver: 'playwright', cwd: ROOT, headers: { Cookie: SECRET } });
   assert.equal(r.exitCode, 0, formatReport(r));
   assert.equal(r.rows[0].obtained, 3);
 });
 
 test('real playwright driver: invalid cookie ⇒ detects the redirect to /login and ends RED', { skip: skipReal, timeout: 60_000 }, async () => {
   const dir = flowFile();
-  const r = await runVerify(loadFlow(join(dir, 'f.yaml'), { env: { T_COOKIE: 'bad=1' } }), { url: appUrl, driver: 'playwright', cwd: ROOT });
+  const r = await runVerify(loadFlow(join(dir, 'f.yaml')), { url: appUrl, driver: 'playwright', cwd: ROOT, headers: { Cookie: 'bad=1' } });
   assert.equal(r.exitCode, 1, formatReport(r));
   assert.match(r.rows[0].note, /redirected \/items → \/login/);
 });

@@ -1,8 +1,8 @@
-// The only place that touches the process environment.
+// The only place that touches the process environment, and it reads exactly one name:
+// ATREZZO_CHROME, the path of a Chromium binary for the playwright driver. It is not a secret.
 //
-// Used for two things only: ${VAR} in flow headers (the value the user put in the shell that ran
-// the command) and ATREZZO_CHROME (a browser path). The plugin never reads .netrc or a keychain,
-// never persists what it finds, and secret-looking headers are printed as ***.
-export function env() {
-  return process.env;
+// Header values are never read from the environment, a file the plugin picks, .netrc or a
+// keychain: the user hands them to `verify --header` on the command line (or on stdin).
+export function chromePath() {
+  return process.env.ATREZZO_CHROME || undefined;
 }
