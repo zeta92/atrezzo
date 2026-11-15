@@ -38,6 +38,9 @@ Commands:
       start it and exits with 2. Control: POST /__atrezzo/reset {"scenario":"x"}, POST /__atrezzo/reload,
       GET /__atrezzo/state, GET|DELETE /__atrezzo/misses. Anything outside the contract is recorded
       as a gap; --on-miss stub answers an empty 200 ([] or {}) with x-atrezzo-stub instead of 404.
+      --static <dir> serves the built front end; a GET that asks for HTML (a browser navigation to a
+      client-side route such as /copilot) and matches no file or endpoint gets <dir>/index.html (SPA
+      fallback). fetch/JSON requests, unknown API paths, missing assets and writes keep the 404.
   misses [--json] [--clear] [--dir .]
       Gaps seen by serve (routes the app requested that no scenario declares), with counts, state and
       what to do: import if the contract has the route, or the /atrezzo:gap skill.
@@ -55,6 +58,8 @@ Commands:
         --header @-                   reads "Name: value" lines from stdin (nothing in ps or history):
                                       printf 'Cookie: %s\\n' "$SESSION" | atrezzo verify flow.yaml --header @-
       Cookie, Authorization and other secret-looking headers print as *** in the table, --json and errors.
+      A flow's storage: block (local/session) seeds localStorage/sessionStorage before each step's visit
+      (playwright driver; ignored with a warning under http). Only the keys are printed.
       Playwright driver: playwright or playwright-core; system Chromium or ATREZZO_CHROME=/path.
   doctor [--dir .]
       What is installed, what is missing, and whether the config and scenarios are valid.

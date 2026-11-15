@@ -2,7 +2,7 @@
 // Uses the same projection engine (contract.mjs) as the generated MSW handlers.
 import { createServer } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { extname, join, resolve, sep } from 'node:path';
+import { extname, join, posix, resolve, sep } from 'node:path';
 import { AtrezzoError } from './errors.mjs';
 import { loadScenario, scenarioNameFromFile } from './scenario.mjs';
 import { generateWorld } from './world.mjs';
@@ -17,6 +17,24 @@ const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png',
 };
+
+/**
+ * A request for a page, not for data: Accept names text/html (a browser navigation), or there is no
+ * Accept at all and the path has no file extension. fetch() sends Accept: *\/* and so never matches.
+ */
+export function wantsHtml(req, pathname) {
+  const accept = req.headers.accept;
+  if (accept === undefined || accept.trim() === '') return extname(pathname) === '';
+  return /(^|[\s,])text\/html(\s*[;,]|\s*$)/i.test(accept);
+}
+
+/** The path sits under a contract endpoint's parent (/api/orders ⇒ /api/…): an API call, never a page. */
+export function underApiPrefix(endpoints, pathname) {
+  return endpoints.some((e) => {
+    const prefix = posix.dirname(e.path);
+    return prefix !== '/' && pathname.startsWith(`${prefix}/`);
+  });
+}
 
 /** Map of scenario name -> file, by file basename and by `name:` field. */
 export function listScenarios(dir) {
@@ -156,6 +174,13 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         if (file !== root && !file.startsWith(root + sep)) return send(res, 403, { error: 'path outside the static directory' });
         if (existsSync(file) && statSync(file).isDirectory()) file = join(file, 'index.html');
         if (existsSync(file)) return send(res, 200, readFileSync(file), { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' });
+        // SPA fallback: a browser navigating to a client-side route (/copilot) gets the app shell.
+        // API calls (JSON Accept), unknown API paths and missing assets still fall through to the 404s below.
+        const shell = join(root, 'index.html');
+        if (wantsHtml(req, url.pathname) && !ASSET.test(url.pathname) && !underApiPrefix(state.dataset.endpoints, url.pathname) && existsSync(shell)) {
+          log(`${req.method} ${url.pathname} → 200 index.html (SPA fallback)`);
+          return send(res, 200, readFileSync(shell), { 'content-type': MIME['.html'] });
+        }
       }
       if ((req.method === 'GET' || req.method === 'HEAD') && ASSET.test(url.pathname)) {
         return send(res, 404, { error: `${url.pathname} does not exist${staticDir ? ' in the static directory' : ''}` }, JSON_CT);

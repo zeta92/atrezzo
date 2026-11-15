@@ -297,7 +297,11 @@ the two folders removes everything it wrote.
 **Credentials.** atrezzo asks for none and looks for none: a flow holds no secret, and the plugin reads no environment variable to fill a header. If a screen needs a session you pass the header yourself with `verify --header "Name: value"` or `--header @-` on stdin. Secret-looking headers print as `***` in the table, in `--json` and in error messages, and nothing is written to a log or to disk.
 
 <details>
-<summary><b>Upgrading from 0.3 or 0.4: breaking changes</b></summary>
+<summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
+
+### 0.6.0
+
+`serve --static` answers browser navigations to client-side routes with `index.html` (SPA fallback), and a flow's `storage:` block seeds `localStorage`/`sessionStorage` before each step with the Playwright driver. Nothing breaks.
 
 ### 0.5.0: header values come from `--header`, not the environment
 
@@ -363,7 +367,7 @@ scripts/lib/                 world, scenario, contract (engine), codegen, serve,
 scripts/lib/runtimes/        builtin, msw, supabase, prism, wiremock
 references/                  scenario.md (scenario spec) · assumptions.md (client assumptions) · runtimes.md (adapters, monorepo)
 examples/tienda/             runnable end-to-end example
-tests/                       node --test tests/  (113 tests; 3 launch real Chromium, the rest of the Playwright-driver tests use a fake page; 1 skips without Postgres and 1 without PyYAML)
+tests/                       node --test tests/  (130 tests; 6 launch real Chromium, the rest of the Playwright-driver tests use a fake page; 1 skips without Postgres and 1 without PyYAML)
 ```
 
 </details>

@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { AtrezzoError, EXIT } from './errors.mjs';
 import { generateWorld } from './world.mjs';
 import { mergeHeaders, maskHeaders, redact, formatHeaders } from './headers.mjs';
+import { mergeStorage, hasStorage, storageKeys, formatStorage, createSeeder } from './storage.mjs';
 import { chromePath } from './env.mjs';
 
 // ---------- helpers ----------
@@ -156,10 +157,16 @@ const LOGIN_RE = /(^|\/)(login|signin|sign-in|iniciar-sesion|auth)(\/|$)/i;
  * Open a step's page. Returns null if the page is the one asked for, or a sentence
  * explaining why the step can't be trusted (redirect, HTTP error, wait_for timeout).
  */
-async function openStep(pw, url, step, headers) {
+async function openStep(pw, url, step, headers, storageScript) {
   const target = joinUrl(url, step.visit);
   if (pw.context?.setExtraHTTPHeaders) await pw.context.setExtraHTTPHeaders(headers);
   else await pw.page.setExtraHTTPHeaders?.(headers);
+  if (storageScript) {
+    // On the context, so every document (reloads, new pages, popups) runs it before the app's own scripts.
+    if (pw.context?.addInitScript) await pw.context.addInitScript(storageScript);
+    else if (pw.page.addInitScript) await pw.page.addInitScript(storageScript);
+    else throw new AtrezzoError('the playwright page has no addInitScript: cannot seed the flow storage', { exitCode: EXIT.UNVERIFIABLE });
+  }
   let resp;
   try { resp = await pw.page.goto(target); } catch (e) {
     return redact(`could not open ${step.visit}: ${e.message.split('\n')[0]}`, headers);
@@ -196,6 +203,10 @@ export async function runVerify(flow, opts) {
   const flowHeaders = flow.headers ?? {};
   const runHeaders = opts.headers ?? {}; // verify --header: on every request, over flow and step headers
   const warnings = [];
+  const flowStorage = flow.storage ?? {};
+  const anyStorage = [flowStorage, ...flow.steps.map((st) => st.storage)].some(hasStorage);
+  if (anyStorage && driver !== 'playwright') warnings.push('storage: is ignored with the http driver (there is no browser to seed); use --driver playwright');
+  const seeder = createSeeder();
 
   try {
     if (reset) {
@@ -235,7 +246,8 @@ export async function runVerify(flow, opts) {
           for (const e of step.expect) rows.push({ screen: step.screen, expect: e, status: 'N/V', obtained: null, note: 'the step has no "visit": playwright does not know which page to open' });
           continue;
         }
-        stepFail = await openStep(pw, url, step, headers);
+        const storage = mergeStorage(flowStorage, step.storage);
+        stepFail = await openStep(pw, url, step, headers, seeder.next(new URL(joinUrl(url, step.visit)).origin, storage));
       }
       for (const e of step.expect) {
         const row = { screen: step.screen, expect: e, status: 'N/V', obtained: null, note: '' };
@@ -282,13 +294,17 @@ export async function runVerify(flow, opts) {
   const nv = rows.filter((r) => r.status === 'N/V').length;
   const exitCode = ko ? EXIT.FAIL : nv || !rows.length ? EXIT.UNVERIFIABLE : EXIT.OK;
   const shownHeaders = maskHeaders(mergeHeaders(flowHeaders, runHeaders, ...flow.steps.map((st) => st.headers)));
-  return { rows, exitCode, warnings, scenario: flow.scenario?.name ?? null, seed: flow.scenario?.seed ?? null, url, driver, viewport: flow.viewport ?? null, headers: shownHeaders };
+  const out = { rows, exitCode, warnings, scenario: flow.scenario?.name ?? null, seed: flow.scenario?.seed ?? null, url, driver, viewport: flow.viewport ?? null, headers: shownHeaders };
+  // keys only: a storage value may be a session
+  if (anyStorage && driver === 'playwright') out.storage = storageKeys(mergeStorage(flowStorage, ...flow.steps.map((st) => st.storage)));
+  return out;
 }
 
 export function formatReport(result) {
   const where = result.scenario ? `Scenario: ${result.scenario} (seed ${result.seed})` : 'No scenario (real app, no mock)';
   const head = [`${where} · driver: ${result.driver} · ${result.url}${result.viewport ? ` · viewport ${result.viewport.width}x${result.viewport.height}` : ''}`];
   if (result.headers && Object.keys(result.headers).length) head.push(`Headers: ${formatHeaders(result.headers)}`);
+  if (result.storage) head.push(`Storage (keys): ${formatStorage(result.storage)}`);
   for (const w of result.warnings) head.push(`WARNING: ${w}`);
   const cols = ['#', 'screen', 'selector', 'expected', 'obtained', 'result'];
   const data = result.rows.map((r, i) => [String(i + 1), r.screen, r.expect.label ? `${r.expect.selector} (${r.expect.label})` : r.expect.selector, expectedText(r.expect), r.obtained === null ? '-' : String(r.obtained), r.status]);

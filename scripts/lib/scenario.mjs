@@ -6,6 +6,7 @@ import { parseYaml, YamlError } from './yaml.mjs';
 import { AtrezzoError } from './errors.mjs';
 import { templateFor, entityFields, RENAMED_TEMPLATES } from './world.mjs';
 import { parseHeaders } from './headers.mjs';
+import { parseStorage } from './storage.mjs';
 
 export const DEFAULT_NOW = '2025-01-15T09:00:00.000Z';
 
@@ -352,11 +353,12 @@ export function loadFlow(file) {
   const doc = readYaml(file, 'flow');
   const issues = new Issues();
   if (!isObj(doc)) throw new AtrezzoError(`${file}: a flow must be a YAML map`);
-  issues.unknownKeys(doc, ['scenario', 'base_url', 'headers', 'viewport', 'steps']);
+  issues.unknownKeys(doc, ['scenario', 'base_url', 'headers', 'storage', 'viewport', 'steps']);
   if (doc.scenario !== undefined && typeof doc.scenario !== 'string') issues.add('scenario', 'path to the scenario YAML (relative to the flow); omit it only to verify a real app without a mock');
   if (doc.base_url !== undefined && typeof doc.base_url !== 'string') issues.add('base_url', 'must be a URL');
   if (!Array.isArray(doc.steps) || !doc.steps.length) issues.add('steps', 'required; a list with at least one step');
   const headers = parseHeaders(doc.headers, 'headers', issues);
+  const storage = parseStorage(doc.storage, 'storage', issues);
   let viewport = null;
   if (doc.viewport !== undefined) {
     if (!isObj(doc.viewport)) issues.add('viewport', 'must be a map { width, height }');
@@ -375,7 +377,7 @@ export function loadFlow(file) {
   doc.steps.forEach((st, i) => {
     const f = `steps[${i}]`;
     if (!isObj(st)) { issues.add(f, 'must be a map'); return; }
-    issues.unknownKeys(st, ['screen', 'visit', 'wait_for', 'headers', 'requests', 'expect'], f);
+    issues.unknownKeys(st, ['screen', 'visit', 'wait_for', 'headers', 'storage', 'requests', 'expect'], f);
     if (typeof st.screen !== 'string') issues.add(`${f}.screen`, 'required; the screen name');
     else if (path.length && !path.includes(st.screen)) issues.add(`${f}.screen`, `"${st.screen}" is not in the scenario path (${path.join(' → ')})`);
     const requests = {};
@@ -393,7 +395,8 @@ export function loadFlow(file) {
       if (e) expect.push(e);
     });
     const stepHeaders = parseHeaders(st.headers, `${f}.headers`, issues);
-    steps.push({ screen: st.screen, visit: st.visit ?? null, waitFor: st.wait_for ?? null, headers: stepHeaders, requests, expect });
+    const stepStorage = parseStorage(st.storage, `${f}.storage`, issues);
+    steps.push({ screen: st.screen, visit: st.visit ?? null, waitFor: st.wait_for ?? null, headers: stepHeaders, storage: stepStorage, requests, expect });
   });
 
   // Scenario-level expectations go to their screen (default: last of path, else last step).
@@ -413,7 +416,7 @@ export function loadFlow(file) {
     } else if (!names.includes(e.data.request)) issues.add(`steps[${i}].expect[${j}].data.request`, `"${e.data.request}" is not in the step requests (${names.join(', ') || 'none'})`);
   }));
   if (issues.list.length) throw new AtrezzoError(`${file}: invalid flow`, { issues: issues.list });
-  return { file, scenarioFile, scenario, baseUrl: doc.base_url ?? null, headers, viewport, steps };
+  return { file, scenarioFile, scenario, baseUrl: doc.base_url ?? null, headers, storage, viewport, steps };
 }
 
 export function scenarioNameFromFile(file) {

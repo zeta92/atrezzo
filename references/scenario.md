@@ -113,6 +113,18 @@ Projection semantics (identical in `serve` and the MSW handlers, same `runtime.m
 5. Undeclared parameters are ignored and listed in `X-Atrezzo-Ignored`.
 6. GET/HEAD only. Writes ⇒ 405: the mock shapes data, it does not implement business rules.
 
+### Static files and the SPA fallback (`serve --static <dir>`)
+
+`serve --static dist` serves the built front end next to the projections. A single-page app routes on the client, so a deep link such as `/copilot` has no file in `dist/`: for those, `serve` answers `200` with `dist/index.html` and the app's router takes over. The fallback applies only when **all** of these hold:
+
+- `--static` was given (or `mock.static` in the config) and the directory has an `index.html`;
+- the method is `GET` (or `HEAD`); `POST`, `PUT`, `PATCH` and `DELETE` never fall back;
+- the path is not a contract endpoint and matches no file in the directory;
+- the request asks for a page: `Accept` contains `text/html` (a browser navigation), or there is no `Accept` at all and the path has no file extension;
+- the path is not under the contract's API prefix (with `/api/orders` declared, `/api/…` is always an API call) and does not end in an asset extension (`.js`, `.css`, `.png`, `.html`…).
+
+Everything else keeps the 404: a `fetch` (it sends `Accept: */*`) or a JSON `Accept` for an undeclared route, an unknown API path and a missing asset are still answered with the 404 body, and the undeclared routes are recorded as gaps for `atrezzo misses`. A navigation that got `index.html` is not a gap.
+
 ### Filling a gap (an endpoint the app requests and the scenario lacks)
 
 `atrezzo serve` records every request outside the contract (`atrezzo misses`; details in the README, "When a route is missing"). To fill it you add **an entity and an endpoint**, never data (skill `/atrezzo:gap`):
@@ -171,10 +183,14 @@ base_url: http://127.0.0.1:4010       # optional (otherwise --url or the config)
 viewport: { width: 1440, height: 1000 }  # optional, playwright only (default 1280x720)
 headers:                              # optional: sent on EVERY request of the flow
   X-Tenant: acme                      # only values safe to commit; a session goes in verify --header
+storage:                              # optional, playwright only: seeded before the page loads
+  local:   { "sb-127-auth-token": "{\"access_token\":\"…\"}" }
+  session: { some-key: value }
 steps:
   - screen: order-list
     visit: /orders                    # route for playwright
     headers: { Accept-Language: en-GB }  # optional; merged with the flow headers
+    storage: { local: { theme: dark } }  # optional; merged with the flow storage, the step wins
     wait_for: "[data-testid=ready]"   # optional; waits for the element to exist (not to be visible)
     requests:                         # equivalent requests for the http driver
       orders: GET /api/orders?limit=12
@@ -193,6 +209,17 @@ Scenario assertions are added to the step of their `screen` (default: the last o
 - `--header @-` reads `Name: value` lines from stdin instead, so the value is in neither the process arguments (`ps`) nor the shell history: `printf 'Cookie: %s\n' "$SESSION" | atrezzo verify flow.yaml --header @-`.
 - Secrets: `Cookie`, `Authorization`, `Proxy-Authorization`, `X-Api-Key` and any name containing `token`, `secret`, `session`, `auth`, `password` or `api-key` print as `***` in the table, in `--json` and in error messages. Values are never written to logs.
 - Values: single-line text (numbers and booleans are converted to text). Names per RFC 7230.
+
+### Browser storage (`storage`)
+
+Headers do not put anything in `localStorage`. An app that keeps its session there (Supabase: `sb-<project-ref>-auth-token`) redirects every private screen to its login without it, and the step is KO. `storage:` seeds it.
+
+- Two optional maps, `local` (`localStorage`) and `session` (`sessionStorage`), of `key: "value"`. Keys and values are literal strings (numbers and booleans become text); write a JSON value as a quoted string.
+- At flow level and/or step level, merged like headers: a step's effective storage = the flow's + the step's, per area; if a key repeats, the step wins. Keys are case-sensitive.
+- `playwright` driver: before the first `visit` of each step, an init script is added to the browser context (`context.addInitScript`). It runs before the app's own scripts in every document of the step's origin, so the page already sees the values on first load, after a full reload and on later navigations; a value the app writes to a seeded key is replaced at the next document load. Other origins (third-party iframes) are not touched. A key an earlier step seeded and the current step does not declare is removed.
+- `http` driver: `storage:` is ignored (there is no browser to seed) and the report says so once with a `WARNING:` line.
+- Values are literal: atrezzo reads no environment variable, and a key or value containing `${…}` makes the flow invalid (exit 3) before anything is requested. Against the mock any well-formed session is enough: the mock does not check tokens, so the flow can hold a fake one.
+- The report lists the seeded keys (`Storage (keys): local: sb-127-auth-token`), never the values.
 
 ### Real app (no `scenario`)
 

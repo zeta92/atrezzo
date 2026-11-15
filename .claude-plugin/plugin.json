@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "atrezzo",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "API mocks from application states: a seeded deterministic world, endpoints as projections, versioned scenarios and a verification loop against the screen.",
   "author": {
     "name": "Luis Tiburcio de la Cruz Fernandez",
