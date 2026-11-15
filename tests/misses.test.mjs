@@ -228,26 +228,7 @@ test('atrezzo misses --json with one entry; text with a suggestion; --clear empt
 
 // ---------- end-to-end: page → 404 → misses → patch → world + reload → green ----------
 
-const PAGE = `<!doctype html><meta charset="utf-8"><title>users</title>
-<ul id="list"></ul>
-<script type="module">
-  const r = await fetch('/api/users');
-  const list = document.getElementById('list');
-  if (!r.ok) {
-    const e = await r.json();
-    list.after(Object.assign(document.createElement('p'), { textContent: 'Error ' + r.status + ': ' + e.error }));
-  } else {
-    for (const u of await r.json()) {
-      const li = Object.assign(document.createElement('li'), { textContent: u.name + ' · ' + u.email });
-      li.dataset.testid = 'user-row';
-      list.append(li);
-    }
-  }
-  const ready = document.createElement('i');
-  ready.hidden = true;
-  ready.dataset.testid = 'ready';
-  document.body.append(ready);
-</script>`;
+const PAGE = readFileSync(new URL('./fixtures/page.html', import.meta.url), 'utf8');
 
 const FLOW = `scenario: scenarios/catalogo.yaml
 steps:
