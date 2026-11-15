@@ -30,7 +30,7 @@ Without an OpenAPI spec, follow the source order.
 
 ## HAR: always with scripts
 
-Never load the whole HAR into context. Summarize it with a local script and read only the summary. The script reads the HAR file from disk, makes no network requests, uploads nothing (the plugin ships no network client) and writes nothing: it parses each response only to list its field names, and prints method, path, status, query parameter names and field names. It never prints values, so tokens, cookies and personal data in bodies or headers stay out of the output and on the machine.
+Never load the whole HAR into context. Summarize it with a local script and read only the summary. The script reads the HAR file from disk, makes no network requests, uploads nothing (the plugin ships no network client) and writes nothing: it parses each response only to list its field names, and prints method, path, status, query parameter names and field names. It never prints values, so tokens, cookies and personal data in a response or a header stay out of the output and on the machine.
 
 ```bash
 node -e '

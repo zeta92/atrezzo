@@ -124,7 +124,7 @@ case "$url" in
   *localhost*|*127.0.0.1*|*@db:*|*@postgres:*|*host.docker.internal*) ;;
   *)
     if [ "$allow" != "--allow-remote" ]; then
-      echo "atrezzo: that connection string does not look local and this script runs TRUNCATE. Pass --allow-remote if you really mean it." >&2
+      echo "atrezzo: that connection string does not look local and this script runs TRUNCATE. Add --allow-remote if you really mean it." >&2
       exit 2
     fi ;;
 esac
@@ -148,7 +148,7 @@ so the "mock" is **the local database with the world loaded**. Tables: ${tables.
 |---|---|
 | \`schema.sql\` | minimal \`CREATE TABLE IF NOT EXISTS\` (only if you have no migrations) |
 | \`seed.sql\` | \`TRUNCATE … RESTART IDENTITY CASCADE\` + \`INSERT\` with stable ids, in one transaction |
-| \`reset.sh\` | applies both with \`psql\`; refuses a connection string that does not look local unless you pass \`--allow-remote\` |
+| \`reset.sh\` | applies both with \`psql\`; refuses a connection string that does not look local unless you add \`--allow-remote\` |
 
 ## Option A: Supabase CLI (recommended)
 
@@ -163,7 +163,7 @@ Or let \`supabase db reset\` load it: in \`supabase/config.toml\`, \`[db.seed]\`
 ## Option B: standalone Postgres + PostgREST
 
 \`\`\`bash
-docker run -d --name atrezzo-pg -e POSTGRES_PASSWORD=postgres -p 54322:5432 postgres:16
+docker run -d --name atrezzo-pg -e POSTGRES_HOST_AUTH_METHOD=trust -p 54322:5432 postgres:16
 ${dir}/reset.sh postgresql://postgres@127.0.0.1:54322/postgres
 docker run --rm -p 3000:3000 -e PGRST_DB_URI=postgresql://postgres:postgres@host.docker.internal:54322/postgres \\
   -e PGRST_DB_ANON_ROLE=postgres -e PGRST_DB_SCHEMAS=public postgrest/postgrest
@@ -194,12 +194,12 @@ export function emit({ dataset, config, dir }) {
       { path: p(out, 'reset.sh'), content: resetSh(dataset, total), mode: 0o755 },
       { path: p(out, 'README.md'), content: readme(dataset, out) },
     ],
-    start: `${out}/reset.sh "postgresql://postgres@127.0.0.1:54322/postgres"   (after supabase start; pass the connection string as the argument, atrezzo does not look it up)`,
+    start: `${out}/reset.sh "postgresql://postgres@127.0.0.1:54322/postgres"   (after supabase start; the argument is the connection string, atrezzo does not look it up)`,
     notes: [
       `${total} rows in ${Object.keys(dataset.entities).length} tables; stable ids 1..n (the same as in serve/msw)`,
       'the app queries /rest/v1/<entity> (PostgREST): the scenario routes are not used; PostgREST does filtering and pagination',
       'does not simulate RLS or auth: with RLS on, the anon role only sees what your policies allow',
-      out.startsWith(p(config.generatedDir)) ? 'no supabase/ folder: files go to .generated (pass --backend if it lives elsewhere)' : `next to ${out.split('/atrezzo/')[0]}; your supabase/seed.sql is left alone`,
+      out.startsWith(p(config.generatedDir)) ? 'no supabase/ folder: files go to .generated (choose the folder with --backend)' : `next to ${out.split('/atrezzo/')[0]}; your supabase/seed.sql is left alone`,
     ],
   };
 }
