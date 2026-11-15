@@ -272,10 +272,19 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
     pagination = { param_limit: limitKey ?? 'limit', param_offset: offsetKey ?? 'offset' };
   }
 
+  // A query key is only a filter when it looks like one. Flags (`is_archived=true`, `expand=permissions`)
+  // name a behaviour of the client, not a subset of rows: declaring them as equality filters returns zero
+  // rows and hides the very screen we are trying to render.
+  const FLAG_KEYS = new Set(['expand', 'include', 'exclude', 'with', 'fields', 'filter', 'sort', 'order',
+    'search', 'q', 'meta', 'count', 'permissions', 'format']);
   const queryFilters = [];
   for (const [k, vals] of qMap.entries()) {
     if (k === 'select' || k === 'head' || k === 'page' || LIMIT_KEYS.includes(k) || OFFSET_KEYS.includes(k)) continue;
     if (!VALID_IDENT.test(k)) { epUninferrable.push(`query parameter "${k}" (not a valid field name)`); continue; }
+    if (FLAG_KEYS.has(k) || /^is_|^with_|^has_/.test(k) || (vals.length && /^(true|false)$/i.test(vals[0]))) {
+      epUninferrable.push(`query parameter "${k}" left out of the filters (a flag, not a subset of rows)`);
+      continue;
+    }
     queryFilters.push(k);
   }
 
@@ -663,6 +672,12 @@ export async function runHarvest({
 
       let addedThisRound = false;
       for (const gap of readGaps) {
+        if (/\.(?:png|jpe?g|gif|svg|ico|css|js|woff2?|map)$/i.test(gap.path) ||
+            /(^|\/)(?:ws|avatar|socket|events)(?:\/|$)/i.test(gap.path)) {
+          const n = `skipped ${gap.method} ${gap.path}: not a JSON API (asset, websocket or binary)`;
+          if (!globalNotes.includes(n)) globalNotes.push(n);
+          continue;
+        }
         const key = missKey(gap.method, gap.path);
         const observedForGap = observed.filter((o) => missKey(o.method, o.pathname) === key);
         const merged = mergeGapIntoScenario(workingDoc, gap, { observedForGap, parsedTypes, typesLabel });
