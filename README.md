@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.9.2
+
+`atrezzo harvest --types` deduces relations from the type graph: a `field: T[]` whose `T` is declared in the file becomes `embed: [<entity of T>]` (child entity created with T's fields and `ref:` to the parent, or reused when the world already has one that refs it), a `field: T` becomes `include` when the entity refs T's entity, and anything it cannot match is listed as `relation not mocked (missing entity + ref)` with the reason. Nothing breaks.
+
 ### 0.9.1
 
 `atrezzo harvest --storage <file.json>` (or `@-` from stdin) seeds `localStorage`/`sessionStorage` via `context.addInitScript` before the first navigation so screens behind login guards can be harvested; `${…}` is rejected (exit 3) and only keys are printed.

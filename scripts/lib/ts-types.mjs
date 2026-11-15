@@ -103,12 +103,6 @@ function readAliasExpr(src, startIdx) {
   return { expr: src.slice(startIdx).trim(), endIdx: src.length };
 }
 
-function lineNumberAt(src, idx) {
-  let line = 1;
-  for (let i = 0; i < idx; i++) if (src[i] === '\n') line++;
-  return line;
-}
-
 /** Split `s` by `sep` only at depth 0 outside strings and delimiters. */
 function splitTopLevel(s, sep) {
   const parts = [];
@@ -143,7 +137,7 @@ function splitTopLevel(s, sep) {
   return parts;
 }
 
-/** Split an interface/object body into member declarations. */
+/** Split an interface/object body into member declarations `{ text, start }` (start = offset in body). */
 function splitMembers(body) {
   const members = [];
   let paren = 0;
@@ -152,6 +146,11 @@ function splitMembers(body) {
   let angle = 0;
   let quote = null;
   let start = 0;
+  const push = (from, to) => {
+    const raw = body.slice(from, to);
+    const text = raw.trim();
+    if (text) members.push({ text, start: from + (raw.length - raw.trimStart().length) });
+  };
   for (let i = 0; i < body.length; i++) {
     const ch = body[i];
     if (quote) {
@@ -170,21 +169,19 @@ function splitMembers(body) {
     else if (ch === '>' && body[i - 1] !== '=') angle = Math.max(0, angle - 1);
     else if (paren === 0 && bracket === 0 && brace === 0 && angle === 0) {
       if (ch === ';' || ch === ',') {
-        const piece = body.slice(start, i).trim();
-        if (piece) members.push(piece);
+        push(start, i);
         start = i + 1;
       } else if (ch === '\n') {
         const cur = body.slice(start, i).trim();
         const rest = body.slice(i + 1).trimStart();
         if (cur && cur.includes(':') && !/[|&=?:]$/.test(cur) && !/^[|&]/.test(rest)) {
-          members.push(cur);
+          push(start, i);
           start = i + 1;
         }
       }
     }
   }
-  const tail = body.slice(start).trim();
-  if (tail) members.push(tail);
+  push(start, body.length);
   return members;
 }
 
@@ -225,20 +222,23 @@ function unwrapParens(s) {
   return t;
 }
 
-/** Parse `{ prop: type, ... }` body into raw property map `{ name, rawType }[]`. */
-function parseMembers(body) {
+/**
+ * Parse `{ prop: type, ... }` body into raw properties `{ name, rawType, optional, line }[]`.
+ * `lineAt(offsetInBody)` gives the 1-based source line of a member.
+ */
+function parseMembers(body, lineAt = () => null) {
   const props = [];
   const skipped = [];
-  for (const m of splitMembers(body)) {
+  for (const { text: m, start } of splitMembers(body)) {
     if (m.startsWith('[')) { skipped.push(`index signature (${m.slice(0, 32)})`); continue; }
-    const match = /^(?:readonly\s+)?([A-Za-z_$][\w$]*|"[^"]+"|'[^']+')\s*\??\s*:\s*([\s\S]+)$/.exec(m);
+    const match = /^(?:readonly\s+)?([A-Za-z_$][\w$]*|"[^"]+"|'[^']+')\s*(\??)\s*:\s*([\s\S]+)$/.exec(m);
     if (!match) {
       if (/\([^)]*\)\s*:/.test(m)) skipped.push(`method (${m.split('(')[0].trim()})`);
       continue;
     }
     const rawName = match[1];
     const name = rawName.startsWith('"') || rawName.startsWith("'") ? unquoteLiteral(rawName) ?? rawName : rawName;
-    props.push({ name, rawType: match[2].trim() });
+    props.push({ name, rawType: match[3].trim(), optional: match[2] === '?', line: lineAt(start) });
   }
   return { props, skipped };
 }
@@ -339,6 +339,18 @@ export function parseTsTypes(source, file = '<types>') {
   const clean = stripComments(source);
   const objects = new Map();
   const aliases = new Map();
+  // Offsets where each line starts, for O(log n) line lookups of declarations and members.
+  const lineStarts = [0];
+  for (let k = 0; k < clean.length; k++) if (clean[k] === '\n') lineStarts.push(k + 1);
+  const lineOf = (idx) => {
+    let lo = 0;
+    let hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStarts[mid] <= idx) lo = mid; else hi = mid - 1;
+    }
+    return lo + 1;
+  };
 
   let i = 0;
   let braceDepth = 0;
@@ -361,7 +373,7 @@ export function parseTsTypes(source, file = '<types>') {
       const m = DECL_RE.exec(clean.slice(i));
       if (m) {
         const declStart = i;
-        const line = lineNumberAt(clean, declStart);
+        const line = lineOf(declStart);
         const kindWord = m[1].replace(/^const\s+/, '');
         const name = m[2];
         let cursor = i + m[0].length;
@@ -383,7 +395,7 @@ export function parseTsTypes(source, file = '<types>') {
             const extendsList = extMatch ? extMatch[1].split(',').map((s) => s.trim().replace(/<.*>$/, '')).filter(Boolean) : [];
             const endIdx = findMatchingBrace(clean, braceIdx);
             if (endIdx !== -1) {
-              const { props, skipped } = parseMembers(clean.slice(braceIdx + 1, endIdx));
+              const { props, skipped } = parseMembers(clean.slice(braceIdx + 1, endIdx), (o) => lineOf(braceIdx + 1 + o));
               objects.set(name, { kind: 'interface', name, line, extends: extendsList, props, skipped });
               i = endIdx + 1;
               continue;
@@ -407,7 +419,8 @@ export function parseTsTypes(source, file = '<types>') {
             if (clean[cursor] === '{') {
               const endIdx = findMatchingBrace(clean, cursor);
               if (endIdx !== -1) {
-                const { props, skipped } = parseMembers(clean.slice(cursor + 1, endIdx));
+                const bodyStart = cursor + 1;
+                const { props, skipped } = parseMembers(clean.slice(bodyStart, endIdx), (o) => lineOf(bodyStart + o));
                 objects.set(name, { kind: 'type', name, line, extends: [], props, skipped });
                 i = endIdx + 1;
                 continue;
@@ -459,7 +472,7 @@ const WRAPPER_KEYS = ['items', 'data', 'results', 'records', 'content'];
 
 /**
  * Match an endpoint path's last segment against parsed TS types.
- * Returns `{ fields, values, skipped, line, file, shape, pick, typeName }` or null.
+ * Returns `{ fields, values, skipped, relations, line, file, shape, pick, typeName }` or null.
  */
 export function resolveTypeForSegment(parsed, segment) {
   if (!parsed || !segment) return null;
@@ -468,7 +481,7 @@ export function resolveTypeForSegment(parsed, segment) {
   const nSeg = normIdent(cleanSeg);
   const nSing = normIdent(sing);
 
-  // Check response wrapper types first (e.g. TasksResponse, ProjectsPayload, InfoResponse).
+  // Check response wrapper types first (`<Segment>Response`, `<Segment>Payload`, `List<Segment>Response`, ...).
   const wrapperNames = new Set([
     `${nSing}response`, `${nSeg}response`,
     `${nSing}result`, `${nSeg}result`,
@@ -494,7 +507,7 @@ export function resolveTypeForSegment(parsed, segment) {
     return extractFields(wrapperObj, parsed, { shape: 'object', pick: null });
   }
 
-  // Check array alias like `type TasksResponse = Task[]`
+  // Check array alias like `type ItemsResponse = Item[]`
   for (const a of parsed.aliases.values()) {
     if (a.kind === 'alias' && wrapperNames.has(normIdent(a.name))) {
       const inner = unwrapArrayType(a.expr);
@@ -513,18 +526,83 @@ export function resolveTypeForSegment(parsed, segment) {
   return null;
 }
 
+// Language built-ins: a field typed with one of these is not a relation to a declared entity.
+const BUILTIN_TYPES = new Set(['Object', 'Function', 'String', 'Number', 'Boolean', 'Symbol', 'BigInt', 'Date',
+  'RegExp', 'Error', 'Promise', 'Map', 'Set', 'WeakMap', 'WeakSet', 'ArrayBuffer', 'DataView', 'Blob', 'File',
+  'FormData', 'URL', 'URLSearchParams', 'Headers', 'JSON', 'Array', 'ReadonlyArray', 'Uint8Array']);
+
+/**
+ * Classify a property type as a relation, purely from syntax and the declarations of the file:
+ * `T[]` / `Array<T>` / `readonly T[]` → many (children), `T` → one (parent), where `T` is a bare type
+ * name. `T` declared as an interface/object type in the file → `declared: true`; an undeclared
+ * PascalCase name → `declared: false` (reported, never mocked). Scalars, enums, literal unions,
+ * generics and inline objects are not relations (`null`).
+ */
+export function relationOf(rawType, parsed, visited = new Set()) {
+  const parts = splitTopLevel(unwrapParens(rawType), '|')
+    .map((p) => p.trim())
+    .filter((p) => p && p !== 'null' && p !== 'undefined' && p !== 'void');
+  if (parts.length !== 1) return null;
+  let t = unwrapParens(parts[0]);
+  let many = false;
+  const inner = unwrapArrayType(t);
+  if (inner !== null) {
+    many = true;
+    const innerParts = splitTopLevel(inner, '|').map((p) => p.trim()).filter((p) => p && p !== 'null' && p !== 'undefined');
+    if (innerParts.length !== 1) return null;
+    t = unwrapParens(innerParts[0]);
+  }
+  if (!/^[A-Za-z_$][\w$]*$/.test(t)) return null;
+  if (parsed.objects.has(t)) return { many, typeName: t, declared: true };
+  if (parsed.aliases.has(t)) {
+    const a = parsed.aliases.get(t);
+    if (a.kind !== 'alias' || visited.has(t)) return null;
+    const r = relationOf(a.expr, parsed, new Set([...visited, t]));
+    if (!r || (many && r.many)) return null;
+    return { ...r, many: many || r.many };
+  }
+  if (!/^[A-Z]/.test(t) || BUILTIN_TYPES.has(t) || DATE_TYPE_NAMES.has(t.toLowerCase())) return null;
+  return { many, typeName: t, declared: false };
+}
+
+/**
+ * Relations of an object type (own and inherited properties), in declaration order:
+ * `{ field, optional, rawType, line, many, typeName, declared }[]`. A property whose type maps to a
+ * scenario field (scalar, enum, primitive array) is never a relation.
+ */
+export function typeRelations(parsed, typeName) {
+  const obj = parsed?.objects.get(typeName);
+  if (!obj) return [];
+  const out = [];
+  for (const p of resolveObjectProps(obj, parsed.objects).props) {
+    if (p.name === 'id' || !mapTsType(p.rawType, parsed.aliases).skip) continue;
+    const rel = relationOf(p.rawType, parsed);
+    if (rel) out.push({ field: p.name, optional: !!p.optional, rawType: p.rawType.replace(/\s+/g, ' '), line: p.line, ...rel });
+  }
+  return out;
+}
+
+/** Fields of a declared object type, as `resolveTypeForSegment` returns them (null if not declared). */
+export function fieldsOfType(parsed, typeName) {
+  const obj = parsed?.objects.get(typeName);
+  return obj ? extractFields(obj, parsed, { shape: null, pick: null }) : null;
+}
+
 function extractFields(obj, parsed, { shape, pick }) {
   const { props, skipped: structSkipped } = resolveObjectProps(obj, parsed.objects);
   const fields = {};
   const values = {};
   const skipped = [...structSkipped];
+  const relations = typeRelations(parsed, obj.name);
+  const relationFields = new Set(relations.map((r) => r.field));
   for (const p of props) {
     if (p.name === 'id') continue;
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(p.name)) { skipped.push(`${p.name} (invalid field name)`); continue; }
     const mapped = mapTsType(p.rawType, parsed.aliases);
-    if (mapped.skip) skipped.push(`${p.name} (${mapped.skip})`);
+    // Relations are reported on their own (embed / include / not mocked), not as uninferrable fields.
+    if (mapped.skip) { if (!relationFields.has(p.name)) skipped.push(`${p.name} (${mapped.skip})`); }
     else if (mapped.arrayValues) values[p.name] = [mapped.arrayValues];
     else fields[p.name] = mapped.type;
   }
-  return { fields, values, skipped, line: obj.line, file: parsed.file, shape, pick, typeName: obj.name };
+  return { fields, values, skipped, relations, line: obj.line, file: parsed.file, shape, pick, typeName: obj.name };
 }

@@ -13,7 +13,7 @@ import { entityFields, templateFor } from './world.mjs';
 import { createMockServer } from './serve.mjs';
 import { isMutation, isSecretParam, missKey } from './misses.mjs';
 import { loadPlaywright, chromeExecutable } from './verify.mjs';
-import { parseTsTypes, resolveTypeForSegment } from './ts-types.mjs';
+import { fieldsOfType, parseTsTypes, resolveTypeForSegment } from './ts-types.mjs';
 import { formatStorage, hasStorage, parseStorageJson, storageKeys, storageScript, validateStorage } from './storage.mjs';
 
 const PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -84,7 +84,7 @@ export function fieldsFromSelect(selectValues) {
     for (const item of splitSelect(raw)) {
       if (item === '*') continue;
       if (/\(/.test(item)) {
-        // Ignore embedded relations such as `tasks(count)` or `alias:tasks(*)`.
+        // Ignore embedded relations such as `children(count)` or `alias:children(*)`.
         if (!/\(count\)$/.test(item)) skipped.push(`select embed "${item}"`);
         continue;
       }
@@ -116,8 +116,8 @@ function inferQueryFieldType(name, values) {
 
 /**
  * Derive the parameterized endpoint path and observed parameter values from a concrete URL path.
- * E.g. `/api/v2/projects/1/views/4/tasks` -> `{ path: '/api/v2/projects/:project_id/views/:view_id/tasks', params: [...], lastSeg: 'tasks', detailId: null }`.
- * Detail `/api/users/42` -> `{ path: '/api/users', params: [], lastSeg: 'users', detailId: '42' }`.
+ * E.g. `/api/a/1/b/4/c` -> `{ path: '/api/a/:a_id/b/:b_id/c', params: [...], lastSeg: 'c', detailId: null }`.
+ * Detail `/api/a/42` -> `{ path: '/api/a', params: [], lastSeg: 'a', detailId: '42' }`.
  */
 export function inferPathShape(examplePath) {
   const clean = (examplePath || '/').replace(/\/+$/, '') || '/';
@@ -305,7 +305,7 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
     entObj.fields = { ...inferredFields, ...entObj.fields };
   }
 
-  // Bind path parameters (:project_id, :view_id, ...) to refs, fields, or null filter.
+  // Bind path parameters (:<parent>_id, ...) to refs, fields, or null filter.
   const paramBindings = {};
   for (const { name: pname, observed } of params) {
     const base = pname.replace(/_id$/, '');
@@ -319,7 +319,6 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
       if (!existingRefs.includes(parent)) existingRefs.push(parent);
       entObj.ref = existingRefs.length === 1 ? existingRefs[0] : existingRefs;
       if (entObj.total < parentCount) entObj.total = Math.max(entObj.total, parentCount * 2);
-      // Wait: if `pname` is e.g. `project` while parent fk is `project_id`, scenario.mjs handles `:project` -> `project_id` automatically!
     } else {
       const candidateFields = pname.endsWith('_id') ? [pname] : [pname, `${pname}_id`];
       const existingField = isObj(entObj.fields) ? candidateFields.find((f) => f in entObj.fields) : null;
@@ -358,6 +357,11 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
   // If `doc.world[entityName]` only has `{ total: n }`, keep short form only if it started short;
   // for newly added entities `{ total: n }` or `{ total: n, fields: ... }` are both clean.
   const ep = { path, entity: entityName };
+
+  // Relations from the type graph: `T[]` fields embed child rows, `T` fields include the parent row.
+  const relations = tsMatch?.relations?.length
+    ? applyTypeRelations(doc, { entityName, entObj, entityLocked, ep, tsMatch, parsedTypes, typesLabel, uninferrable: epUninferrable })
+    : [];
   if (Object.keys(paramBindings).length > 0) {
     const fMap = { ...paramBindings };
     for (const qk of queryFilters) fMap[qk] = qk;
@@ -368,6 +372,10 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
   if (pagination) ep.pagination = pagination;
   if (pick) ep.pick = pick;
   else if (shape !== 'array') ep.shape = shape;
+  // Key order of the emitted endpoint: path, entity, filters, pagination, shape/pick, include, embed.
+  for (const k of ['include', 'embed']) {
+    if (ep[k]) { const v = ep[k]; delete ep[k]; ep[k] = v; }
+  }
   doc.endpoints.push(ep);
 
   // Collect final field list for report table.
@@ -391,10 +399,102 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
       shape,
       source,
       fields: finalFields,
+      relations,
       uninferrable: epUninferrable,
     },
     notes,
   };
+}
+
+const refsOf = (entry) => {
+  if (!isObj(entry) || entry.ref === undefined) return [];
+  return Array.isArray(entry.ref) ? [...entry.ref] : [entry.ref];
+};
+
+/** World entities that stand for TypeScript type `typeName`: by name or by singular (`Gadget` → gadgets, gadget). */
+function entitiesForType(world, typeName, exclude) {
+  const want = snake(typeName);
+  return Object.keys(world).filter((n) => n !== exclude && (n === want || templateFor(n).singular === want));
+}
+
+/** Field list of a raw world entry, as the scenario validator will compute it. */
+function rawEntityFields(name, entry) {
+  const e = isObj(entry) ? entry : { total: entityTotal(entry) };
+  return entityFields({
+    name,
+    count: entityTotal(e),
+    refs: refsOf(e),
+    fields: isObj(e.fields) ? e.fields : undefined,
+    pools: isObj(e.values) ? e.values : {},
+    distribution: isObj(e.distribution) ? { field: e.distribution_field ?? 'status', counts: e.distribution } : null,
+    amount: isObj(e.amount) ? e.amount : null,
+  });
+}
+
+/**
+ * Turn the relations of the matched type into scenario projections (mutates `doc`, `entObj`, `ep`).
+ * Every decision comes from the type graph and the scenario's own `ref:`s:
+ * - `field: T[]` → child entity `T` (reused when a world entity for `T` already refs this one, created
+ *   with T's fields and `ref:` otherwise) and `embed: [child]` on this endpoint;
+ * - `field: T` → `include: [parent]` when a world entity for `T` exists and this entity refs it.
+ * Anything that cannot be matched is returned with `emitted: false` and the reason; nothing is invented.
+ */
+function applyTypeRelations(doc, { entityName, entObj, entityLocked, ep, tsMatch, parsedTypes, typesLabel, uninferrable }) {
+  const file = typesLabel ?? tsMatch.file;
+  const out = [];
+  for (const rel of tsMatch.relations) {
+    const record = {
+      owner: tsMatch.typeName,
+      field: rel.field,
+      type: rel.rawType,
+      kind: rel.many ? 'children' : 'parent',
+      source: `types:${file}:${rel.line}`,
+      text: `${tsMatch.typeName}.${rel.field}${rel.optional ? '?' : ''}: ${rel.rawType}`,
+      emitted: false,
+    };
+    out.push(record);
+    const skip = (reason) => { record.reason = reason; };
+    if (!rel.declared) { skip(`"${rel.typeName}" is not declared in ${file}`); continue; }
+    if (rel.typeName === tsMatch.typeName) { skip(`"${rel.typeName}" refers to itself; an entity cannot ref itself`); continue; }
+    const candidates = entitiesForType(doc.world, rel.typeName, entityName);
+
+    if (rel.many) {
+      const reuse = candidates.find((n) => refsOf(doc.world[n]).includes(entityName));
+      if (!reuse && candidates.length) { skip(`world.${candidates[0]} stands for "${rel.typeName}" but has no ref: ${entityName}`); continue; }
+      const child = reuse ?? toEntityName(rel.typeName);
+      if (child !== rel.field) { skip(`embed would answer "${child}", the type reads "${rel.field}"`); continue; }
+      if (entityTotal(entObj) === 0) { skip(`"${entityName}" has 0 rows; a child cannot ref it`); continue; }
+      if (rawEntityFields(entityName, entObj).includes(child)) { skip(`"${child}" is already a field of "${entityName}"`); continue; }
+      if (refsOf(entObj).includes(child)) { skip(`"${entityName}" refs "${child}"; embedding it back would be a cycle`); continue; }
+      if (!reuse) {
+        const childType = fieldsOfType(parsedTypes, rel.typeName);
+        const entry = { total: Math.max(2, entityTotal(entObj) * 2), ref: entityName };
+        if (Object.keys(childType.fields).length) entry.fields = { ...childType.fields };
+        if (Object.keys(childType.values).length) entry.values = { ...childType.values };
+        doc.world[child] = entry;
+        for (const sk of childType.skipped) uninferrable.push(`world.${child}: ${sk}`);
+        record.created = true;
+      }
+      ep.embed = [...(ep.embed ?? []), child];
+      Object.assign(record, { emitted: true, entity: child, projection: 'embed' });
+    } else {
+      const parent = candidates.find((n) => refsOf(entObj).includes(n)) ?? candidates[0];
+      if (!parent) { skip(`no world entity for "${rel.typeName}"`); continue; }
+      const key = templateFor(parent).singular;
+      if (key !== rel.field) { skip(`include would answer "${key}", the type reads "${rel.field}"`); continue; }
+      if (entityTotal(doc.world[parent]) === 0) { skip(`"${parent}" has 0 rows`); continue; }
+      if (!refsOf(entObj).includes(parent)) {
+        if (entityLocked) { skip(`world.${entityName} has no ref: ${parent} (and another endpoint already projects it)`); continue; }
+        if (refsOf(doc.world[parent]).includes(entityName)) { skip(`"${parent}" refs "${entityName}"; a ref back would be a cycle`); continue; }
+        const refs = [...refsOf(entObj), parent];
+        entObj.ref = refs.length === 1 ? refs[0] : refs;
+        record.addedRef = true;
+      }
+      ep.include = [...(ep.include ?? []), parent];
+      Object.assign(record, { emitted: true, entity: parent, projection: 'include' });
+    }
+  }
+  return out;
 }
 
 async function defaultPageFactory(cwd) {
@@ -765,8 +865,20 @@ export function formatHarvestReport(res) {
     lines.push('', 'No new endpoints inferred.');
   }
 
+  const emitted = res.discovered.flatMap((d) => (d.relations ?? []).filter((r) => r.emitted).map((r) => [d, r]));
+  if (emitted.length) {
+    lines.push('', 'Relations (from --types):');
+    for (const [d, r] of emitted) {
+      const how = r.created ? ` (new entity ${r.entity}, ref: ${d.entity})` : r.addedRef ? ` (ref: ${r.entity} added to ${d.entity})` : '';
+      lines.push(`  - ${d.method} ${d.path}: ${r.text} → ${r.projection} [${r.entity}]${how} (${r.source})`);
+    }
+  }
+
   const uninferrable = [];
   for (const d of res.discovered) {
+    for (const r of d.relations ?? []) {
+      if (!r.emitted) uninferrable.push(`${d.method} ${d.path}: ${r.text} → relation not mocked (missing entity + ref): ${r.reason} (${r.source})`);
+    }
     for (const u of d.uninferrable ?? []) uninferrable.push(`${d.method} ${d.path}: ${u}`);
   }
   for (const n of res.uninferrable ?? []) uninferrable.push(n);
