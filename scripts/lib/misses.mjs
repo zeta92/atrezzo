@@ -186,11 +186,17 @@ export function findInSpec(spec, method, path) {
 
 /** Endpoint paths of scenarios on disk that would serve this gap (with list + detail). */
 export function coveringScenarios(scenarios, path) {
+  // A `:name` segment of an endpoint path covers any segment of the gap (`:id` included).
+  const fits = (pattern, parts) => {
+    const segs = pattern.split('/');
+    return segs.length === parts.length && segs.every((s, i) => s.startsWith(':') || s === parts[i]);
+  };
+  const parts = path.split('/');
   const out = [];
   for (const sc of scenarios) {
     for (const ep of sc.endpoints) {
-      const detail = ep.detail !== false && path.startsWith(`${ep.path}/`) && !path.slice(ep.path.length + 1).includes('/');
-      if (path === ep.path || detail) { out.push(sc.name); break; }
+      const detail = ep.detail !== false && parts.length > 1 && fits(ep.path, parts.slice(0, -1));
+      if (fits(ep.path, parts) || detail) { out.push(sc.name); break; }
     }
   }
   return out;

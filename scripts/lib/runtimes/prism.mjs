@@ -58,13 +58,17 @@ function componentSchemas(dataset) {
   return { names, schemas };
 }
 
-/** Item schema for an endpoint: the entity plus embedded parents (`include`). */
+/** Item schema for an endpoint: the entity plus embedded parents (`include`) and children (`embed`). */
 function itemSchema(ep, dataset, names) {
   const ref = { $ref: `#/components/schemas/${names[ep.entity]}` };
-  if (!ep.include.length) return ref;
+  if (!ep.include.length && !ep.embed?.length) return ref;
   const meta = dataset.schema[ep.entity];
   const properties = {};
   const required = [];
+  for (const child of ep.embed ?? []) {
+    properties[child] = { type: 'array', items: { $ref: `#/components/schemas/${names[child]}` } };
+    required.push(child);
+  }
   for (const [fk, target] of Object.entries(meta.refs)) {
     if (!ep.include.includes(target)) continue;
     const key = dataset.schema[target].singular;
@@ -83,6 +87,15 @@ export function openapiDocument(dataset, config) {
   for (const ep of dataset.endpoints) {
     const rows = dataset.entities[ep.entity];
     const parameters = [];
+    // Path parameters: OpenAPI spells them {name}; the examples use the first row's values.
+    const sample = rows[0] ?? {};
+    let concrete = ep.path;
+    for (const prm of ep.params ?? []) {
+      const v = prm.field === null ? 1 : sample[prm.field] ?? 1;
+      concrete = concrete.replace(`/:${prm.name}`, `/${encodeURIComponent(String(v))}`);
+      parameters.push({ name: prm.name, in: 'path', required: true, description: prm.field === null ? 'Accepted, not filtered.' : `Equality on ${prm.field}.`, schema: { type: 'string' } });
+    }
+    const oasPath = ep.path.replace(/\/:([A-Za-z_]\w*)/g, '/{$1}');
     for (const f of ep.filters) {
       const info = columnInfo(rows, f);
       const values = info.distinct.length && info.distinct.length <= 25 ? ` Values in the world: ${info.distinct.join(', ')}.` : '';
@@ -105,14 +118,14 @@ export function openapiDocument(dataset, config) {
     const schema = ep.shape === 'envelope'
       ? { type: 'object', properties: { [ep.pick ?? 'data']: list, total: { type: 'integer' }, limit: { type: ['integer', 'null'] }, offset: { type: 'integer' } }, required: [ep.pick ?? 'data', 'total', 'limit', 'offset'] }
       : ep.shape === 'object' ? item : list;
-    const def = engine.handle({ pathname: ep.path, query: {} });
+    const def = engine.handle({ pathname: concrete, query: {} });
     // An empty `shape: object` singleton answers 404: it has no 200 example to give.
     const examples = def.status === 200 ? { scenario: { summary: `Projection of scenario ${dataset.scenario} without a query`, value: def.body } } : {};
     // One example per value of the distribution field, selectable with `Prefer: example=<key>`.
     const distField = ep.filters.find((f) => columnInfo(rows, f).distinct.length <= 10 && f !== 'id');
     if (distField) {
       for (const v of columnInfo(rows, distField).distinct) {
-        const r = engine.handle({ pathname: ep.path, query: { [distField]: v } });
+        const r = engine.handle({ pathname: concrete, query: { [distField]: v } });
         examples[slug(`${distField}-${v}`)] = { summary: `?${distField}=${v}`, value: r.body };
       }
     }
@@ -130,17 +143,18 @@ export function openapiDocument(dataset, config) {
         },
       };
     if (ep.pagination) responses[400] = { description: 'Non-integer pagination parameter', content: { 'application/json': { schema: errorSchema } } };
-    paths[ep.path] = { get: { operationId: `list_${op}`, summary: `${ep.entity} (atrezzo projection)`, parameters, responses } };
+    paths[oasPath] = { get: { operationId: `list_${op}`, summary: `${ep.entity} (atrezzo projection)`, parameters, responses } };
     if (ep.detail) {
       const first = rows[0];
       const detailResponses = {
-        200: { description: `One ${dataset.schema[ep.entity].singular}`, content: { 'application/json': { schema: item, ...(first ? { examples: { scenario: { summary: `id ${first.id}`, value: engine.handle({ pathname: `${ep.path}/${first.id}` }).body } } } : {}) } } },
+        200: { description: `One ${dataset.schema[ep.entity].singular}`, content: { 'application/json': { schema: item, ...(first ? { examples: { scenario: { summary: `id ${first.id}`, value: engine.handle({ pathname: `${concrete}/${first.id}` }).body } } } : {}) } } },
         404: { description: 'Does not exist in the scenario', content: { 'application/json': { schema: errorSchema } } },
       };
-      paths[`${ep.path}/{id}`] = {
+      const idName = ep.params?.some((x) => x.name === 'id') ? 'row_id' : 'id';
+      paths[`${oasPath}/{${idName}}`] = {
         get: {
           operationId: `detail_${op}`,
-          parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }],
+          parameters: [...parameters.filter((x) => x.in === 'path'), { name: idName, in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }],
           responses: detailResponses,
         },
       };

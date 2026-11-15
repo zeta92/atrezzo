@@ -43,9 +43,12 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     if (ep.filters.length) notes.push(`filters: ${ep.filters.join(', ')}`);
     if (ep.pagination) notes.push(`pagination: ${ep.pagination.limit}/${ep.pagination.offset}`);
     if (ep.include.length) notes.push(`includes: ${ep.include.join(', ')}`);
+    if (ep.embed?.length) notes.push(`embeds: ${ep.embed.join(', ')}`);
+    if (ep.params) notes.push(`params: ${ep.params.map((x) => `:${x.name}→${x.field ?? 'any'}`).join(', ')}`);
     lines.push(`  // ${ep.path} → ${notes.join(' · ')}`);
     lines.push(`  http.get('*${ep.path}', project),`);
-    if (ep.detail) lines.push(`  http.get('*${ep.path}/:id', project),`);
+    // MSW and the engine share the ":name" syntax; the detail segment must not reuse a parameter's name.
+    if (ep.detail) lines.push(`  http.get('*${ep.path}/:${ep.params?.some((x) => x.name === 'id') ? 'row_id' : 'id'}', project),`);
   }
   lines.push('];', '', 'export { dataset };', '');
   return lines.join('\n');

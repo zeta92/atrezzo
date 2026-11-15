@@ -171,6 +171,8 @@ function cmdWorld({ pos, flags }) {
     if (ep.pagination) bits.push(`pagination: ${ep.pagination.limit}/${ep.pagination.page ?? ep.pagination.offset}${ep.pagination.page ? ' (by page)' : ''}`);
     bits.push(`sort: ${ep.sort.map((s) => (s.dir === 'desc' ? '-' : '') + s.field).join(',')}`);
     if (ep.pick) bits.push(`envelope: ${ep.pick}`);
+    if (ep.params) bits.push(`params: ${ep.params.map((x) => `:${x.name}→${x.field ?? 'any'}`).join(',')}`);
+    if (ep.embed) bits.push(`embed: ${ep.embed.join(',')}`);
     out(`  GET ${ep.path}${ep.detail ? ` (+ ${ep.path}/:id)` : ''}  ${bits.join(' · ')}`);
   }
   out('Written:');

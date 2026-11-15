@@ -32,7 +32,9 @@ export function wantsHtml(req, pathname) {
 /** The path sits under a contract endpoint's parent (/api/orders ⇒ /api/…): an API call, never a page. */
 export function underApiPrefix(endpoints, pathname) {
   return endpoints.some((e) => {
-    const prefix = posix.dirname(e.path);
+    // A parameterised path (/api/projects/:id/tasks) counts from its literal part (/api/projects).
+    const literal = e.path.split('/:')[0];
+    const prefix = literal === e.path ? posix.dirname(e.path) : literal;
     return prefix !== '/' && pathname.startsWith(`${prefix}/`);
   });
 }

@@ -101,10 +101,54 @@ Generator guarantees:
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (starts with `/`, no query or `:param`), `entity` (required, declared in `world`), `filters` (existing fields), `pagination`, `sort`, `include` (referenced entities only), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`.
+`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields; a map also binds path parameters), `pagination`, `sort`, `include` (referenced entities only), `embed` (entities that reference this one), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`.
 
 - Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
 - `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` uses `data`). A single key, no nested paths.
+
+#### Paths with parameters (`/projects/:project_id/views/:view_id/tasks`)
+
+A detail screen with tabs asks for the children of one row through a nested route. Any segment of `path` can be a parameter `:name`; each one is an **equality filter on a field of the entity**:
+
+```yaml
+world:
+  projects: 3
+  views: { total: 6, ref: projects }          # → project_id
+  tasks: { total: 40, ref: [projects, views] } # → project_id, view_id
+endpoints:
+  - path: /api/v2/projects/:project_id/views/:view_id/tasks
+    entity: tasks                  # GET /api/v2/projects/1/views/4/tasks → tasks with project_id=1 and view_id=4
+  - path: /api/v2/projects/:id/views
+    entity: views                  # a bare :id, the path's only parameter, names the segment before it → project_id
+  - path: /api/v2/p/:pid/lists/:list/tasks
+    entity: tasks
+    filters: { ":pid": project_id, ":list": null, done: done }   # explicit binding; null = accept any value
+```
+
+- Binding, in this order: an explicit `filters: { ":name": field }` entry; else the field called `name`; else `<name>_id` (`:project` → `project_id`). A bare `:id` in the middle binds only to the singular of the segment before it + `_id` (`/projects/:id/views` → `project_id`), never to the row's own `id`, and only when it is the path's **single** parameter: with two or more (`/projects/:id/views/:view/tasks`) nothing is guessed, so name it (`:project_id`) or map it (`filters: { ":id": project_id }`). Nothing else is tried: a parameter that binds to no field makes the scenario invalid, and the error lists the names it looked for and the `filters` entry that would map it.
+- `filters` as a map: `":name": <field>` binds a parameter (`null` accepts any value without filtering, for a segment the world does not model, such as a view id the tasks do not carry); a plain key is a query filter and names its own field (`done: done`). The list form (`filters: [done]`) keeps working for paths without parameters, and for paths whose parameters bind by name.
+- A value no row has is an empty list (`200 []`), not a 404: the route exists. Query filters, `sort`, pagination and `shape` apply on top of the parameters.
+- The detail route still comes with `detail: true`: `GET /api/v2/projects/1/views/4` answers view 4 only if its `project_id` is 1 (else 404). A trailing `/:id` is that detail route, so it cannot be declared.
+- When two endpoints fit a request, the one with the fewest parameters wins (`/api/projects/archived/tasks` before `/api/projects/:id/tasks`); list routes are tried before detail routes. Two paths that differ only in parameter names are duplicates.
+- MSW registers the same `:name` path (the generated handlers run the same engine). Prism gets an OpenAPI path with `{name}` parameters and examples for the first row's values. WireMock does not pre-generate parameterised endpoints (the note says so); use `serve` or MSW for them.
+
+#### Embedded children (`embed`)
+
+`embed: [views]` adds to every returned row a `views` key with **the rows of `views` that point at it** (the reverse of `ref:`), as objects, in world order:
+
+```yaml
+world:
+  projects: 3
+  views: { total: 6, ref: projects }
+endpoints:
+  - path: /api/v2/projects
+    entity: projects
+    embed: [views]                 # → [{ "id": 1, "name": "…", "views": [{ "id": 4, "project_id": 1, … }] }, …]
+```
+
+- Same relation as the embedded counts (`select=*,views(count)`), returning rows instead of `[{ count }]`. A row with no children gets `"views": []`.
+- Works on list rows, the detail route and `shape: object`, and combines with `include` and with path parameters: `/api/v2/projects/:id` answers the project with its `views`, and `/api/v2/projects/:project_id/views/:view_id/tasks` answers the tasks of one of them.
+- The child entity must `ref:` the endpoint's entity (else the scenario is invalid and says which `ref:` to add); an embed name cannot be a field of the entity. The embedded rows carry no embeds of their own.
 
 #### Singletons (`shape: object`)
 
@@ -213,7 +257,7 @@ Rules:
 - `filters` and `pagination`: only the parameters in the gap's `query` or in the front end's call. Anything else is ignored and shows up in `X-Atrezzo-Ignored`.
 - Fields: if there is a contract (OpenAPI/types), it rules; `atrezzo import` writes them for you. Without a contract, the ones the front end reads. Without `fields`, the built-in entities (`users`, `customers`, `orders`, `products`) bring their template.
 - Then: `atrezzo world <scenario.yaml>` and `POST /__atrezzo/reload` (or restart `serve`). The gap turns `resolved: true` as soon as the mock serves the route.
-- Nested routes (`/api/customers/:id/orders`) cannot be declared (`path` without `:param`): use the collection with a filter (`/api/orders?customer_id=`) if the front end allows it.
+- Nested routes (gap `GET /api/customers/:id/orders`): declare the path with a named parameter, `path: /api/customers/:customer_id/orders` (or `/api/customers/:id/orders`: a bare `:id` names the segment before it when it is the only parameter), on an entity that carries `customer_id` (`ref: customers`). If the row reads a list of children (`customer.orders[]`), add `embed: [orders]` to the parent's endpoint.
 - Writes (POST/PUT/PATCH/DELETE): not declared. `serve --on-miss stub` answers 200 `{}` for exploring.
 
 ### Assertions (`expect`)

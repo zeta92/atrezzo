@@ -202,7 +202,46 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'include', 'shape', 'detail', 'pick', 'latency'];
+const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'include', 'embed', 'shape', 'detail', 'pick', 'latency'];
+
+const PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Names of the `:name` segments of a path, validated (whole segments, unique, not a trailing `:id`). */
+function pathParams(path, field, issues) {
+  const names = [];
+  const segs = path.split('/');
+  segs.forEach((seg, i) => {
+    if (!seg.includes(':')) return;
+    const name = seg.slice(1);
+    if (!seg.startsWith(':') || !PARAM_NAME.test(name)) { issues.add(field, `"${seg}": a parameter is a whole segment ":name" (letters, digits, "_")`); return; }
+    if (names.includes(name)) { issues.add(field, `parameter ":${name}" appears twice`); return; }
+    if (name === 'id' && i === segs.length - 1) { issues.add(field, 'a trailing "/:id" is the detail route, generated automatically (detail: true); declare the collection path'); return; }
+    names.push(name);
+  });
+  return names;
+}
+
+/**
+ * Fields a path parameter may bind to, in order: the parameter's own name, then `<name>_id`; a bare
+ * `:id` binds only to the singular of the segment before it + `_id` (`/projects/:id` ⇒ project_id),
+ * and only when it is the path's single parameter: with two or more, every one is named explicitly.
+ */
+function paramCandidates(name, path, count) {
+  if (name === 'id') {
+    if (count > 1) return [];
+    // A bare `:id` in the middle names the parent, never the row's own id.
+    const segs = path.split('/');
+    const prev = segs[segs.indexOf(':id') - 1];
+    return prev && !prev.startsWith(':') ? [templateFor(prev.toLowerCase()).fk] : [];
+  }
+  return name.endsWith('_id') ? [name] : [name, `${name}_id`];
+}
+
+/** The field a parameter binds to, or null. No other fallback: a name that matches nothing is an error. */
+function paramField(name, path, count, fields) {
+  return paramCandidates(name, path, count).find((c) => fields.includes(c)) ?? null;
+}
+
 /** array: a JSON list · envelope: { data, total, limit, offset } · object: the first row as a JSON object. */
 export const SHAPES = ['array', 'envelope', 'object'];
 /** Upper bound for `latency` (scenario) and `serve --latency`: a slow backend, not a hung one. */
@@ -232,20 +271,61 @@ function normalizeEndpoints(endpoints, world, issues) {
     if (!isObj(ep)) { issues.add(f, `must be a map; got ${typeName(ep)}`); return; }
     issues.unknownKeys(ep, ENDPOINT_KEYS, f);
     if (typeof ep.path !== 'string' || !ep.path.startsWith('/')) { issues.add(`${f}.path`, 'required; must start with "/"'); return; }
-    if (/[?#:]/.test(ep.path)) issues.add(`${f}.path`, 'no query, fragment or ":x" parameters (the /:id detail route is generated automatically)');
+    if (/[?#]/.test(ep.path)) issues.add(`${f}.path`, 'no query or fragment');
     const path = ep.path.replace(/\/+$/, '') || '/';
-    if (seen.has(path)) issues.add(`${f}.path`, `duplicate: "${path}"`);
-    seen.add(path);
+    const names = pathParams(path, `${f}.path`, issues);
+    // `/a/:x` and `/a/:y` answer the same requests: compare with the parameter names erased.
+    const shapeKey = path.replace(/\/:[^/]+/g, '/:');
+    if (seen.has(shapeKey)) issues.add(`${f}.path`, `duplicate: "${path}"`);
+    seen.add(shapeKey);
     if (ep.entity === undefined) { issues.add(`${f}.entity`, `missing; name the world entity that "${path}" projects`); return; }
     const spec = byName[ep.entity];
     if (!spec) { issues.add(`${f}.entity`, `"${ep.entity}" is not declared in world (declared: ${Object.keys(byName).join(', ') || 'none'})`); return; }
     const fields = entityFields(spec);
     const filters = [];
+    const bound = {}; // ":param" -> field | null, from the map form of `filters`
     if (ep.filters !== undefined) {
-      if (!Array.isArray(ep.filters)) issues.add(`${f}.filters`, 'must be a list of fields');
-      else ep.filters.forEach((fl, j) => {
-        if (!fields.includes(fl)) issues.add(`${f}.filters[${j}]`, `field "${fl}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
-        else filters.push(fl);
+      if (Array.isArray(ep.filters)) {
+        ep.filters.forEach((fl, j) => {
+          if (!fields.includes(fl)) issues.add(`${f}.filters[${j}]`, `field "${fl}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
+          else filters.push(fl);
+        });
+      } else if (isObj(ep.filters)) {
+        for (const [k, v] of Object.entries(ep.filters)) {
+          const ff = `${f}.filters.${k}`;
+          if (k.startsWith(':')) {
+            if (!names.includes(k.slice(1))) issues.add(ff, `"${k}" is not a parameter of "${path}" (parameters: ${names.map((n) => `:${n}`).join(', ') || 'none'})`);
+            else if (v !== null && !fields.includes(v)) issues.add(ff, `field ${JSON.stringify(v)} does not exist in "${spec.name}" (fields: ${fields.join(', ')}); null accepts any value without filtering`);
+            else bound[k.slice(1)] = v;
+          } else if (v !== k) issues.add(ff, `a query filter filters the field of its own name: write "${k}: ${k}" (or use the list form)`);
+          else if (!fields.includes(k)) issues.add(ff, `field "${k}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
+          else filters.push(k);
+        }
+      } else issues.add(`${f}.filters`, 'must be a list of fields, or a map { field: field, ":param": field }');
+    }
+    const params = [];
+    for (const name of names) {
+      if (Object.hasOwn(bound, name)) { params.push({ name, field: bound[name] }); continue; }
+      const field = paramField(name, path, names.length, fields);
+      if (field) params.push({ name, field });
+      else {
+        const tried = paramCandidates(name, path, names.length);
+        const looked = tried.length ? `looked for ${tried.map((t) => `"${t}"`).join(', ')}`
+          : names.length > 1 ? 'a path with several parameters does not guess what a bare ":id" names' : 'a bare ":id" names the segment before it';
+        issues.add(`${f}.path`, `parameter ":${name}" binds to no field of "${spec.name}" (${looked}; fields: ${fields.join(', ')}); rename it after a field or map it: filters: { ":${name}": <field> } (null = accept any value)`);
+      }
+    }
+    const embed = [];
+    if (ep.embed !== undefined) {
+      const list = Array.isArray(ep.embed) ? ep.embed : [ep.embed];
+      list.forEach((child, j) => {
+        const fe = `${f}.embed${Array.isArray(ep.embed) ? `[${j}]` : ''}`;
+        const cspec = typeof child === 'string' ? byName[child] : undefined;
+        if (!cspec) issues.add(fe, `${JSON.stringify(child)} is not declared in world (declared: ${Object.keys(byName).join(', ')})`);
+        else if (!cspec.refs.includes(spec.name)) issues.add(fe, `"${child}" does not reference "${spec.name}" (its refs: ${cspec.refs.join(', ') || 'none'}); embed lists the child rows that point at each row: add ref: ${spec.name} to world.${child}`);
+        else if (fields.includes(child)) issues.add(fe, `"${child}" is already a field of "${spec.name}"; the embedded list would overwrite it`);
+        else if (embed.includes(child)) issues.add(fe, `"${child}" is listed twice`);
+        else embed.push(child);
       });
     }
     let pagination = null;
@@ -303,6 +383,8 @@ function normalizeEndpoints(endpoints, world, issues) {
     };
     if (pick) norm.pick = pick; // only when declared: keeps 0.1 scenario hashes stable
     if (latency !== null) norm.latency = latency; // same: absent unless declared
+    if (params.length) norm.params = params; // same
+    if (embed.length) norm.embed = embed; // same
     out.push(norm);
   });
   return out;

@@ -101,6 +101,11 @@ export function emit({ dataset, config, dir = '.', requests = [] }) {
   const notes = [];
   let stubs = 0;
   for (const ep of dataset.endpoints) {
+    if (ep.params) {
+      // Pre-computing every parameter value × query combination is not a static stub set.
+      notes.push(`${ep.path}: not pre-generated (path parameters need the projection; use atrezzo serve or the msw runtime)`);
+      continue;
+    }
     const base = slug(ep.path);
     const mappings = [];
     const { combos, skipped, known } = combinations(ep, dataset, requests);
