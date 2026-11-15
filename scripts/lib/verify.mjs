@@ -216,7 +216,7 @@ export async function runVerify(flow, opts) {
   const rows = [];
   try {
     for (const step of flow.steps) {
-      const headers = mergeHeaders(flowHeaders, step.headers, runHeaders);
+      const headers = mergeHeaders(flowHeaders, runHeaders, step.headers);
       const fetchOpts = Object.keys(headers).length ? { headers } : undefined;
       const get = (u) => getJson(fetchImpl, u, fetchOpts);
       const responses = {};
@@ -281,7 +281,7 @@ export async function runVerify(flow, opts) {
   const ko = rows.filter((r) => r.status === 'KO').length;
   const nv = rows.filter((r) => r.status === 'N/V').length;
   const exitCode = ko ? EXIT.FAIL : nv || !rows.length ? EXIT.UNVERIFIABLE : EXIT.OK;
-  const shownHeaders = maskHeaders(mergeHeaders(flowHeaders, ...flow.steps.map((st) => st.headers), runHeaders));
+  const shownHeaders = maskHeaders(mergeHeaders(flowHeaders, runHeaders, ...flow.steps.map((st) => st.headers)));
   return { rows, exitCode, warnings, scenario: flow.scenario?.name ?? null, seed: flow.scenario?.seed ?? null, url, driver, viewport: flow.viewport ?? null, headers: shownHeaders };
 }
 

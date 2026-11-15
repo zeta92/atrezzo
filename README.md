@@ -307,7 +307,7 @@ atrezzo no longer expands `${…}` references in flow `headers:`; a flow that st
 |---|---|
 | flow: a `Cookie` whose value is a `${…}` reference · run: `atrezzo verify flow.yaml` | flow: no `Cookie` · run: `atrezzo verify flow.yaml --header "Cookie: $SESSION"` |
 
-`--header` is repeatable, applies to every request and wins over flow and step headers with the same name. `--header @-` reads `Name: value` lines from stdin. `ATREZZO_CHROME` (a browser path) is the only environment variable atrezzo still reads.
+`--header` is repeatable and applies to every request. Effective headers = flow + `--header` + the step's own, so a step that names a header keeps control of it. `--header @-` reads `Name: value` lines from stdin. `ATREZZO_CHROME` (a browser path) is the only environment variable atrezzo still reads.
 
 ### 0.4.0: English DSL, CLI and output
 

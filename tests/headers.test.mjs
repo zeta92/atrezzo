@@ -149,7 +149,7 @@ test('http driver: --header joins the flow and step headers in fetch; the report
   assert.equal(r.exitCode, 0);
   assert.deepEqual(seen.map((s) => [s.url, s.cookie, s.lang, s.tenant]), [['/api/items', SECRET, 'es-ES', 'acme']]);
   const report = formatReport(r);
-  assert.match(report, /Headers: X-Tenant: acme · Accept-Language: es-ES · Cookie: \*\*\*/);
+  assert.match(report, /Headers: X-Tenant: acme · Cookie: \*\*\* · Accept-Language: es-ES/);
   assert.ok(!report.includes('s3cr3t') && !JSON.stringify(r).includes('s3cr3t'));
 });
 
@@ -168,9 +168,18 @@ test('CLI verify --header: combined with the flow headers; the secret appears in
     assert.equal(r.code, 0, r.stderr + r.stdout);
     assert.deepEqual(seen.map((s) => [s.cookie, s.tenant, s.lang]), [[SECRET, 'acme', 'es-ES']]);
     assert.ok(!(r.stdout + r.stderr).includes('s3cr3t'), r.stdout);
-    if (extra.length) assert.deepEqual(JSON.parse(r.stdout).headers, { 'X-Tenant': 'acme', 'Accept-Language': 'es-ES', Cookie: MASK, 'X-Trace': '42' });
-    else assert.match(r.stdout, /Headers: X-Tenant: acme · Accept-Language: es-ES · Cookie: \*\*\* · X-Trace: 42/);
+    if (extra.length) assert.deepEqual(JSON.parse(r.stdout).headers, { 'X-Tenant': 'acme', Cookie: MASK, 'X-Trace': '42', 'Accept-Language': 'es-ES' });
+    else assert.match(r.stdout, /Headers: X-Tenant: acme · Cookie: \*\*\* · X-Trace: 42 · Accept-Language: es-ES/);
   }
+});
+
+test('CLI verify --header does not override a header the step sets itself', async () => {
+  const dir = flowFile();
+  seen.length = 0;
+  const r = await cliAsync(['verify', 'f.yaml', '--url', appUrl, '--header', `Cookie: ${SECRET}`, '--header', 'Accept-Language: fr-FR'], dir);
+  assert.equal(r.code, 0, r.stderr + r.stdout);
+  assert.equal(seen[0].lang, 'es-ES');
+  assert.match(r.stdout, /Accept-Language: es-ES/);
 });
 
 test('CLI verify --header @-: the header comes from stdin, never from argv or the environment', async () => {
