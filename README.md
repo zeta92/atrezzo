@@ -255,6 +255,41 @@ Exit codes: `0` OK · `1` assertion failed · `2` not verifiable (no mock, no pl
 
 </details>
 
+## Three ways to start
+
+Paste one of these into Claude Code, in a project where atrezzo is installed. Each one ends in a
+command you can run yourself, which is the point: the skill writes the scenario, the CLI runs it.
+
+**1. From a contract you already have.** *"Import `api/openapi.yaml` as a scenario called `shop`,
+print what you could not infer, and start the mock on 4010."* — runs `atrezzo import`, then
+`serve`; the report lists every route it ignored and why.
+
+**2. From a screen that lies.** *"The customers page shows no rows against the mock. Find which
+request feeds the table, check what the scenario declares for that request, and tell me why the
+counts disagree."* — reads the front end, finds the call, and `verify` counts the DOM instead of
+guessing.
+
+**3. From a state the app cannot reach yet.** *"I want the checkout screen with three abandoned
+carts, one of them paid with a card that failed. Add that world, screenshot the screen and save the
+scenario."* — writes the world, projects it, and captures the screen with the Playwright driver.
+
+## When something does not work
+
+| What you see | What it means | What to do |
+|---|---|---|
+| Exit `2`, `not verifiable` | Nothing answers on the flow's `base_url`, or Playwright/Chromium is missing | Start `serve` on that port (`--url` to point elsewhere); set `ATREZZO_CHROME` to a browser |
+| Exit `0` but the app renders nothing | `serve` is not serving your front end, or the app calls a different origin | `serve --static <app dir>`, and check the app's base URL |
+| `doctor` says the generated files are stale | The scenario changed after `atrezzo world` | Run `atrezzo world <scenario>.yaml` and commit the result |
+| A route answers 404 with `"atrezzo":{"miss":true,…}` | The app asked for something no scenario declares | `atrezzo misses`, add the endpoint, `POST /__atrezzo/reload` |
+
+## Support, data and privacy
+
+Bugs and questions go to [issues](https://github.com/zeta92/atrezzo/issues). The plugin reads the
+project it runs in and writes two places inside it: `atrezzo/.atrezzo/` (recorded gaps) and the
+generated folder. It makes no network calls except to the mock it starts on `localhost`; there is
+no telemetry, no account and no personal data involved. Uninstalling is deleting the plugin; deleting
+the two folders removes everything it wrote.
+
 <details>
 <summary><b>Upgrading from 0.3: breaking changes</b></summary>
 
