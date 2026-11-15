@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { parseTsTypes, typeRelations } from '../scripts/lib/ts-types.mjs';
 import { mergeGapIntoScenario, runHarvest, formatHarvestReport } from '../scripts/lib/harvest.mjs';
 import { normalizeScenario } from '../scripts/lib/scenario.mjs';
-import { generateWorld } from '../scripts/lib/world.mjs';
+import { generateWorld, templateFor } from '../scripts/lib/world.mjs';
 import { createEngine } from '../scripts/lib/contract.mjs';
 import { emitYaml } from '../scripts/lib/yaml-emit.mjs';
 import { tmpProject } from './helpers.mjs';
@@ -78,7 +78,7 @@ test('a T[] field creates the child entity with its interface fields, ref: to th
 
   const text = report([r.record]);
   assert.match(text, /Relations \(from --types\):/);
-  assert.match(text, new RegExp(`GET /api/widgets: Widget\\.gadgets: Gadget\\[\\] → embed \\[gadgets\\] \\(new entity gadgets, ref: widgets\\) \\(types:types\\.ts:${WIDGET_LINE}\\)`));
+  assert.match(text, new RegExp(`GET /api/widgets: Widget\\.gadgets → embed \\[gadgets\\] \\(type Gadget, new entity gadgets, ref: widgets, types:types\\.ts:${WIDGET_LINE}\\)`));
   assert.doesNotMatch(text, /gadgets \(array of Gadget\)/, 'a relation is not listed as an uninferrable field');
 });
 
@@ -138,7 +138,7 @@ test('a relation whose type is not declared in the file is reported with its rea
   assert.match(text, /Widget\.keeper: Keeper → relation not mocked \(missing entity \+ ref\): "Keeper" is not declared in types\.ts \(types:types\.ts:21\)/);
 });
 
-test('a world entity that already refs the parent and stands for the type is reused as is, never duplicated', () => {
+test('a world entity named like the property that already refs the parent is reused as is, never duplicated', () => {
   const world = { widgets: 3, gadgets: { total: 7, ref: 'widgets', fields: { colour: 'string' } }, health: 1 };
   const doc = baseDoc(JSON.parse(JSON.stringify(world)));
   const r = merge(doc, '/api/widgets', typesWith('gadgets: Gadget[];'));
@@ -156,14 +156,15 @@ test('a world entity that already refs the parent and stands for the type is reu
   assert.deepEqual(doc2.world.gadgets, loose.gadgets);
   assert.deepEqual(Object.keys(doc2.world), ['widgets', 'gadgets', 'health']);
   assert.equal(doc2.endpoints.at(-1).embed, undefined);
-  assert.equal(r2.record.relations[0].reason, 'world.gadgets stands for "Gadget" but has no ref: widgets');
+  assert.equal(r2.record.relations[0].reason, 'world.gadgets exists but has no ref: widgets');
 
-  // The field name decides the embedded key: a field that differs from the entity is not faked.
+  // The property name decides the embedded key and the entity; the type only gives the fields.
   const doc3 = baseDoc();
   const r3 = merge(doc3, '/api/widgets', typesWith('parts: Gadget[];'));
   assert.equal(doc3.world.gadgets, undefined);
-  assert.equal(doc3.endpoints.at(-1).embed, undefined);
-  assert.equal(r3.record.relations[0].reason, 'embed would answer "gadgets", the type reads "parts"');
+  assert.deepEqual(doc3.world.parts, { total: 10, ref: 'widgets', fields: { widget_id: 'integer', label: 'string', finish: ['matte', 'gloss'] } });
+  assert.deepEqual(doc3.endpoints.at(-1).embed, ['parts']);
+  assert.equal(r3.record.relations[0].entity, 'parts');
 });
 
 test('a T field includes the parent row when a world entity for T exists and the entity refs it', () => {
@@ -246,7 +247,7 @@ test('the nested route the app requests binds to the same entity as the embed, w
     assert.deepEqual(w.sprockets.fields, { teeth: 'integer', spinning: 'boolean' });
     assert.deepEqual(res.scenario.endpoints.find((e) => e.path === '/api/widgets').embed, ['gadgets']);
     const text = formatHarvestReport(res);
-    assert.match(text, /Widget\.gadgets: Gadget\[\] → embed \[gadgets\]/);
+    assert.match(text, /Widget\.gadgets → embed \[gadgets\] \(type Gadget, /);
   } finally {
     rmSync(join(res.tempFile, '..'), { recursive: true, force: true });
   }
@@ -262,4 +263,132 @@ test('decisions depend only on the type graph: renaming every type and route yie
   merge(b, '/api/alphas', rename(types));
   merge(b, '/api/alphas/1/betas', rename(types));
   assert.equal(emitYaml(b), rename(emitYaml(a)));
+});
+
+// The embedded key comes from the PROPERTY, never from the type: `items?: Array<StoreItem> | null`
+// answers `items`, and StoreItem only supplies the fields of each child row.
+const shelfTypes = (itemsMember) => `export interface Shelf {
+  id: number;
+  name: string;
+  labels: string[] | null;
+  ${itemsMember}
+}
+
+export interface StoreItem {
+  id: number;
+  title: string;
+  price: number;
+}
+`;
+const SHELF_ITEMS_LINE = 5; // line of the items member in shelfTypes()
+
+test('the property names the embed and the entity; the type only gives the fields, the FK comes from the parent', () => {
+  const doc = baseDoc();
+  const r = merge(doc, '/api/shelves', shelfTypes('items?: Array<StoreItem> | null;'));
+  assert.equal(r.changed, true);
+  assert.deepEqual(Object.keys(doc.world), ['health', 'shelves', 'items'], 'no entity named after the type (store_items)');
+  assert.deepEqual(doc.world.items, {
+    total: 10,
+    ref: 'shelves',
+    fields: { shelf_id: 'integer', title: 'string', price: 'integer' },
+  }, 'StoreItem fields plus the parent FK shelf_id, never item_id / store_item_id');
+  assert.deepEqual(doc.world.shelves, { total: 5, fields: { name: 'string' }, values: { labels: [['item 1', 'item 2']] } }, 'string[] | null stays a field');
+  assert.deepEqual(doc.endpoints.at(-1), { path: '/api/shelves', entity: 'shelves', embed: ['items'] });
+  assert.deepEqual(r.record.relations.map(({ field, typeName, emitted, projection, entity, created }) => ({ field, typeName, emitted, projection, entity, created })), [
+    { field: 'items', typeName: 'StoreItem', emitted: true, projection: 'embed', entity: 'items', created: true },
+  ]);
+
+  // The mock answers every shelf with an `items` key holding the StoreItem rows that point at it.
+  const res = engineFor(doc).handle({ pathname: '/api/shelves' });
+  assert.equal(res.status, 200);
+  for (const shelf of res.body) {
+    assert.ok(Array.isArray(shelf.items));
+    assert.equal(shelf.store_items, undefined);
+    for (const it of shelf.items) {
+      assert.equal(it.shelf_id, shelf.id);
+      assert.equal(typeof it.title, 'string');
+      assert.equal(typeof it.price, 'number');
+    }
+  }
+  assert.equal(res.body.reduce((n, s) => n + s.items.length, 0), 10);
+
+  // One report line per relation with both names: property → embed [entity] (type T, …).
+  const text = report([r.record]);
+  assert.match(text, new RegExp(`GET /api/shelves: Shelf\\.items → embed \\[items\\] \\(type StoreItem, new entity items, ref: shelves, types:types\\.ts:${SHELF_ITEMS_LINE}\\)`));
+  assert.doesNotMatch(text, /store_items|relation not mocked/);
+});
+
+test('X[], Array<X>, X[] | null, Array<X> | null and X[] | undefined give the same embed [items]', () => {
+  const yamls = [
+    'items: StoreItem[];',
+    'items: Array<StoreItem>;',
+    'items: StoreItem[] | null;',
+    'items?: Array<StoreItem> | null;',
+    'items: StoreItem[] | undefined;',
+  ].map((member) => {
+    const doc = baseDoc();
+    merge(doc, '/api/shelves', shelfTypes(member));
+    return emitYaml(doc);
+  });
+  for (const y of yamls.slice(1)) assert.equal(y, yamls[0]);
+  assert.match(yamls[0], /embed:\n\s+- items/);
+  assert.match(yamls[0], /shelf_id: integer/);
+  assert.doesNotMatch(yamls[0], /store_items/);
+});
+
+test('a world that already declares items with ref: shelves is reused with its fields as they are, not duplicated', () => {
+  const world = { health: 1, shelves: 3, items: { total: 6, ref: 'shelves', fields: { title: 'string' } } };
+  const doc = baseDoc(JSON.parse(JSON.stringify(world)));
+  const r = merge(doc, '/api/shelves', shelfTypes('items: StoreItem[] | null;'));
+  assert.deepEqual(Object.keys(doc.world), ['health', 'shelves', 'items']);
+  assert.deepEqual(doc.world.items, world.items, 'untouched: same total, ref and fields (price not added)');
+  assert.deepEqual(doc.endpoints.at(-1), { path: '/api/shelves', entity: 'shelves', embed: ['items'] });
+  assert.equal(r.record.relations[0].created, undefined);
+  assert.match(report([r.record]), /Shelf\.items → embed \[items\] \(type StoreItem, types:types\.ts:5\)/);
+  const res = engineFor(doc).handle({ pathname: '/api/shelves' });
+  assert.equal(res.body.reduce((n, s) => n + s.items.length, 0), 6);
+  for (const s of res.body) for (const it of s.items) assert.equal(it.shelf_id, s.id);
+
+  // Same name without the ref: reported, left as is, nothing invented.
+  const loose = { health: 1, shelves: 3, items: { total: 4 } };
+  const doc2 = baseDoc(JSON.parse(JSON.stringify(loose)));
+  const r2 = merge(doc2, '/api/shelves', shelfTypes('items: StoreItem[] | null;'));
+  assert.deepEqual(doc2.world, { ...loose, shelves: doc2.world.shelves });
+  assert.equal(doc2.endpoints.at(-1).embed, undefined);
+  assert.equal(r2.record.relations[0].reason, 'world.items exists but has no ref: shelves');
+  assert.match(report([r2.record]), /Shelf\.items: StoreItem\[\] \| null → relation not mocked \(missing entity \+ ref\): world\.items exists but has no ref: shelves/);
+});
+
+test('a property that cannot be an entity name is reported, not renamed', () => {
+  const doc = baseDoc();
+  const r = merge(doc, '/api/shelves', shelfTypes('topItems: StoreItem[];'));
+  assert.deepEqual(Object.keys(doc.world), ['health', 'shelves']);
+  assert.equal(doc.endpoints.at(-1).embed, undefined);
+  assert.equal(r.record.relations[0].reason, '"topItems" cannot be an entity name (lowercase letters, digits or "_") and embed answers the entity name');
+});
+
+test('the child route under the parent binds :shelf_id to the parent and projects the embedded entity', () => {
+  const types = shelfTypes('items?: Array<StoreItem> | null;');
+  const doc = baseDoc();
+  merge(doc, '/api/shelves', types);
+  const before = JSON.parse(JSON.stringify(doc.world));
+  const r = merge(doc, '/api/shelves/2/items', types);
+  assert.equal(r.record.path, '/api/shelves/:shelf_id/items');
+  assert.equal(r.record.entity, 'items');
+  assert.deepEqual(doc.world, before, 'no new entity, the embedded one is reused');
+  const res = engineFor(doc).handle({ pathname: '/api/shelves/2/items' });
+  assert.equal(res.status, 200);
+  assert.ok(res.body.length > 0);
+  for (const it of res.body) assert.equal(it.shelf_id, 2);
+});
+
+test('singular / FK of -ves plurals: only the closed -f/-fe set is irregular', () => {
+  const sing = (n) => templateFor(n).singular;
+  assert.equal(sing('shelves'), 'shelf');
+  assert.equal(templateFor('shelves').fk, 'shelf_id');
+  assert.equal(sing('top_shelves'), 'top_shelf');
+  assert.equal(sing('knives'), 'knife');
+  for (const [plural, singular] of [['drives', 'drive'], ['valves', 'valve'], ['archives', 'archive'], ['curves', 'curve'], ['boxes', 'box'], ['categories', 'category']]) {
+    assert.equal(sing(plural), singular);
+  }
 });

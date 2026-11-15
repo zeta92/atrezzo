@@ -9,7 +9,7 @@ import { AtrezzoError, EXIT } from './errors.mjs';
 import { parseYaml } from './yaml.mjs';
 import { emitYaml } from './yaml-emit.mjs';
 import { loadScenario, normalizeScenario } from './scenario.mjs';
-import { entityFields, templateFor } from './world.mjs';
+import { entityFields, irregularPlural, singularize, templateFor } from './world.mjs';
 import { createMockServer } from './serve.mjs';
 import { isMutation, isSecretParam, missKey } from './misses.mjs';
 import { loadPlaywright, chromeExecutable } from './verify.mjs';
@@ -23,21 +23,18 @@ const SINGLETON_NAMES = new Set(['info', 'user', 'me', 'config', 'settings']);
 const LIMIT_KEYS = ['limit', 'per_page', 'perPage', 'page_size', 'pageSize', 'size'];
 const OFFSET_KEYS = ['offset', 'skip'];
 const VALID_IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ENTITY_NAME = /^[a-z][a-z0-9_]*$/; // same rule as the scenario validator
 
 const snake = (s) => String(s).replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').toLowerCase();
 
 function pluralize(s) {
   if (!s) return 'items';
+  const irregular = irregularPlural(s);
+  if (irregular) return irregular;
   if (/s$/.test(s)) return s;
   if (/[^aeiou]y$/.test(s)) return `${s.slice(0, -1)}ies`;
   if (/(x|ch|sh)$/.test(s)) return `${s}es`;
   return `${s}s`;
-}
-
-function singularize(s) {
-  if (/ies$/.test(s) && s.length > 4) return `${s.slice(0, -3)}y`;
-  if (/(s|x|z|ch|sh)es$/.test(s)) return s.slice(0, -2);
-  return s.replace(/s$/, '');
 }
 
 function toEntityName(raw) {
@@ -434,8 +431,9 @@ function rawEntityFields(name, entry) {
 /**
  * Turn the relations of the matched type into scenario projections (mutates `doc`, `entObj`, `ep`).
  * Every decision comes from the type graph and the scenario's own `ref:`s:
- * - `field: T[]` → child entity `T` (reused when a world entity for `T` already refs this one, created
- *   with T's fields and `ref:` otherwise) and `embed: [child]` on this endpoint;
+ * - `field: T[]` → child entity named `field` (the JSON key; reused as is when the world already has it
+ *   with `ref:` to this one, created otherwise with T's fields, the parent FK and `ref:`) and
+ *   `embed: [field]` on this endpoint;
  * - `field: T` → `include: [parent]` when a world entity for `T` exists and this entity refs it.
  * Anything that cannot be matched is returned with `emitted: false` and the reason; nothing is invented.
  */
@@ -447,6 +445,7 @@ function applyTypeRelations(doc, { entityName, entObj, entityLocked, ep, tsMatch
       owner: tsMatch.typeName,
       field: rel.field,
       type: rel.rawType,
+      typeName: rel.typeName,
       kind: rel.many ? 'children' : 'parent',
       source: `types:${file}:${rel.line}`,
       text: `${tsMatch.typeName}.${rel.field}${rel.optional ? '?' : ''}: ${rel.rawType}`,
@@ -459,17 +458,22 @@ function applyTypeRelations(doc, { entityName, entObj, entityLocked, ep, tsMatch
     const candidates = entitiesForType(doc.world, rel.typeName, entityName);
 
     if (rel.many) {
-      const reuse = candidates.find((n) => refsOf(doc.world[n]).includes(entityName));
-      if (!reuse && candidates.length) { skip(`world.${candidates[0]} stands for "${rel.typeName}" but has no ref: ${entityName}`); continue; }
-      const child = reuse ?? toEntityName(rel.typeName);
-      if (child !== rel.field) { skip(`embed would answer "${child}", the type reads "${rel.field}"`); continue; }
+      // The JSON key is the PROPERTY (`items`), so the embedded entity is named after it, as written;
+      // the referenced type (`StoreItem`) only supplies the fields of each child row.
+      const child = rel.field;
+      const reuse = Object.hasOwn(doc.world, child);
+      if (!ENTITY_NAME.test(child)) { skip(`"${child}" cannot be an entity name (lowercase letters, digits or "_") and embed answers the entity name`); continue; }
+      if (child === entityName) { skip(`"${child}" is the parent entity itself; an entity cannot ref itself`); continue; }
+      if (reuse && !refsOf(doc.world[child]).includes(entityName)) { skip(`world.${child} exists but has no ref: ${entityName}`); continue; }
       if (entityTotal(entObj) === 0) { skip(`"${entityName}" has 0 rows; a child cannot ref it`); continue; }
       if (rawEntityFields(entityName, entObj).includes(child)) { skip(`"${child}" is already a field of "${entityName}"`); continue; }
       if (refsOf(entObj).includes(child)) { skip(`"${entityName}" refs "${child}"; embedding it back would be a cycle`); continue; }
       if (!reuse) {
         const childType = fieldsOfType(parsedTypes, rel.typeName);
         const entry = { total: Math.max(2, entityTotal(entObj) * 2), ref: entityName };
-        if (Object.keys(childType.fields).length) entry.fields = { ...childType.fields };
+        // FK to the parent: `<singular of the PARENT>_id`, never derived from the child's name or type.
+        const fk = templateFor(entityName).fk;
+        entry.fields = fk in childType.fields ? { ...childType.fields } : { [fk]: 'integer', ...childType.fields };
         if (Object.keys(childType.values).length) entry.values = { ...childType.values };
         doc.world[child] = entry;
         for (const sk of childType.skipped) uninferrable.push(`world.${child}: ${sk}`);
@@ -869,8 +873,9 @@ export function formatHarvestReport(res) {
   if (emitted.length) {
     lines.push('', 'Relations (from --types):');
     for (const [d, r] of emitted) {
-      const how = r.created ? ` (new entity ${r.entity}, ref: ${d.entity})` : r.addedRef ? ` (ref: ${r.entity} added to ${d.entity})` : '';
-      lines.push(`  - ${d.method} ${d.path}: ${r.text} → ${r.projection} [${r.entity}]${how} (${r.source})`);
+      // Both names on one line: the property (the JSON key, = entity) and the type that gave its fields.
+      const how = r.created ? `, new entity ${r.entity}, ref: ${d.entity}` : r.addedRef ? `, ref: ${r.entity} added to ${d.entity}` : '';
+      lines.push(`  - ${d.method} ${d.path}: ${r.owner}.${r.field} → ${r.projection} [${r.entity}] (type ${r.typeName}${how}, ${r.source})`);
     }
   }
 

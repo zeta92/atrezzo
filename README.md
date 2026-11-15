@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.9.3
+
+`atrezzo harvest --types` names an embedded relation after the **property**, not the type: `items?: Array<StoreItem> | null` gives `embed: [items]` and an `items` entity with `StoreItem`'s fields, the parent FK (`shelf_id`, added when the type lacks it) and `ref: shelves`; a world `items` that already refs the parent is reused as is. `X[]`, `Array<X>`, `X[] | null`, `Array<X> | null` and `X[] | undefined` count the same. Each relation is reported with both names (`Shelf.items → embed [items] (type StoreItem, …)`). Singulars of the English `-f/-fe → -ves` nouns are now right (`shelves` → `shelf`, FK `shelf_id`, was `shelve_id`); other `-ves` words are unchanged (`drives` → `drive`).
+
 ### 0.9.2
 
 `atrezzo harvest --types` deduces relations from the type graph: a `field: T[]` whose `T` is declared in the file becomes `embed: [<entity of T>]` (child entity created with T's fields and `ref:` to the parent, or reused when the world already has one that refs it), a `field: T` becomes `include` when the entity refs T's entity, and anything it cannot match is listed as `relation not mocked (missing entity + ref)` with the reason. Nothing breaks.

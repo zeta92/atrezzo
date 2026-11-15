@@ -66,8 +66,23 @@ export const TEMPLATES = {
  */
 export const RENAMED_TEMPLATES = { clientes: 'customers', usuarios: 'users', pedidos: 'orders', productos: 'products' };
 
-/** English singular of a collection name: invoices -> invoice, categories -> category, boxes -> box. */
-function singularize(name) {
+/**
+ * English nouns whose plural turns -f/-fe into -ves (a closed set of the language, not of any app).
+ * Every other -ves word is a plain -ve + s (drives -> drive, archives -> archive).
+ */
+const VES_SINGULARS = ['calf', 'dwarf', 'elf', 'half', 'hoof', 'knife', 'leaf', 'life', 'loaf', 'scarf', 'self', 'sheaf', 'shelf', 'thief', 'wife', 'wolf'];
+const VES_PLURALS = new Map(VES_SINGULARS.map((s) => [`${s.replace(/fe?$/, '')}ves`, s]));
+/** `shelf` -> `shelves` for the -f/-fe nouns above; null for any other word. */
+export const irregularPlural = (word) => {
+  const m = /^(.*?)([a-z]+)$/.exec(word);
+  return m && VES_SINGULARS.includes(m[2]) ? `${m[1]}${m[2].replace(/fe?$/, '')}ves` : null;
+};
+
+/** English singular of a collection name: invoices -> invoice, categories -> category, boxes -> box, shelves -> shelf. */
+export function singularize(name) {
+  // Last word only (`top_shelves` -> `top_shelf`): the irregular set is matched on whole words.
+  const m = /^(.*?)([a-z]+)$/.exec(name);
+  if (m && VES_PLURALS.has(m[2])) return `${m[1]}${VES_PLURALS.get(m[2])}`;
   if (/ies$/.test(name) && name.length > 4) return `${name.slice(0, -3)}y`;
   if (/(s|x|z|ch|sh)es$/.test(name)) return name.slice(0, -2);
   return name.replace(/s$/, '');

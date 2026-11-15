@@ -2,6 +2,8 @@
 // Pure ESM, no dependencies: extracts `interface X`, `type X = { ... }`,
 // `type X = 'a' | 'b'`, and `enum X` with exact 1-based source line numbers.
 
+import { singularize } from './world.mjs';
+
 const ISO_DATE_LITERAL = /^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$/;
 const DATE_TYPE_NAMES = new Set(['date', 'isodate', 'isodatestring', 'datestring', 'datetime', 'isostring', 'timestamp']);
 
@@ -462,11 +464,6 @@ export function resolveObjectProps(obj, objects, visited = new Set()) {
 
 const normIdent = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
 
-function singularizeWord(s) {
-  if (/ies$/.test(s) && s.length > 4) return `${s.slice(0, -3)}y`;
-  if (/(s|x|z|ch|sh)es$/.test(s)) return s.slice(0, -2);
-  return s.replace(/s$/, '');
-}
 
 const WRAPPER_KEYS = ['items', 'data', 'results', 'records', 'content'];
 
@@ -477,7 +474,7 @@ const WRAPPER_KEYS = ['items', 'data', 'results', 'records', 'content'];
 export function resolveTypeForSegment(parsed, segment) {
   if (!parsed || !segment) return null;
   const cleanSeg = segment.toLowerCase();
-  const sing = singularizeWord(cleanSeg);
+  const sing = singularize(cleanSeg);
   const nSeg = normIdent(cleanSeg);
   const nSing = normIdent(sing);
 
