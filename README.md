@@ -63,15 +63,15 @@ $ atrezzo verify flow-broken.yaml --diagnose
 
 ### No session means red, never green
 
-One flow, run twice with the Playwright driver (real Chromium) against a small cookie-protected app. That app is a scratch server, not part of this repo; the same case runs in `tests/headers.test.mjs` if you want to reproduce it. The flow sends `Cookie: "${YOUR_API_KEY}"`; you set that variable in your own shell for each run. Abridged: the table headers are cut.
+One flow, run twice with the Playwright driver (real Chromium) against a small cookie-protected app. That app is a scratch server, not part of this repo; the same case runs in `tests/headers.test.mjs` if you want to reproduce it. The flow sends `Cookie: "${SESSION}"`; you set that variable in your own shell for each run. Abridged: the table headers are cut.
 
 ```text
-$ YOUR_API_KEY="session=valid" atrezzo verify flow.yaml --driver playwright
+$ SESSION="session=valid" atrezzo verify flow.yaml --driver playwright
 Headers: Cookie: ***
 1  customers  table tbody tr (customer rows)  =6        6         OK
 1 OK · 0 KO · 0 not verified → GREEN
 
-$ YOUR_API_KEY="session=expired" atrezzo verify flow.yaml --driver playwright
+$ SESSION="session=expired" atrezzo verify flow.yaml --driver playwright
 Headers: Cookie: ***
 1  customers  table tbody tr (customer rows)  =6        0         KO
   #1: the app redirected /customers → /login?next=%2Fcustomers (login screen: no session or session expired; check the flow headers/Cookie)
