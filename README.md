@@ -9,9 +9,11 @@
 **atrezzo** is a Claude Code plugin for API mocks. You describe one application state: a seeded world of entities, such as 3 customers and 40 orders, 3 of them with an issue. Every endpoint is a deterministic projection of that world. A versioned YAML scenario ties the world to the screen and to what the screen must show. `verify` opens the screen, counts the DOM and, when the count is wrong, tells you why.
 
 ```text
-/plugin install atrezzo --marketplace zeta92/atrezzo
+/plugin marketplace add zeta92/atrezzo
+/plugin install atrezzo@atrezzo
 ```
 
+The first line registers this repository as a marketplace; the second installs the plugin from it.
 Or load it from a local checkout:
 
 ```bash
@@ -164,9 +166,11 @@ Only the skill descriptions load at session start: about 2 KB of frontmatter for
 <h2><img src="./assets/readme/section-03-install.svg" width="100%" alt="03 Install"></h2>
 
 ```text
-/plugin install atrezzo --marketplace zeta92/atrezzo
+/plugin marketplace add zeta92/atrezzo
+/plugin install atrezzo@atrezzo
 ```
 
+The first line registers this repository as a marketplace; the second installs the plugin from it.
 Or load it from a local checkout:
 
 ```bash
