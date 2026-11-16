@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { parseYaml, YamlError } from './yaml.mjs';
 import { AtrezzoError } from './errors.mjs';
-import { templateFor, entityFields, RENAMED_TEMPLATES } from './world.mjs';
+import { templateFor, entityFields, firstValueList, RENAMED_TEMPLATES } from './world.mjs';
 import { parseHeaders } from './headers.mjs';
 import { parseStorage } from './storage.mjs';
 
@@ -78,7 +78,93 @@ function normalizeExpect(item, field, issues) {
 
 // ---------- world ----------
 
-const ENTITY_KEYS = ['total', 'distribution', 'distribution_field', 'amount', 'ref', 'nulls', 'values', 'days', 'fields'];
+const ENTITY_KEYS = ['total', 'distribution', 'distribution_field', 'amount', 'ref', 'nulls', 'values', 'days', 'fields', 'derive', 'seed_first'];
+
+/** Entities `name` reaches through `ref:` (transitively), given name -> refs. */
+function reachable(refsOf, name) {
+  const seen = new Set();
+  const stack = [...(refsOf[name] ?? [])];
+  while (stack.length) {
+    const n = stack.pop();
+    if (seen.has(n)) continue;
+    seen.add(n);
+    stack.push(...(refsOf[n] ?? []));
+  }
+  return seen;
+}
+
+/**
+ * `derive: { <fk>: { from: <ref>, field: <field of that ref> } }`: the fk is copied from the row its
+ * `from` fk points at, so two references of one row cannot contradict each other. `field` defaults to
+ * the derived fk's own name (a reference to the same entity has the same name everywhere).
+ */
+function normalizeDerive(spec, raw, f, byName, issues) {
+  if (!isObj(raw) || !Object.keys(raw).length) { issues.add(f, 'must be a non-empty map <foreign key>: { from: <entity in ref>, field: <its field> }'); return; }
+  const fkTarget = Object.fromEntries(spec.refs.map((r) => [templateFor(r).fk, r]));
+  const fks = Object.keys(fkTarget);
+  const refsOf = Object.fromEntries(Object.values(byName).map((s) => [s.name, s.refs]));
+  const out = {};
+  for (const [key, val] of Object.entries(raw)) {
+    const ff = `${f}.${key}`;
+    if (!Object.hasOwn(fkTarget, key)) {
+      issues.add(ff, `"${key}" is not a foreign key of "${spec.name}" (its foreign keys: ${fks.join(', ') || 'none; declare ref: first'}); derive copies a reference from another reference of the same row`);
+      continue;
+    }
+    const target = fkTarget[key];
+    let from; let field;
+    if (typeof val === 'string') from = val;
+    else if (isObj(val)) {
+      issues.unknownKeys(val, ['from', 'field'], ff);
+      from = val.from;
+      field = val.field;
+    } else { issues.add(ff, `must be a map { from: <entity in ref>, field: <its field> } or the name of the entity; got ${typeName(val)}`); continue; }
+    if (typeof from !== 'string' || !from) { issues.add(`${ff}.from`, `required; the entity in ref: whose row "${key}" is copied from (ref: ${spec.refs.join(', ') || 'none'})`); continue; }
+    if (!spec.refs.includes(from)) { issues.add(`${ff}.from`, `"${from}" is not in the ref: of "${spec.name}" (ref: ${spec.refs.join(', ') || 'none'}); derive reads the row another reference of the same row points at`); continue; }
+    if (from === target) { issues.add(`${ff}.from`, `"${key}" already points at "${from}"; derive it from another entity of ref: (one that has its own "${key}")`); continue; }
+    if (field === undefined) field = key;
+    if (typeof field !== 'string' || !field) { issues.add(`${ff}.field`, 'must be a field name'); continue; }
+    const fromSpec = byName[from];
+    const fromFields = entityFields(fromSpec);
+    if (!fromFields.includes(field)) { issues.add(`${ff}.field`, `field "${field}" does not exist in "${from}" (fields: ${fromFields.join(', ')})`); continue; }
+    if (!fromSpec.refs.includes(target) || templateFor(target).fk !== field) {
+      issues.add(`${ff}.field`, `"${from}.${field}" is not a reference to "${target}", so the copy would not be a "${target}" id; add ref: ${target} to world.${from} and copy its "${templateFor(target).fk}"`);
+      continue;
+    }
+    if (reachable(refsOf, from).has(spec.name)) { issues.add(`${ff}.from`, `"${from}" references "${spec.name}" (directly or through other entities); its rows cannot be built first`); continue; }
+    out[key] = { from, field };
+  }
+  // The fk a derivation reads is drawn, never derived itself: one hop, no order between derivations.
+  for (const [key, d] of Object.entries(out)) {
+    const via = templateFor(d.from).fk;
+    if (Object.hasOwn(out, via)) { issues.add(`${f}.${key}.from`, `"${via}" (the reference to "${d.from}") is itself derived; derive from a reference that is drawn`); delete out[key]; }
+  }
+  if (Object.keys(out).length) spec.derive = out;
+}
+
+/** `seed_first: true | [field, …]`: every row takes the first value of those fields (see firstValueList). */
+function normalizeSeedFirst(spec, raw, f, issues) {
+  const fks = spec.refs.map((r) => templateFor(r).fk);
+  const eligible = entityFields(spec).filter((k) => k !== 'id' && !fks.includes(k) && k !== spec.distribution?.field && firstValueList(spec, k));
+  if (raw === false) return;
+  if (raw === true) {
+    if (!eligible.length) issues.add(f, `"${spec.name}" has no enum, boolean or values: field to seed (declare one in fields:, or remove seed_first)`);
+    else spec.seedFirst = eligible;
+    return;
+  }
+  if (!Array.isArray(raw) || !raw.length) { issues.add(f, `must be true, false or a non-empty list of fields (enum, boolean or with values:); got ${JSON.stringify(raw)}`); return; }
+  const list = [];
+  raw.forEach((k, i) => {
+    const ff = `${f}[${i}]`;
+    if (typeof k !== 'string') issues.add(ff, 'must be a field name');
+    else if (!entityFields(spec).includes(k)) issues.add(ff, `field "${k}" does not exist in "${spec.name}" (fields: ${entityFields(spec).join(', ')})`);
+    else if (fks.includes(k)) issues.add(ff, `"${k}" is a foreign key; its values come from ref: (use derive to tie it to another reference)`);
+    else if (k === spec.distribution?.field) issues.add(ff, `"${k}" has a distribution; its exact counts decide every row`);
+    else if (!firstValueList(spec, k)) issues.add(ff, `"${k}" is not an enum, a boolean or a field with values: (seedable: ${eligible.join(', ') || 'none'})`);
+    else if (list.includes(k)) issues.add(ff, `"${k}" is listed twice`);
+    else list.push(k);
+  });
+  if (list.length) spec.seedFirst = list;
+}
 
 /** Types accepted in `fields` (a list of values = enum). */
 export const FIELD_TYPES = ['string', 'integer', 'number', 'boolean', 'date', 'email', 'uuid', 'url'];
@@ -182,7 +268,11 @@ function normalizeWorld(world, issues) {
 
   // Second pass: things that depend on other entities / final field lists.
   const counts = Object.fromEntries(specs.map(({ spec }) => [spec.name, spec.count]));
+  const byName = Object.fromEntries(specs.map(({ spec }) => [spec.name, spec]));
   for (const { spec, raw, f } of specs) {
+    // Only when declared: a scenario without them keeps its normalized form (and its hash).
+    if (raw.derive !== undefined) normalizeDerive(spec, raw.derive, `${f}.derive`, byName, issues);
+    if (raw.seed_first !== undefined) normalizeSeedFirst(spec, raw.seed_first, `${f}.seed_first`, issues);
     for (const r of spec.refs) {
       if (spec.count > 0 && counts[r] === 0) issues.add(`${f}.ref`, `"${spec.name}" references "${r}" but "${r}" has 0 items; the ids would not exist`);
     }

@@ -56,6 +56,7 @@ test('a T[] field creates the child entity with its interface fields, ref: to th
     total: 10,
     ref: 'widgets',
     fields: { widget_id: 'integer', label: 'string', finish: ['matte', 'gloss'] },
+    seed_first: true, // an enum from --types: every row starts at its first declared value
   });
   assert.deepEqual(doc.endpoints.at(-1), { path: '/api/widgets', entity: 'widgets', embed: ['gadgets'] });
   assert.deepEqual(r.record.relations.map(({ text, emitted, projection, entity, created, source }) => ({ text, emitted, projection, entity, created, source })), [
@@ -162,7 +163,7 @@ test('a world entity named like the property that already refs the parent is reu
   const doc3 = baseDoc();
   const r3 = merge(doc3, '/api/widgets', typesWith('parts: Gadget[];'));
   assert.equal(doc3.world.gadgets, undefined);
-  assert.deepEqual(doc3.world.parts, { total: 10, ref: 'widgets', fields: { widget_id: 'integer', label: 'string', finish: ['matte', 'gloss'] } });
+  assert.deepEqual(doc3.world.parts, { total: 10, ref: 'widgets', fields: { widget_id: 'integer', label: 'string', finish: ['matte', 'gloss'] }, seed_first: true });
   assert.deepEqual(doc3.endpoints.at(-1).embed, ['parts']);
   assert.equal(r3.record.relations[0].entity, 'parts');
 });

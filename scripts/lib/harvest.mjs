@@ -9,7 +9,7 @@ import { AtrezzoError, EXIT } from './errors.mjs';
 import { parseYaml } from './yaml.mjs';
 import { emitYaml } from './yaml-emit.mjs';
 import { loadScenario, normalizeScenario } from './scenario.mjs';
-import { entityFields, irregularPlural, singularize, templateFor } from './world.mjs';
+import { entityFields, generateWorld, irregularPlural, singularize, templateFor } from './world.mjs';
 import { createMockServer } from './serve.mjs';
 import { isMutation, isSecretParam, missKey } from './misses.mjs';
 import { loadPlaywright, chromeExecutable } from './verify.mjs';
@@ -312,12 +312,18 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
   const entObj = ensureEntityObject(doc.world, entityName, Math.max(minTotal, detailNum));
   if (detailNum > entObj.total) entObj.total = detailNum;
 
+  let seededFirst = false;
   if (!entityLocked) {
     if (Object.keys(inferredFields).length > 0) {
       entObj.fields = { ...inferredFields, ...(isObj(entObj.fields) ? entObj.fields : {}) };
     }
     if (Object.keys(inferredValues).length > 0) {
       entObj.values = { ...inferredValues, ...(isObj(entObj.values) ? entObj.values : {}) };
+    }
+    // An entity shaped by --types renders in its first declared state: a flag drawn at random can hide the screen.
+    if (tsMatch && entObj.seed_first === undefined && hasSeedableField(entObj.fields)) {
+      entObj.seed_first = true;
+      seededFirst = true;
     }
   } else if (isObj(entObj.fields) && Object.keys(inferredFields).length > 0) {
     entObj.fields = { ...inferredFields, ...entObj.fields };
@@ -329,6 +335,7 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
   // list form binds nothing once a path has two or more parameters. `null` (accept any value, no
   // filtering) is the last resort, only for an entity another endpoint already projects, and it is reported.
   const paramBindings = {};
+  const chain = []; // parameters bound to a parent entity, in path order
   for (const { name: pname, observed } of params) {
     const base = pname.replace(/_id$/, '');
     const parentCandidates = [pluralize(base), base];
@@ -342,6 +349,7 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
       entObj.ref = existingRefs.length === 1 ? existingRefs[0] : existingRefs;
       if (entObj.total < parentCount) entObj.total = Math.max(entObj.total, parentCount * 2);
       paramBindings[`:${pname}`] = templateFor(parent).fk;
+      chain.push({ parent, fk: templateFor(parent).fk, observed: obsNum });
       continue;
     }
     const candidateFields = pname.endsWith('_id') ? [pname] : [pname, `${pname}_id`];
@@ -367,6 +375,8 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
       epUninferrable.push(`path parameter ":${pname}" accepts any value (world.${entityName} has no field "${pname}" and another endpoint already projects it)`);
     }
   }
+
+  const derived = chain.length >= 2 ? deriveFromNesting(doc, entityName, entObj, chain, epUninferrable) : [];
 
   // Ensure every query filter key exists on the entity's fields.
   if (queryFilters.length) {
@@ -410,6 +420,7 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
   else if (shape !== 'array') ep.shape = shape;
   orderEndpointKeys(ep);
   doc.endpoints.push(ep);
+  if (derived.length) checkObservedNesting(doc, chain, miss.example ?? miss.path, notes);
 
   // Collect final field list for report table.
   const finalRefs = entObj.ref === undefined ? [] : Array.isArray(entObj.ref) ? entObj.ref : [entObj.ref];
@@ -433,6 +444,8 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
       source,
       fields: finalFields,
       relations,
+      ...(derived.length ? { derived } : {}),
+      ...(seededFirst ? { seedFirst: true } : {}),
       uninferrable: epUninferrable,
     },
     endpoint: ep,
@@ -461,6 +474,76 @@ export function setResponseForm(ep, form) {
 const refsOf = (entry) => {
   if (!isObj(entry) || entry.ref === undefined) return [];
   return Array.isArray(entry.ref) ? [...entry.ref] : [entry.ref];
+};
+
+/** Does a `fields` map have an enum (list) or a boolean, the fields `seed_first: true` seeds? */
+const hasSeedableField = (fields) => isObj(fields) && Object.values(fields).some((t) => Array.isArray(t) || t === 'boolean');
+
+/** Does world entity `from` reach `to` through `ref:` (directly or through other entities)? */
+function refReaches(world, from, to) {
+  const seen = new Set();
+  const stack = [from];
+  while (stack.length) {
+    const n = stack.pop();
+    if (n === to) return true;
+    if (seen.has(n)) continue;
+    seen.add(n);
+    stack.push(...refsOf(world[n]));
+  }
+  return false;
+}
+
+/**
+ * The nesting of a path is its declaration of coherence: in `/a/:a_id/b/:b_id/c` every `c` row belongs
+ * to the `a` of its `b`. Each outer parent's fk is derived through the innermost parent (`derive:
+ * { a_id: { from: b, field: a_id } }`), which gets `ref: a` when it lacks it and no cycle forbids it.
+ * Only the shape of the path decides; a derive already declared is kept. Returns what was emitted.
+ */
+function deriveFromNesting(doc, entityName, entObj, chain, uninferrable) {
+  const out = [];
+  const via = chain.at(-1);
+  for (const outer of chain.slice(0, -1)) {
+    const declared = isObj(entObj.derive) ? entObj.derive : {};
+    if (Object.hasOwn(declared, outer.fk)) continue;
+    const skip = (reason) => uninferrable.push(`${outer.fk} not derived from ${via.parent} (the path nests them): ${reason}`);
+    if (refReaches(doc.world, via.parent, entityName)) { skip(`"${via.parent}" references "${entityName}"; its rows cannot be built first`); continue; }
+    const viaEntry = ensureEntityObject(doc.world, via.parent);
+    let addedRef = false;
+    if (!refsOf(viaEntry).includes(outer.parent)) {
+      if (refReaches(doc.world, outer.parent, via.parent)) { skip(`"${outer.parent}" references "${via.parent}"; a ref back would be a cycle`); continue; }
+      const refs = [...refsOf(viaEntry), outer.parent];
+      viaEntry.ref = refs.length === 1 ? refs[0] : refs;
+      addedRef = true;
+    }
+    entObj.derive = { ...declared, [outer.fk]: { from: via.parent, field: outer.fk } };
+    out.push({ field: outer.fk, from: via.parent, parent: outer.parent, ...(addedRef ? { addedRef: true } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Derivation makes the world coherent, so the observed URL only has rows if its inner id belongs to its
+ * outer id in this world. When it does not, say so and name the URL that does (for `visit:`).
+ */
+function checkObservedNesting(doc, chain, example, notes) {
+  const via = chain.at(-1);
+  if (via.observed === null || chain.some((c) => c.observed === null)) return;
+  let world;
+  try { world = generateWorld(normalizeScenario(JSON.parse(JSON.stringify(doc)), '<harvest>')); } catch { return; }
+  const row = world.entities[via.parent]?.[via.observed - 1];
+  if (!row) return;
+  const wrong = chain.slice(0, -1).filter((c) => row[c.fk] !== c.observed);
+  if (!wrong.length) return;
+  let coherent = example;
+  for (const c of wrong) coherent = coherent.replace(new RegExp(`(/[^/]+/)${c.observed}(?=/)`, 'g'), (m, seg) => (pathSegFor(seg, c.parent) ? `${seg}${row[c.fk]}` : m));
+  const what = wrong.map((c) => `${c.fk} ${row[c.fk]}`).join(', ');
+  notes.push(`GET ${example}: in this world (seed ${doc.seed}) ${via.parent} ${via.observed} has ${what}, so this URL answers []; ${coherent} has rows`);
+}
+
+/** Is `/<seg>/` the path segment that names entity `parent` (`/widgets/` for widgets)? */
+const pathSegFor = (seg, parent) => {
+  const name = snake(seg.replace(/\//g, ''));
+  return name === parent || toEntityName(name) === parent;
 };
 
 /** World entities that stand for TypeScript type `typeName`: by name or by singular (`Gadget` → gadgets, gadget). */
@@ -530,6 +613,7 @@ function applyTypeRelations(doc, { entityName, entObj, entityLocked, ep, tsMatch
         const fk = templateFor(entityName).fk;
         entry.fields = fk in childType.fields ? { ...childType.fields } : { [fk]: 'integer', ...childType.fields };
         if (Object.keys(childType.values).length) entry.values = { ...childType.values };
+        if (hasSeedableField(entry.fields)) { entry.seed_first = true; record.seedFirst = true; }
         doc.world[child] = entry;
         for (const sk of childType.skipped) uninferrable.push(`world.${child}: ${sk}`);
         record.created = true;
@@ -1044,6 +1128,16 @@ export function formatHarvestReport(res) {
       lines.push(`  - ${d.method} ${d.path}: ${r.owner}.${r.field} → ${r.projection} [${r.entity}] (type ${r.typeName}${how}, ${r.source})`);
     }
   }
+
+  const derivedLines = res.discovered.flatMap((d) => (d.derived ?? []).map((x) =>
+    `  - ${d.method} ${d.path}: ${d.entity}.${x.field} derive: { from: ${x.from}, field: ${x.field} } (every ${templateFor(d.entity).singular} belongs to the ${templateFor(x.parent).singular} of its ${templateFor(x.from).singular}${x.addedRef ? `; ref: ${x.parent} added to ${x.from}` : ''})`));
+  if (derivedLines.length) lines.push('', 'Coherence (from the path nesting):', ...derivedLines);
+
+  const seeded = [...new Set(res.discovered.flatMap((d) => [
+    ...(d.seedFirst ? [d.entity] : []),
+    ...(d.relations ?? []).filter((r) => r.seedFirst).map((r) => r.entity),
+  ]))];
+  if (seeded.length) lines.push('', `Seeded by first value (seed_first: true; enums and booleans from --types): ${seeded.join(', ')}`);
 
   const forms = (rs) => rs.attempts.join(' → ');
   const won = res.discovered.filter((d) => d.responseShape?.result === 'advanced');

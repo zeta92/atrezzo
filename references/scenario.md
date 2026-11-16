@@ -63,7 +63,7 @@ expect:
 Any other field is an error (`unknown field`). A scenario can also be `.json` with the same structure (`atrezzo import --format json`).
 
 ### Entities (`world.<name>`)
-An integer (= `total`) or a map with: `total` (required), `distribution`, `distribution_field` (default `status`), `amount`, `ref`, `nulls`, `values`, `days`, `fields`.
+An integer (= `total`) or a map with: `total` (required), `distribution`, `distribution_field` (default `status`), `amount`, `ref`, `nulls`, `values`, `days`, `fields`, `derive`, `seed_first`.
 
 #### `fields`: typed fields (written by `atrezzo import`)
 
@@ -81,6 +81,47 @@ world:
 
 Types: `string`, `integer`, `number`, `boolean`, `date` (ISO, within `days` before `now`), `email`, `uuid`, `url`, or a list of values. With `fields`, the entity has **exactly** `id` + the fks of its `ref` + `fields` (+ the `distribution` field and the `amount` fields if you declare them): the template (`customers`, `orders`…) adds neither its own fields nor its defaults. `id` cannot be declared (always integers 1..n). Values come from a dedicated PRNG stream (`fields:<entity>`): adding `fields` to one entity does not change the others.
 
+#### `derive`: a foreign key copied through another one
+
+When an entity references two entities that are themselves related (`ref: [widgets, gadgets]`, and each gadget belongs to a widget), the two keys are drawn separately by default, so a piece can end up with `widget_id: 1` and a `gadget_id` of a gadget that belongs to widget 3. `/api/widgets/1/gadgets/<that id>/pieces` is then rightly empty. `derive` ties them together:
+
+```yaml
+world:
+  widgets: 4
+  gadgets: { total: 9, ref: widgets }
+  pieces:
+    total: 60
+    ref: [widgets, gadgets]
+    derive:
+      widget_id: { from: gadgets, field: widget_id }   # a piece belongs to the widget of its gadget
+```
+
+- `derive.<fk>` is resolved **after** the references are drawn: the row `from` points at (through this row's own fk to `from`) is read and its `field` copied. The derived fk is no longer drawn; the other fields and the other entities keep exactly the values they had without `derive`. Same seed, same rows.
+- `field` defaults to the fk's own name (a reference to the same entity has the same name everywhere); `widget_id: gadgets` is the short form of `{ from: gadgets }`.
+- Validation (each a clear scenario error): the key must be a foreign key of the entity (one of its `ref:`s); `from` must be another entity of its `ref:`; `field` must exist in `from` **and be its reference to the same entity** (`gadgets` needs `ref: widgets`), so the copy is always an id that exists; `from` cannot reference this entity back (its rows must be built first); the fk to `from` cannot itself be derived (one hop).
+- `nulls:` still applies afterwards, and a null in `from`'s field is copied as null.
+
+#### `seed_first`: every row in its first declared state
+
+Enums and booleans are drawn per row, so a screen can come up with its row disabled, retired or in a secondary mode. `seed_first` fixes them without rewriting the enum as a one-value list:
+
+```yaml
+world:
+  widgets:
+    total: 4
+    fields: { name: string, finish: [matte, gloss, satin], is_retired: boolean }
+    seed_first: true              # every widget: finish matte, is_retired false
+  gadgets:
+    total: 9
+    ref: widgets
+    fields: { label: string, mode: [list, grid], visible: boolean }
+    seed_first: [mode]            # only mode is fixed (list); visible is still drawn
+```
+
+- `true` seeds every field that has a value list: an enum in `fields` (its **first** value), a `boolean` (`false`), or a field with `values:` (its first value). A list seeds only those fields. `false` or no key: everything is drawn as before.
+- The values are drawn first and then replaced, so the other fields of the row keep their values.
+- Validation: a listed field must exist and be an enum, a boolean or have `values:`; a foreign key (use `derive`) or the `distribution` field (its counts decide) cannot be seeded; `true` on an entity with nothing to seed is an error.
+
 Built-in templates and their fields:
 
 | entity | fields |
@@ -96,7 +137,7 @@ Template names are matched exactly; there are no aliases. A foreign key is the s
 Generator guarantees:
 - integer ids 1..n.
 - `distribution` is exact (not approximate) and shuffled with the seed.
-- Every fk exists; if there are at least as many children as parents, every parent has a child.
+- Every fk exists; if there are at least as many children as parents, every parent has a child (a `derive`d fk copies its value instead, so it inherits the coverage of the fk it reads).
 - A child never predates its parent (the template's `created_at`; a `created_at` declared in `fields` is a plain typed date).
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
@@ -278,6 +319,8 @@ atrezzo harvest <url> --scenario <file> [--storage <file.json|@->] [--until <css
 - **Detail routes**: a numeric id in the path (`/api/widgets/7`) first widens the entity to `total >= 7`, whether it has no rows yet or fewer than the id, and only then is the detail judged; only an id atrezzo cannot number (not an integer, below 1, or above 1000) is left out, with the reason.
 - **Response envelope by trial**: a new list endpoint starts as a plain array. If, on the next round, the page requested it but did not advance (no request and no selector it had not seen before), harvest retries it as `shape: envelope` with `pick:` `items`, `data`, `results`, `records`, `rows`, in that order, one per round, and keeps the first that makes the page advance; the report says which attempt won (`shape: envelope, pick: items (attempt 2 of 6: array → items; …)`). If none does (or the rounds run out mid-trial), it stays an array and the report says so. The trial needs to read the page's selectors (always the case in Chromium); without them a quiet round proves nothing and the array is kept.
 - **Fields preference**: (1) `--types <file.ts>` (`interface X` / `type X = { … }`: `string → string`, `number → integer`, `boolean → boolean`, ISO date strings → `date`, string literal unions → enum list, primitive arrays → `values:` repeated array); (2) `select=` query columns; (3) plural of the last path segment plus `id`.
+- **The nesting of the route is its coherence (`derive`)**: when two or more path parameters bind to world entities (`/api/widgets/:widget_id/gadgets/:gadget_id/pieces`), the entity of the last segment derives every outer parent's fk through the innermost parent (`derive: { widget_id: { from: gadgets, field: widget_id } }`), and the innermost parent gets `ref:` to the outer one if it lacks it (unless that would be a cycle, which is reported). Only the shape of the route decides, never the names. If the observed URL itself is not coherent in the world (its gadget belongs to another widget), the report says so and names the URL that has rows, for the flow's `visit:`. The report lists each derivation under `Coherence (from the path nesting)`.
+- **First declared state (`seed_first`)**: an entity created from `--types` (endpoint type or `T[]` child) with an enum (literal union) or a `boolean` field gets `seed_first: true`, so the screen does not come up in a drawn disabled or secondary state; the report lists them under `Seeded by first value`.
 - **Singletons (`shape: object`)**: paths ending in `info`, `user`, `me`, `config`, `settings`, or a `--types` response type with no `items`/`data` key.
 - **Relations (`--types`)**: when the endpoint's type is matched, each property whose type is another `interface`/`type` declared **in the same file** is a relation; the decision uses only the type graph and the scenario's own `ref:`s, never names:
   - `field: T[]`, `field: Array<T>`, `field?: T[]`, `readonly field: readonly T[]`, `T[] | null`, `Array<T> | null`, `T[] | undefined` (or an alias of one of them) → **children**. The JSON key is the **property**, so the child entity is named `field` exactly as written (`items: Array<StoreItem>` → `items`, never `store_items`); `T` only supplies its fields. A world entity already named `field` that `ref:`s this one is reused as is; one without the `ref:` is reported; otherwise `field` is created with `T`'s fields, the parent FK `<singular of the parent>_id` (added when `T` lacks it; never derived from the child) and `ref: <this entity>` (total: twice the parent's). The parent endpoint gets `embed: [field]`. A property that is not a valid entity name (`topItems`) is reported, not renamed.

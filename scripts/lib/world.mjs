@@ -127,6 +127,18 @@ export function entityFields(spec) {
   return out;
 }
 
+/**
+ * Value list `seed_first` takes the first value of, or null when the field has none: its `values`
+ * vocabulary, else its enum (a list in `fields`), else `[false, true]` for a boolean.
+ */
+export function firstValueList(spec, field) {
+  if (spec.pools && Object.hasOwn(spec.pools, field)) return spec.pools[field];
+  const type = spec.fields?.[field];
+  if (Array.isArray(type)) return type;
+  if (type === 'boolean') return [false, true];
+  return null;
+}
+
 const DAY_MS = 86_400_000;
 
 const hex = (rng, n) => Array.from({ length: n }, () => rng.int(0, 15).toString(16)).join('');
@@ -170,13 +182,20 @@ function generateEntity(spec, scenario, counts, built) {
   // Foreign keys: first min(n, parentCount) children cover every parent once,
   // the rest pick a random parent. Every id exists by construction.
   const fkValues = {};
+  const derive = spec.derive ?? {};
   for (const ref of spec.refs) {
+    if (Object.hasOwn(derive, templateFor(ref).fk)) continue; // copied below, never drawn
     const parentCount = counts[ref];
     const frng = createRng(scenario.seed, `fk:${spec.name}->${ref}`);
     const cover = frng.shuffle([...Array(parentCount).keys()].map((i) => i + 1));
     const assigned = [];
     for (let i = 0; i < n; i++) assigned.push(i < cover.length ? cover[i] : frng.int(1, parentCount));
     fkValues[templateFor(ref).fk] = frng.shuffle(assigned);
+  }
+  // Derived fks: the value of `field` in the row the `from` fk points at (built first: it is a ref).
+  for (const [fk, { from, field }] of Object.entries(derive)) {
+    const via = fkValues[templateFor(from).fk];
+    fkValues[fk] = via.map((pid) => built[from][pid - 1]?.[field] ?? null);
   }
 
   const amount = spec.amount;
@@ -209,6 +228,8 @@ function generateEntity(spec, scenario, counts, built) {
       else if (f in typed) row[f] = typed[f];
       else row[f] = f in base ? base[f] : null;
     }
+    // `seed_first`: after the draws, so the other fields keep the values they have without it.
+    for (const f of spec.seedFirst ?? []) row[f] = firstValueList(spec, f)[0];
     rows.push(row);
   }
 
