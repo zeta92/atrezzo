@@ -416,7 +416,14 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
     ep.filters = queryFilters;
   }
   if (pagination) ep.pagination = pagination;
-  if (pick) ep.pick = pick;
+  // A paginated endpoint almost always answers an envelope ({items, page, total}); a bare array makes
+  // list screens render empty while every request is 200. Default to the envelope and say so; a client
+  // that really reads a bare list can switch the endpoint back to `shape: array`.
+  if (pagination && !pick && shape === 'array') {
+    ep.shape = 'envelope';
+    ep.pick = 'items';
+    notes.push(`GET ${miss.example ?? miss.path}: paginated, answered as {items: […]}; change it to shape: array if the client reads a bare list`);
+  } else if (pick) ep.pick = pick;
   else if (shape !== 'array') ep.shape = shape;
   orderEndpointKeys(ep);
   doc.endpoints.push(ep);
