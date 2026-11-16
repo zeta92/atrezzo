@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.9.5
+
+**PostgREST query operators**, because supabase-js never sends a bare value: `?expediente_id=eq.1` used to be compared literally against the string `eq.1` and answered `200 []`, so every `.eq()`, `.neq()`, `.in()`, `.like()` of a Supabase app looked like an empty table (a red dressed as green). The engine now understands the prefixes `eq.`, `neq.`, `gt.`, `gte.`, `lt.`, `lte.`, `like.`/`ilike.` (`*` and `%` are wildcards), `is.` (`null`/`true`/`false`) and `in.(1,2)`, keeping a top-level comma list as an OR of equalities and an unknown prefix as a literal value. **`.single()`**: a request with `Accept: application/vnd.pgrst.object+json` answers one row as an object whatever `shape` says, and `406 {code: "PGRST116"}` unless exactly one row survives the filters. Both are documented in `references/scenario.md` and covered in `tests/contract.test.mjs`. Nothing breaks: 194 tests green.
+
 ### 0.9.4
 
 `atrezzo harvest` closes four gaps that kept a harvested view from rendering. A path with parameters always gets `filters` in the map form with every parameter bound by name (`":widget_id": widget_id, ":gadget_id": gadget_id`, plus `field: field` for query filters), so both segments filter; a segment the world does not model gets a field of its own name instead of `null`. A new list endpoint the page requests but does not advance with is retried as `shape: envelope` with `pick: items`, `data`, `results`, `records`, `rows` (one per round), keeping the first that makes the page advance and reporting which attempt won, or leaving the array and saying so. Query keys starting with `sort`/`order`/`filter`/`with`/`is_`/`has_`, ending in `_by`, or sent with a boolean value are reported as flags, not filters (`*_id` keys stay filters). A numeric detail id widens the entity to `total >= id` before the detail is judged (up to 1000, was 50); only a non-numeric id is left out. The mock server takes an `onRequest` hook. Nothing breaks.

@@ -17,10 +17,73 @@ function parseNonNegInt(raw, name) {
   return { value: Number.parseInt(raw, 10) };
 }
 
-function matchesFilter(value, raw) {
-  const wanted = raw.split(',');
+// PostgREST operator prefixes: `eq.`, `neq.`, `gt.`, `gte.`, `lt.`, `lte.`, `like.`, `ilike.`,
+// `is.` (null/true/false) and `in.(a,b,c)`. A value with no prefix is an equality, and a
+// comma-separated list is still an OR of equalities (`?status=issue,pending`).
+const PGRST_OPERATORS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like', 'ilike', 'is', 'in']);
+
+function asNumber(raw) {
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+  if (typeof raw !== 'string' || raw.trim() === '' || !/^-?\d+(\.\d+)?$/.test(raw.trim())) return null;
+  return Number(raw);
+}
+
+/** `like`/`ilike` patterns: `*` (PostgREST) and `%` (SQL) are wildcards, everything else is literal. */
+function likePattern(raw, flags) {
+  let body = '';
+  for (const ch of String(raw)) {
+    if (ch === '*' || ch === '%') body += '.*';
+    else body += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${body}$`, flags);
+}
+
+function applyOperator(value, op, arg) {
   const v = value === null || value === undefined ? 'null' : String(value);
-  return wanted.includes(v);
+  const nv = asNumber(value);
+  const na = asNumber(arg);
+  switch (op) {
+    case 'eq':
+      return v === arg || (nv !== null && na !== null && nv === na);
+    case 'neq':
+      return !applyOperator(value, 'eq', arg);
+    case 'gt':
+      return nv !== null && na !== null ? nv > na : v > arg;
+    case 'gte':
+      return nv !== null && na !== null ? nv >= na : v >= arg;
+    case 'lt':
+      return nv !== null && na !== null ? nv < na : v < arg;
+    case 'lte':
+      return nv !== null && na !== null ? nv <= na : v <= arg;
+    case 'like':
+      return likePattern(arg, '').test(v);
+    case 'ilike':
+      return likePattern(arg, 'i').test(v);
+    case 'is':
+      return arg === 'null' ? value === null || value === undefined : v === arg;
+    case 'in': {
+      const body = /^\((.*)\)$/.exec(arg);
+      const items = (body ? body[1] : arg).split(',').map((s) => s.trim().replace(/^"(.*)"$/, '$1'));
+      return items.some((item) => (item === 'null' ? value === null || value === undefined : v === item || (nv !== null && asNumber(item) !== null && nv === asNumber(item))));
+    }
+    default:
+      return false;
+  }
+}
+
+function matchesTerm(value, term) {
+  const dot = term.indexOf('.');
+  if (dot > 0) {
+    const op = term.slice(0, dot).toLowerCase();
+    if (PGRST_OPERATORS.has(op)) return applyOperator(value, op, term.slice(dot + 1));
+  }
+  const v = value === null || value === undefined ? 'null' : String(value);
+  return v === term;
+}
+
+function matchesFilter(value, raw) {
+  // Top-level commas only: `in.(1,2)` keeps its list whole.
+  return splitSelect(String(raw)).some((term) => matchesTerm(value, term.trim()));
 }
 
 /** Split a PostgREST `select` on top-level commas (commas inside `(...)` belong to an embed). */
@@ -275,6 +338,18 @@ export function createEngine(dataset) {
     const page = result.map((r) => shapeRow(r, ep, counts));
     const out = { 'x-total-count': String(total) };
     if (ignored.length) out['x-atrezzo-ignored'] = ignored.join(',');
+    // `.single()` in supabase-js / PostgREST asks for one object with this Accept header, whatever
+    // the scenario declares: one row ⇒ that row, anything else ⇒ 406 PGRST116 (as PostgREST does).
+    if ((headerValue(headers, 'accept') ?? '').includes('application/vnd.pgrst.object+json')) {
+      if (page.length !== 1) {
+        return json(406, {
+          code: 'PGRST116',
+          message: 'JSON object requested, multiple (or no) rows returned',
+          details: `${page.length} rows`,
+        }, out);
+      }
+      return json(200, page[0], out);
+    }
     if (ep.shape === 'envelope') return json(200, { [ep.pick ?? 'data']: page, total, limit, offset }, out);
     return json(200, page, out);
   }

@@ -102,3 +102,56 @@ test('shape envelope', () => {
   assert.deepEqual(r.body.data.map((x) => x.id), [2, 3, 4]);
   assert.equal(r.body.total, 40);
 });
+
+// ---------- PostgREST operator prefixes (supabase-js: `.eq()`, `.neq()`, `.in()`, `.like()`) ----------
+
+const getH = (path, headers) => {
+  const u = new URL(path, 'http://x');
+  return engine.handle({ method: 'GET', pathname: u.pathname, query: u.searchParams, headers });
+};
+
+test('eq. prefix filters like a bare equality (supabase-js always sends it)', () => {
+  const prefixed = get('/api/orders?status=eq.issue');
+  const bare = get('/api/orders?status=issue');
+  assert.equal(prefixed.status, 200);
+  assert.deepEqual(ids(prefixed), ids(bare));
+  assert.equal(prefixed.body.length, 3);
+  assert.equal(get('/api/orders?customer_id=eq.1').body.every((o) => o.customer_id === 1), true);
+});
+
+test('neq. / gt. / in. / like. are applied, not compared literally', () => {
+  assert.equal(get('/api/orders?status=neq.issue').body.length, 37);
+  assert.equal(get('/api/orders?status=neq.issue').body.every((o) => o.status !== 'issue'), true);
+  const gt = get('/api/orders?customer_id=gt.1');
+  assert.ok(gt.body.length > 0 && gt.body.every((o) => o.customer_id > 1));
+  const inList = get('/api/orders?customer_id=in.(1,2)');
+  assert.ok(inList.body.length > 0 && inList.body.every((o) => [1, 2].includes(o.customer_id)));
+  assert.equal(inList.body.length, get('/api/orders?customer_id=1,2').body.length);
+  const like = get('/api/orders?status=like.iss*');
+  assert.equal(like.body.length, 3);
+  assert.equal(get('/api/orders?status=ilike.ISS*').body.length, 3);
+});
+
+test('an unknown prefix is still a literal value (no silent widening)', () => {
+  const r = get('/api/orders?status=bogus.issue');
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.body, []);
+});
+
+// ---------- `.single()`: Accept: application/vnd.pgrst.object+json ----------
+
+test('object Accept returns the single row as an object', () => {
+  const r = getH('/api/orders?customer_id=1&limit=1', { accept: 'application/vnd.pgrst.object+json' });
+  assert.equal(r.status, 200);
+  assert.ok(!Array.isArray(r.body));
+  assert.equal(typeof r.body.id, 'number');
+});
+
+test('object Accept with zero or many rows ⇒ 406 PGRST116', () => {
+  const many = getH('/api/orders?status=issue', { accept: 'application/vnd.pgrst.object+json' });
+  assert.equal(many.status, 406);
+  assert.equal(many.body.code, 'PGRST116');
+  const none = getH('/api/orders?status=bogus', { accept: 'application/vnd.pgrst.object+json' });
+  assert.equal(none.status, 406);
+  assert.equal(none.body.code, 'PGRST116');
+});
