@@ -58,15 +58,26 @@ function componentSchemas(dataset) {
   return { names, schemas };
 }
 
+/** Schema of one embedded row: the child entity, plus its own embeds (`{ entity, embed }`). */
+function embedSchema(e, names) {
+  if (typeof e === 'string') return { $ref: `#/components/schemas/${names[e]}` };
+  const properties = {};
+  for (const inner of e.embed) properties[typeof inner === 'string' ? inner : inner.entity] = { type: 'array', items: embedSchema(inner, names) };
+  return { allOf: [{ $ref: `#/components/schemas/${names[e.entity]}` }, { type: 'object', properties, required: Object.keys(properties) }] };
+}
+
 /** Item schema for an endpoint: the entity plus embedded parents (`include`) and children (`embed`). */
 function itemSchema(ep, dataset, names) {
+  // `pluck`: each item is the field's value as a string (null when the world has nulls in it).
+  if (ep.pluck) return columnInfo(dataset.entities[ep.entity], ep.pluck).nullable ? { type: ['string', 'null'] } : { type: 'string' };
   const ref = { $ref: `#/components/schemas/${names[ep.entity]}` };
   if (!ep.include.length && !ep.embed?.length) return ref;
   const meta = dataset.schema[ep.entity];
   const properties = {};
   const required = [];
-  for (const child of ep.embed ?? []) {
-    properties[child] = { type: 'array', items: { $ref: `#/components/schemas/${names[child]}` } };
+  for (const e of ep.embed ?? []) {
+    const child = typeof e === 'string' ? e : e.entity;
+    properties[child] = { type: 'array', items: embedSchema(e, names) };
     required.push(child);
   }
   for (const [fk, target] of Object.entries(meta.refs)) {
@@ -130,6 +141,16 @@ export function openapiDocument(dataset, config) {
       }
     }
     const op = slug(ep.path).replace(/[.-]/g, '_');
+    if (ep.error) {
+      // `error:` answers the declared status and body on the list and the detail route.
+      const declared = { [ep.error.status]: { description: `Declared by the scenario (error: ${ep.error.status}); the world is not projected`, content: { 'application/json': { schema: {}, examples: { scenario: { summary: 'The body the scenario declares', value: ep.error.body } } } } } };
+      paths[oasPath] = { get: { operationId: `list_${op}`, summary: `${ep.entity} (atrezzo declared error)`, parameters, responses: declared } };
+      if (ep.detail) {
+        const idName = ep.params?.some((x) => x.name === 'id') ? 'row_id' : 'id';
+        paths[`${oasPath}/{${idName}}`] = { get: { operationId: `detail_${op}`, parameters: [...parameters.filter((x) => x.in === 'path'), { name: idName, in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }], responses: declared } };
+      }
+      continue;
+    }
     const responses = ep.shape === 'object'
       ? {
         200: { description: `The first ${dataset.schema[ep.entity].singular} after filters and sort (shape: object)`, content: { 'application/json': { schema, examples } } },
@@ -176,7 +197,7 @@ export function openapiDocument(dataset, config) {
 export function emit({ dataset, config }) {
   const file = p(config.generatedDir, `${dataset.scenario}.openapi.yaml`);
   const doc = openapiDocument(dataset, config);
-  const exampleKeys = Object.values(doc.paths).flatMap((x) => Object.keys(x.get.responses[200].content['application/json'].examples ?? {})).filter((k) => k !== 'scenario');
+  const exampleKeys = Object.values(doc.paths).flatMap((x) => Object.keys(x.get.responses[200]?.content['application/json'].examples ?? {})).filter((k) => k !== 'scenario');
   return {
     files: [{ path: file, content: emitYaml(doc) }],
     start: `start the Prism CLI against ${file} on port ${config.mock.port}`,
@@ -186,6 +207,7 @@ export function emit({ dataset, config }) {
       'detail /{id}: always the first id\'s example; unknown ids do not 404 unless you send Prefer: code=404',
       'Prism does validate requests against the declared parameters (types, minimum/maximum): it answers 400 (the spec declares 400 on paginated lists) or 422 when they do not match',
       'filters are declared as string without enum: with an enum Prism would reject the "a,b" lists the engine accepts',
+      ...dataset.endpoints.filter((e) => e.error).map((e) => `${e.path}: declares only its error response (${e.error.status}) with the scenario's body; if your Prism version does not pick it on its own, send Prefer: code=${e.error.status}`),
     ],
   };
 }

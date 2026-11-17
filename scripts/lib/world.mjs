@@ -139,6 +139,16 @@ export function firstValueList(spec, field) {
   return null;
 }
 
+/**
+ * Fields `values_order` applies to: those with a written list of values (`values:` or an enum in
+ * `fields:`), except the id, the foreign keys and the distribution field (they have their own rules).
+ */
+export function valueListFields(spec) {
+  const fks = spec.refs.map((r) => templateFor(r).fk);
+  return entityFields(spec).filter((k) => k !== 'id' && !fks.includes(k) && k !== spec.distribution?.field
+    && ((spec.pools && Object.hasOwn(spec.pools, k)) || Array.isArray(spec.fields?.[k])));
+}
+
 const DAY_MS = 86_400_000;
 
 const hex = (rng, n) => Array.from({ length: n }, () => rng.int(0, 15).toString(16)).join('');
@@ -201,6 +211,8 @@ function generateEntity(spec, scenario, counts, built) {
   const amount = spec.amount;
   const amountField = t.amountField || 'amount';
   const frng = spec.fields ? createRng(scenario.seed, `fields:${spec.name}`) : null;
+  // `values_order: cycle`: row i takes values[i % n], in the written order, whatever the seed.
+  const cycled = spec.valuesOrder === 'cycle' ? valueListFields(spec) : [];
   const rows = [];
   for (let i = 0; i < n; i++) {
     const id = i + 1;
@@ -228,7 +240,8 @@ function generateEntity(spec, scenario, counts, built) {
       else if (f in typed) row[f] = typed[f];
       else row[f] = f in base ? base[f] : null;
     }
-    // `seed_first`: after the draws, so the other fields keep the values they have without it.
+    // `cycle` and `seed_first`: after the draws, so the other fields keep the values they have without them.
+    for (const f of cycled) { const list = firstValueList(spec, f); row[f] = list[i % list.length]; }
     for (const f of spec.seedFirst ?? []) row[f] = firstValueList(spec, f)[0];
     rows.push(row);
   }

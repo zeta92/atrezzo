@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { parseYaml, YamlError } from './yaml.mjs';
 import { AtrezzoError } from './errors.mjs';
-import { templateFor, entityFields, firstValueList, RENAMED_TEMPLATES } from './world.mjs';
+import { templateFor, entityFields, firstValueList, valueListFields, RENAMED_TEMPLATES } from './world.mjs';
 import { parseHeaders } from './headers.mjs';
 import { parseStorage } from './storage.mjs';
 
@@ -78,7 +78,10 @@ function normalizeExpect(item, field, issues) {
 
 // ---------- world ----------
 
-const ENTITY_KEYS = ['total', 'distribution', 'distribution_field', 'amount', 'ref', 'nulls', 'values', 'days', 'fields', 'derive', 'seed_first'];
+const ENTITY_KEYS = ['total', 'distribution', 'distribution_field', 'amount', 'ref', 'nulls', 'values', 'days', 'fields', 'derive', 'seed_first', 'values_order'];
+
+/** `values_order`: how a field with a list of values draws it (random: the PRNG; cycle: row i takes values[i % n]). */
+export const VALUES_ORDERS = ['random', 'cycle'];
 
 /** Entities `name` reaches through `ref:` (transitively), given name -> refs. */
 function reachable(refsOf, name) {
@@ -164,6 +167,19 @@ function normalizeSeedFirst(spec, raw, f, issues) {
     else list.push(k);
   });
   if (list.length) spec.seedFirst = list;
+}
+
+/**
+ * `values_order: cycle | random`. Only `cycle` changes the normalized spec (so a scenario that omits the
+ * key, or writes the default, keeps its hash); either value needs a field with a list of values.
+ */
+function normalizeValuesOrder(spec, raw, f, issues) {
+  if (!VALUES_ORDERS.includes(raw)) { issues.add(f, `must be ${VALUES_ORDERS.map((v) => `"${v}"`).join(' or ')}; got ${JSON.stringify(raw)}`); return; }
+  if (!valueListFields(spec).length) {
+    issues.add(f, `"${spec.name}" has no field with a list of values (values: or an enum in fields:); values_order decides how those lists are drawn`);
+    return;
+  }
+  if (raw === 'cycle') spec.valuesOrder = 'cycle';
 }
 
 /** Types accepted in `fields` (a list of values = enum). */
@@ -273,6 +289,7 @@ function normalizeWorld(world, issues) {
     // Only when declared: a scenario without them keeps its normalized form (and its hash).
     if (raw.derive !== undefined) normalizeDerive(spec, raw.derive, `${f}.derive`, byName, issues);
     if (raw.seed_first !== undefined) normalizeSeedFirst(spec, raw.seed_first, `${f}.seed_first`, issues);
+    if (raw.values_order !== undefined) normalizeValuesOrder(spec, raw.values_order, `${f}.values_order`, issues);
     for (const r of spec.refs) {
       if (spec.count > 0 && counts[r] === 0) issues.add(`${f}.ref`, `"${spec.name}" references "${r}" but "${r}" has 0 items; the ids would not exist`);
     }
@@ -292,7 +309,53 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'include', 'embed', 'shape', 'detail', 'pick', 'latency'];
+const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'include', 'embed', 'shape', 'detail', 'pick', 'latency', 'pluck', 'error'];
+
+/** Levels of `embed` below an endpoint's entity (the endpoint's own children are level 1). */
+export const MAX_EMBED_DEPTH = 4;
+
+/**
+ * `embed`: a name, a list of names, or entries `{ entity, embed }` that embed their own children.
+ * Each child must `ref:` the entity it is embedded in. Normalized as a list whose items are the
+ * child's name (a leaf, the pre-0.10 form, so existing hashes do not move) or `{ entity, embed }`.
+ * `chain` = the entities from the endpoint's down to `parent`, to report cycles and depth.
+ */
+function normalizeEmbed(raw, parent, chain, f, byName, issues) {
+  const list = Array.isArray(raw) ? raw : [raw];
+  const fields = entityFields(parent);
+  const out = [];
+  const seen = [];
+  list.forEach((item, j) => {
+    const fe = `${f}${Array.isArray(raw) ? `[${j}]` : ''}`;
+    let child; let nested;
+    if (typeof item === 'string') child = item;
+    else if (isObj(item)) {
+      issues.unknownKeys(item, ['entity', 'embed'], fe);
+      if (typeof item.entity !== 'string' || !item.entity) { issues.add(`${fe}.entity`, `required; the entity whose rows point at each "${parent.name}" row`); return; }
+      child = item.entity;
+      nested = item.embed;
+    } else { issues.add(fe, `must be an entity name or a map { entity, embed }; got ${typeName(item)}`); return; }
+    const cspec = byName[child];
+    const path = [...chain, child].join(' → ');
+    if (!cspec) issues.add(fe, `${JSON.stringify(child)} is not declared in world (declared: ${Object.keys(byName).join(', ')})`);
+    else if (chain.includes(child)) issues.add(fe, `cycle: ${path}; "${child}" would be embedded inside its own rows`);
+    else if (chain.length > MAX_EMBED_DEPTH) issues.add(fe, `embed nests at most ${MAX_EMBED_DEPTH} levels below the endpoint's entity (${path})`);
+    else if (!cspec.refs.includes(parent.name)) issues.add(fe, `"${child}" does not reference "${parent.name}" (its refs: ${cspec.refs.join(', ') || 'none'}); embed lists the child rows that point at each row: add ref: ${parent.name} to world.${child}`);
+    else if (fields.includes(child)) issues.add(fe, `"${child}" is already a field of "${parent.name}"; the embedded list would overwrite it`);
+    else if (seen.includes(child)) issues.add(fe, `"${child}" is listed twice`);
+    else {
+      seen.push(child);
+      const inner = nested === undefined ? [] : normalizeEmbed(nested, cspec, [...chain, child], `${fe}.embed`, byName, issues);
+      out.push(inner.length ? { entity: child, embed: inner } : child);
+    }
+  });
+  return out;
+}
+
+/** `items(tags), notes`: an embed list as one line, for banners and generated comments. */
+export function embedLabel(embed) {
+  return (embed ?? []).map((e) => (typeof e === 'string' ? e : `${e.entity}(${embedLabel(e.embed)})`)).join(', ');
+}
 
 const PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -405,19 +468,7 @@ function normalizeEndpoints(endpoints, world, issues) {
         issues.add(`${f}.path`, `parameter ":${name}" binds to no field of "${spec.name}" (${looked}; fields: ${fields.join(', ')}); rename it after a field or map it: filters: { ":${name}": <field> } (null = accept any value)`);
       }
     }
-    const embed = [];
-    if (ep.embed !== undefined) {
-      const list = Array.isArray(ep.embed) ? ep.embed : [ep.embed];
-      list.forEach((child, j) => {
-        const fe = `${f}.embed${Array.isArray(ep.embed) ? `[${j}]` : ''}`;
-        const cspec = typeof child === 'string' ? byName[child] : undefined;
-        if (!cspec) issues.add(fe, `${JSON.stringify(child)} is not declared in world (declared: ${Object.keys(byName).join(', ')})`);
-        else if (!cspec.refs.includes(spec.name)) issues.add(fe, `"${child}" does not reference "${spec.name}" (its refs: ${cspec.refs.join(', ') || 'none'}); embed lists the child rows that point at each row: add ref: ${spec.name} to world.${child}`);
-        else if (fields.includes(child)) issues.add(fe, `"${child}" is already a field of "${spec.name}"; the embedded list would overwrite it`);
-        else if (embed.includes(child)) issues.add(fe, `"${child}" is listed twice`);
-        else embed.push(child);
-      });
-    }
+    const embed = ep.embed === undefined ? [] : normalizeEmbed(ep.embed, spec, [spec.name], `${f}.embed`, byName, issues);
     let pagination = null;
     if (ep.pagination !== undefined && ep.pagination !== null) {
       if (!isObj(ep.pagination)) issues.add(`${f}.pagination`, 'must be a map { param_limit, param_offset, default_limit, max_limit }');
@@ -467,6 +518,25 @@ function normalizeEndpoints(endpoints, world, issues) {
       if (!isInt(ep.latency) || ep.latency < 0 || ep.latency > MAX_LATENCY) issues.add(`${f}.latency`, `milliseconds, an integer between 0 and ${MAX_LATENCY}; got ${JSON.stringify(ep.latency)}`);
       else latency = ep.latency;
     }
+    // `pluck: id`: each row answers that field's value as a string (["1","2"]), not the row.
+    let pluck = null;
+    if (ep.pluck !== undefined) {
+      if (typeof ep.pluck !== 'string' || !ep.pluck) issues.add(`${f}.pluck`, `must be a field name of "${spec.name}" (fields: ${fields.join(', ')})`);
+      else if (!fields.includes(ep.pluck)) issues.add(`${f}.pluck`, `field "${ep.pluck}" does not exist in "${spec.name}" (fields: ${fields.join(', ')}); pluck answers that field of each row, as a string`);
+      else pluck = ep.pluck;
+      if (include.length || embed.length) issues.add(`${f}.pluck`, `incompatible with ${include.length ? 'include' : 'embed'}: a plucked response is a list of values, not rows`);
+    }
+    // `error: { status, body }`: the endpoint always answers that, whatever the world holds.
+    let error = null;
+    if (ep.error !== undefined) {
+      if (!isObj(ep.error)) issues.add(`${f}.error`, `must be a map { status: 400-599, body: <JSON, optional> }; got ${typeName(ep.error)}`);
+      else {
+        issues.unknownKeys(ep.error, ['status', 'body'], `${f}.error`);
+        const { status } = ep.error;
+        if (!isInt(status) || status < 400 || status > 599) issues.add(`${f}.error.status`, `required; an HTTP error status, an integer between 400 and 599; got ${JSON.stringify(status)}`);
+        else error = { status, body: ep.error.body === undefined ? { error: String(status) } : ep.error.body };
+      }
+    }
     const norm = {
       path, entity: spec.name, filters, pagination,
       sort: parseSort(ep.sort, fields, f, issues), include, shape, detail: ep.detail ?? true,
@@ -475,6 +545,8 @@ function normalizeEndpoints(endpoints, world, issues) {
     if (latency !== null) norm.latency = latency; // same: absent unless declared
     if (params.length) norm.params = params; // same
     if (embed.length) norm.embed = embed; // same
+    if (pluck) norm.pluck = pluck; // same
+    if (error) norm.error = error; // same
     out.push(norm);
   });
   return out;

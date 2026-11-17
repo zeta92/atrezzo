@@ -63,7 +63,7 @@ expect:
 Any other field is an error (`unknown field`). A scenario can also be `.json` with the same structure (`atrezzo import --format json`).
 
 ### Entities (`world.<name>`)
-An integer (= `total`) or a map with: `total` (required), `distribution`, `distribution_field` (default `status`), `amount`, `ref`, `nulls`, `values`, `days`, `fields`, `derive`, `seed_first`.
+An integer (= `total`) or a map with: `total` (required), `distribution`, `distribution_field` (default `status`), `amount`, `ref`, `nulls`, `values`, `days`, `fields`, `derive`, `seed_first`, `values_order`.
 
 #### `fields`: typed fields (written by `atrezzo import`)
 
@@ -122,6 +122,24 @@ world:
 - The values are drawn first and then replaced, so the other fields of the row keep their values.
 - Validation: a listed field must exist and be an enum, a boolean or have `values:`; a foreign key (use `derive`) or the `distribution` field (its counts decide) cannot be seeded; `true` on an entity with nothing to seed is an error.
 
+#### `values_order`: lists of values in the written order
+
+A field with a list of values (`values:`, or an enum in `fields`) is drawn at random per row. With `values_order: cycle` row *i* (0-based, ids 1..n) takes `values[i % n]`: the order you wrote, the same row on every seed. That fixes a sequence a screen shows in order, or ties generated rows to ids of an external feed:
+
+```yaml
+world:
+  slots:
+    total: 5
+    fields: { label: [first, second, third], title: string }
+    values: { external_id: ["70001", "70002", "70003", "70004", "70005"] }
+    values_order: cycle           # labels: first, second, third, first, second · external_id: 70001…70005
+```
+
+- Applies to every field of the entity with a written list (`values:` or an enum in `fields`); booleans, foreign keys and the `distribution` field keep their own rules. `random` (the default) changes nothing, not even the scenario hash.
+- The values are drawn first and then replaced, so the other fields keep the values they have without it. `seed_first` (applied after) and `nulls` still win on the fields they name.
+- Validation: `cycle` or `random`; an entity with no field with a list of values is an error.
+- With `pluck` (below), `values_order: cycle` gives an endpoint that answers a known list of ids in order: `pluck: external_id` ⇒ `["70001", …]`.
+
 Built-in templates and their fields:
 
 | entity | fields |
@@ -142,7 +160,7 @@ Generator guarantees:
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields; a map also binds path parameters), `pagination`, `sort`, `include` (referenced entities only), `embed` (entities that reference this one), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`.
+`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields; a map also binds path parameters), `pagination`, `sort`, `include` (referenced entities only), `embed` (entities that reference this one, nestable), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
 
 - Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
 - `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` uses `data`). A single key, no nested paths.
@@ -191,7 +209,66 @@ endpoints:
 
 - Same relation as the embedded counts (`select=*,views(count)`), returning rows instead of `[{ count }]`. A row with no children gets `"views": []`.
 - Works on list rows, the detail route and `shape: object`, and combines with `include` and with path parameters: `/api/v2/projects/:id` answers the project with its `views`, and `/api/v2/projects/:project_id/views/:view_id/tasks` answers the tasks of one of them.
-- The child entity must `ref:` the endpoint's entity (else the scenario is invalid and says which `ref:` to add); an embed name cannot be a field of the entity. The embedded rows carry no embeds of their own.
+- The child entity must `ref:` the endpoint's entity (else the scenario is invalid and says which `ref:` to add); an embed name cannot be a field of the entity.
+
+**Nested** (children of children): an entry can be a map `{ entity, embed }`, and its rows carry their own embeds:
+
+```yaml
+world:
+  sections: 3
+  items: { total: 9, ref: sections }    # → section_id
+  tags: { total: 18, ref: items }       # → item_id
+endpoints:
+  - path: /api/sections
+    entity: sections
+    embed:
+      - entity: items
+        embed: [tags]                   # → [{ "id": 1, …, "items": [{ "id": 2, "section_id": 1, …, "tags": [{ "id": 5, "item_id": 2, … }] }] }]
+```
+
+- Each level resolves its own relation: the child must `ref:` the entity it is embedded in (its fk is `<singular of that entity>_id`), and every embedded row is the full row of the world, with its nested lists added.
+- At most **4 levels** below the endpoint's entity. An entity that would end up inside its own rows (`alphas → betas → alphas`) is a cycle, and the scenario is invalid with that path in the message.
+- The short form still works (`embed: [items]`, `embed: items`); `{ entity: items }` without `embed` is the same as `items` (same scenario hash).
+
+#### Plain values (`pluck`)
+
+Some clients ask for a list of ids and compare with `ids.includes(String(id))`. `pluck: <field>` answers **that field of each row, as a string**, instead of the rows:
+
+```yaml
+endpoints:
+  - path: /api/events
+    entity: events
+    pluck: id                       # → ["1", "2", "3"]   (?kind=live → ["1", "3"])
+  - path: /api/event-ids
+    entity: events
+    pluck: id
+    pick: items                     # → { "items": ["1", "2", "3"], "total": 3, "limit": null, "offset": 0 }
+```
+
+- Filters, path parameters, `sort`, pagination and `X-Total-Count` work as on rows; only each item changes. A null stays `null`.
+- The detail route answers the single value (`GET /api/events/2` ⇒ `"2"`), `shape: object` the first row's value, `.single()` one value or the 406.
+- Validation: the field must exist in the entity (the error lists its fields); `pluck` with `include` or `embed` is an error (there are no rows to attach them to).
+- Prism declares the list as `string` items; WireMock pre-computes it like any other list.
+
+#### Declared errors (`error`)
+
+To bring up the screen's error states, an endpoint can always answer one error status with a given body, whatever the world holds:
+
+```yaml
+endpoints:
+  - path: /api/submit
+    entity: submissions
+    error: { status: 503, body: { code: "SERVICE_DOWN", retryAfter: 30 } }   # → 503 with that JSON, verbatim
+  - path: /api/totals
+    entity: totals
+    error: { status: 500 }          # → 500 { "error": "500" }
+```
+
+- The list route and the detail route answer `status` and `body` exactly (any JSON value; `null` sends an empty body), with `X-Atrezzo-Error: declared`. Filters, pagination and the world are not looked at; the other endpoints do not change. Writes to it are still a 405 gap.
+- Validation: `status` is required, an integer from 400 to 599; `body` is optional (default `{ "error": "<status>" }`); any other key is an error.
+- `serve` prints each one in its banner (`(declared error 503)`) and `GET /__atrezzo/state` lists them as `errors: { path: status }`. It is not a gap.
+- `verify` treats it as a real answer: a `data` assertion reads 0 rows from it, so a step that expects data is KO (with the note "answered the error the scenario declares", and a `declared-error` hypothesis under `--diagnose`), while an assertion that expects the error state (`count: 0`, or the screen's error banner with the playwright driver) can pass.
+- Prism declares only that response, with the body as its example; WireMock gets one static mapping for the list and the detail route.
 
 #### Singletons (`shape: object`)
 

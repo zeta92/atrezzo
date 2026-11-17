@@ -175,14 +175,28 @@ export function createEngine(dataset) {
     return childIndex.get(key);
   }
 
-  /** `embed: [views]`: every row carries the list of child rows that point at it (world order). */
-  function withEmbeds(row, ep) {
-    for (const child of ep.embed ?? []) row[child] = (childrenOf(child, ep.entity).get(row.id) ?? []).map((r) => ({ ...r }));
+  /**
+   * `embed: [views]`: every row carries the list of child rows that point at it (world order). An
+   * entry `{ entity, embed }` does the same one level down, on each embedded row (validated acyclic).
+   */
+  function withEmbeds(row, entity, embeds) {
+    for (const e of embeds ?? []) {
+      const child = typeof e === 'string' ? e : e.entity;
+      const inner = typeof e === 'string' ? null : e.embed;
+      row[child] = (childrenOf(child, entity).get(row.id) ?? []).map((r) => (inner ? withEmbeds({ ...r }, child, inner) : { ...r }));
+    }
     return row;
   }
 
   /** A row as an endpoint answers it: parents (`include`), children (`embed`) and counts. */
-  const shapeRow = (row, ep, counts) => withCounts(withEmbeds(withIncludes(row, ep), ep), counts);
+  const shapeRow = (row, ep, counts) => withCounts(withEmbeds(withIncludes(row, ep), ep.entity, ep.embed), counts);
+
+  /** `pluck: id`: the row answers that field's value as a string (what `includes(String(id))` compares); null stays null. */
+  const answerRow = (row, ep, counts) => {
+    if (!ep.pluck) return shapeRow(row, ep, counts);
+    const v = row[ep.pluck];
+    return v === null || v === undefined ? null : String(v);
+  };
 
   /** " under project_id=1" for error messages of parameterised paths ("" otherwise). */
   function where(ep, params) {
@@ -257,6 +271,8 @@ export function createEngine(dataset) {
     }
     const params = query instanceof URLSearchParams ? query : new URLSearchParams(query ?? {});
     const { ep, id } = m;
+    // `error:` answers the declared status and body on the list and the detail route, world untouched.
+    if (ep.error) return json(ep.error.status, ep.error.body, { 'x-atrezzo-error': 'declared' });
     // A parameterised path (`/projects/:project_id/tasks`) only sees the rows its parameters name.
     const rows = byParams(dataset.entities[ep.entity], ep, m.params);
     // PostgREST parameters; a declared filter of the same name keeps its meaning.
@@ -267,7 +283,7 @@ export function createEngine(dataset) {
     if (id !== null) {
       const row = rows.find((r) => String(r.id) === id);
       if (!row) return json(404, { error: `${ep.entity} ${id} does not exist${where(ep, m.params)} in scenario "${dataset.scenario}"` });
-      return json(200, shapeRow(row, ep, counts));
+      return json(200, answerRow(row, ep, counts));
     }
 
     const ignored = [];
@@ -319,7 +335,7 @@ export function createEngine(dataset) {
         const q = [...params].filter(([k]) => ep.filters.includes(k)).map(([k, v]) => `${k}=${v}`).join('&');
         return json(404, { error: `no ${ep.entity} matches ${q || '(no filter)'}${where(ep, m.params)} in scenario "${dataset.scenario}"` }, h);
       }
-      return json(200, shapeRow(result[0], ep, counts), h);
+      return json(200, answerRow(result[0], ep, counts), h);
     }
 
     let limit = null;
@@ -335,7 +351,7 @@ export function createEngine(dataset) {
       offset = pageParam ? ((o.value ?? 1) - 1) * (limit ?? 0) : (o.value ?? 0);
       result = result.slice(offset, limit === null ? undefined : offset + limit);
     }
-    const page = result.map((r) => shapeRow(r, ep, counts));
+    const page = result.map((r) => answerRow(r, ep, counts));
     const out = { 'x-total-count': String(total) };
     if (ignored.length) out['x-atrezzo-ignored'] = ignored.join(',');
     // `.single()` in supabase-js / PostgREST asks for one object with this Accept header, whatever

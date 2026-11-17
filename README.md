@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.10.0
+
+**Four things a response could not say.** `embed` entries nest (`- entity: items` + `embed: [tags]`, up to 4 levels; a cycle is a scenario error naming its path); `pluck: <field>` answers that field of each row as a string (`["1","2","3"]`) with filters, sort, pagination, `envelope` and `detail`; `values_order: cycle` hands out each list of values in the written order on every seed; `error: { status, body }` makes an endpoint always answer that error (reported by `serve`, read by `verify` as a real answer). Scenarios without them keep their hash; see `references/scenario.md`, covered in `tests/projection.test.mjs`: 226 tests green.
+
 ### 0.9.6
 
 **A world that does not contradict itself.** `derive` (per entity) copies a foreign key from the row another reference of the same row points at: with `ref: [widgets, gadgets]` and `derive: { widget_id: { from: gadgets, field: widget_id } }`, every piece belongs to the widget of its gadget, so `/widgets/1/gadgets/2/pieces` can no longer be empty because the two keys were drawn apart. The derived key stops being drawn and nothing else changes; a `from` outside `ref:`, a field that is not a foreign key, or a source field that is not a reference to the same entity is a clear scenario error. **`seed_first`** (`true` or a list of fields) gives every row the first value of its enum, `false` for a boolean, or the first of its `values:`; a field that is none of these is an error. **`atrezzo harvest`** emits both: a route nesting two parents declares `derive` of the outer one through the inner one (adding the inner parent's `ref:` when missing, and noting when the observed URL is itself incoherent, with the URL that has rows), and an entity created from `--types` with an enum or boolean gets `seed_first: true`. Scenarios without the new keys keep their normalized form and hash. Documented in `references/scenario.md`, covered in `tests/coherence.test.mjs`: 209 tests green.

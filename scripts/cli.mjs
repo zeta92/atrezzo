@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileS
 import { resolve, join, relative, dirname } from 'node:path';
 import { AtrezzoError, EXIT } from './lib/errors.mjs';
 import { loadConfig, runtimeList } from './lib/config.mjs';
-import { loadScenario, loadFlow, MAX_LATENCY } from './lib/scenario.mjs';
+import { loadScenario, loadFlow, MAX_LATENCY, embedLabel } from './lib/scenario.mjs';
 import { generateWorld, checkIntegrity } from './lib/world.mjs';
 import { writeGenerated } from './lib/codegen.mjs';
 import { createMockServer } from './lib/serve.mjs';
@@ -181,7 +181,9 @@ function cmdWorld({ pos, flags }) {
     bits.push(`sort: ${ep.sort.map((s) => (s.dir === 'desc' ? '-' : '') + s.field).join(',')}`);
     if (ep.pick) bits.push(`envelope: ${ep.pick}`);
     if (ep.params) bits.push(`params: ${ep.params.map((x) => `:${x.name}→${x.field ?? 'any'}`).join(',')}`);
-    if (ep.embed) bits.push(`embed: ${ep.embed.join(',')}`);
+    if (ep.embed) bits.push(`embed: ${embedLabel(ep.embed)}`);
+    if (ep.pluck) bits.push(`pluck: ${ep.pluck}`);
+    if (ep.error) bits.push(`error: ${ep.error.status}`);
     out(`  GET ${ep.path}${ep.detail ? ` (+ ${ep.path}/:id)` : ''}  ${bits.join(' · ')}`);
   }
   out('Written:');
@@ -228,7 +230,14 @@ async function cmdServe({ flags }) {
   }
   const d = mock.state.dataset;
   out(`atrezzo serve · scenario "${d.scenario}" (seed ${d.seed}) · http://${addr.address}:${addr.port}`);
-  for (const ep of d.endpoints) out(`  GET ${ep.path}${ep.latency !== undefined && ep.latency !== latency ? `  (latency ${ep.latency} ms)` : ''}`);
+  for (const ep of d.endpoints) {
+    const notes = [];
+    if (ep.latency !== undefined && ep.latency !== latency) notes.push(`latency ${ep.latency} ms`);
+    if (ep.error) notes.push(`declared error ${ep.error.status}`);
+    out(`  GET ${ep.path}${notes.length ? `  (${notes.join(' · ')})` : ''}`);
+  }
+  const errors = d.endpoints.filter((e) => e.error);
+  if (errors.length) out(`  errors: ${errors.length} ${errors.length === 1 ? 'endpoint answers' : 'endpoints answer'} the error the scenario declares, whatever the world holds (${errors.map((e) => `${e.path} → ${e.error.status}`).join(', ')})`);
   const overrides = d.endpoints.filter((e) => e.latency !== undefined && e.latency !== latency).length;
   out(`  latency: ${latency} ms on contract responses${overrides ? ` (${overrides} ${overrides === 1 ? 'endpoint overrides' : 'endpoints override'} it in the scenario)` : ''}; static files and /__atrezzo/* answer immediately`);
   out('  POST /__atrezzo/reset  ·  POST /__atrezzo/reload  ·  GET /__atrezzo/state  ·  GET|DELETE /__atrezzo/misses');

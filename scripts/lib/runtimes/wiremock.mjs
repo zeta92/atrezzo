@@ -101,6 +101,20 @@ export function emit({ dataset, config, dir = '.', requests = [] }) {
   const notes = [];
   let stubs = 0;
   for (const ep of dataset.endpoints) {
+    if (ep.error) {
+      // `error:` is one static answer: the declared status and body on the list and the detail route.
+      const escaped = ep.path.split('/').map((seg) => (seg.startsWith(':') ? '[^/]+' : seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('/');
+      const mapping = {
+        name: `${ep.path} (declared error ${ep.error.status})`,
+        priority: 1,
+        request: { method: 'GET', urlPathPattern: `^${escaped}${ep.detail ? '(/[^/]+)?' : ''}$` },
+        response: { status: ep.error.status, headers: { 'content-type': 'application/json; charset=utf-8', 'x-atrezzo-scenario': dataset.scenario, 'x-atrezzo-error': 'declared' }, ...(ep.error.body === null ? {} : { jsonBody: ep.error.body }) },
+      };
+      stubs += 1;
+      files.push({ path: p(root, 'mappings', `${slug(ep.path)}.json`), content: json({ mappings: [mapping] }) });
+      notes.push(`${ep.path}: declared error ${ep.error.status} (one mapping${ep.detail ? ', list and detail' : ''})`);
+      continue;
+    }
     if (ep.params) {
       // Pre-computing every parameter value × query combination is not a static stub set.
       notes.push(`${ep.path}: not pre-generated (path parameters need the projection; use atrezzo serve or the msw runtime)`);

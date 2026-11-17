@@ -3,6 +3,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { embedLabel } from './scenario.mjs';
 
 const ENGINE_FILE = join(dirname(fileURLToPath(import.meta.url)), 'contract.mjs');
 
@@ -43,7 +44,9 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     if (ep.filters.length) notes.push(`filters: ${ep.filters.join(', ')}`);
     if (ep.pagination) notes.push(`pagination: ${ep.pagination.limit}/${ep.pagination.offset}`);
     if (ep.include.length) notes.push(`includes: ${ep.include.join(', ')}`);
-    if (ep.embed?.length) notes.push(`embeds: ${ep.embed.join(', ')}`);
+    if (ep.embed?.length) notes.push(`embeds: ${embedLabel(ep.embed)}`);
+    if (ep.pluck) notes.push(`pluck: ${ep.pluck}`);
+    if (ep.error) notes.push(`error: ${ep.error.status}`);
     if (ep.params) notes.push(`params: ${ep.params.map((x) => `:${x.name}→${x.field ?? 'any'}`).join(', ')}`);
     lines.push(`  // ${ep.path} → ${notes.join(' · ')}`);
     lines.push(`  http.get('*${ep.path}', project),`);

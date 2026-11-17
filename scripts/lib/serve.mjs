@@ -64,6 +64,11 @@ export function latencySummary(endpoints, latency) {
   return { default: latency, endpoints: overrides };
 }
 
+/** Endpoints that answer a declared `error:`: { path: status }. */
+export function errorSummary(endpoints) {
+  return Object.fromEntries(endpoints.filter((e) => e.error).map((e) => [e.path, e.error.status]));
+}
+
 function summary(state, available, generatedDir, misses, latency = 0) {
   const d = state.dataset;
   const out = {
@@ -73,6 +78,8 @@ function summary(state, available, generatedDir, misses, latency = 0) {
     available: [...new Set(Object.values(available).map((f) => scenarioNameFromFile(f)))],
     latency: latencySummary(d.endpoints, latency),
   };
+  const errors = errorSummary(d.endpoints);
+  if (Object.keys(errors).length) out.errors = errors; // only when declared
   if (misses) out.misses = misses.summary();
   if (generatedDir) {
     const gen = join(generatedDir, `${d.scenario}.json`);
@@ -121,7 +128,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
   const send = (res, status, body, headers = {}) => {
     // body null = no body (a count-only answer); everything else that is not text goes out as JSON.
     const payload = body === null ? '' : typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
-    res.writeHead(status, { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-total-count, content-range, x-atrezzo-scenario, x-atrezzo-ignored, x-atrezzo-stub', 'cache-control': 'no-store', ...headers });
+    res.writeHead(status, { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-total-count, content-range, x-atrezzo-scenario, x-atrezzo-ignored, x-atrezzo-stub, x-atrezzo-error', 'cache-control': 'no-store', ...headers });
     res.end(res.req.method === 'HEAD' ? undefined : payload);
   };
 

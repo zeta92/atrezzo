@@ -58,6 +58,9 @@ function header(h, name) {
   return typeof h?.get === 'function' ? h.get(name) : h?.[name] ?? null;
 }
 
+/** The mock answered the `error:` the scenario declares for the endpoint (a legitimate answer, not a failure of the mock). */
+const declaredError = (r) => header(r?.headers, 'x-atrezzo-error') === 'declared';
+
 function withoutPagination(path) {
   const u = new URL(path, 'http://x');
   for (const k of ['limit', 'offset', 'page', 'per_page', 'pageSize', 'skip', 'take']) u.searchParams.delete(k);
@@ -76,7 +79,8 @@ export function diagnose(row, ctx) {
   const exp = row.expect;
   const target = exp.count ?? exp.min ?? exp.max;
   const r = ctx.response;
-  if (r && r.status !== 200) add('non-200-response', 'high', `the request returned ${r.status}: ${JSON.stringify(r.body).slice(0, 160)}`);
+  if (r && declaredError(r)) add('declared-error', 'high', `the scenario declares error: { status: ${r.status} } on this endpoint, so it answers ${r.status} by design (${JSON.stringify(r.body).slice(0, 120)}) and no rows; a step that expects data cannot pass. Expect the error state on the screen, or drop error: from the endpoint.`);
+  else if (r && r.status !== 200) add('non-200-response', 'high', `the request returned ${r.status}: ${JSON.stringify(r.body).slice(0, 160)}`);
   if (r) {
     const ignored = header(r.headers, 'x-atrezzo-ignored');
     if (ignored) add('undeclared-filter', 'medium', `the client sends parameters the contract does not declare as filters, so they were ignored: ${ignored}. If the client expects the server to filter, add them to endpoints[].filters.`);
@@ -276,6 +280,8 @@ export async function runVerify(flow, opts) {
           continue;
         }
         ctx.obtained = row.obtained;
+        // A declared error is what the scenario asked for: counted as 0 rows, and said so on a KO.
+        if (ctx.response && declaredError(ctx.response) && !pw && !passes(e, row.obtained)) row.note = `${e.data.request} answered the error the scenario declares (${ctx.response.status}): 0 rows`;
         // A step whose page is not the one requested is never green, even if the count happens to match.
         row.status = !stepFail && passes(e, row.obtained) ? 'OK' : 'KO';
         if (stepFail) {
