@@ -127,13 +127,16 @@ export function entityFields(spec) {
   return out;
 }
 
+const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+export const fieldType = (entry) => (isObj(entry) ? entry.default : entry);
+
 /**
  * Value list `seed_first` takes the first value of, or null when the field has none: its `values`
  * vocabulary, else its enum (a list in `fields`), else `[false, true]` for a boolean.
  */
 export function firstValueList(spec, field) {
   if (spec.pools && Object.hasOwn(spec.pools, field)) return spec.pools[field];
-  const type = spec.fields?.[field];
+  const type = fieldType(spec.fields?.[field]);
   if (Array.isArray(type)) return type;
   if (type === 'boolean') return [false, true];
   return null;
@@ -146,7 +149,7 @@ export function firstValueList(spec, field) {
 export function valueListFields(spec) {
   const fks = spec.refs.map((r) => templateFor(r).fk);
   return entityFields(spec).filter((k) => k !== 'id' && !fks.includes(k) && k !== spec.distribution?.field
-    && ((spec.pools && Object.hasOwn(spec.pools, k)) || Array.isArray(spec.fields?.[k])));
+    && ((spec.pools && Object.hasOwn(spec.pools, k)) || Array.isArray(fieldType(spec.fields?.[k]))));
 }
 
 const DAY_MS = 86_400_000;
@@ -172,6 +175,10 @@ function typedValue(type, field, rng, id, entity, nowMs, days) {
       if (/title|product/.test(lower)) return `${rng.pick(PRODUCTS)} ${rng.int(1, 99)}`;
       return `${field} ${id}`;
   }
+}
+
+function matchesWhen(row, when) {
+  return Object.entries(when).every(([k, expected]) => (Array.isArray(expected) ? expected.includes(row[k]) : row[k] === expected));
 }
 
 function generateEntity(spec, scenario, counts, built) {
@@ -218,7 +225,7 @@ function generateEntity(spec, scenario, counts, built) {
     const id = i + 1;
     const base = t.make(rng, id);
     const typed = {};
-    if (frng) for (const [f, type] of Object.entries(spec.fields)) typed[f] = typedValue(type, f, frng, id, spec.name, nowMs, spec.days);
+    if (frng) for (const [f, entry] of Object.entries(spec.fields)) typed[f] = typedValue(fieldType(entry), f, frng, id, spec.name, nowMs, spec.days);
     const row = {};
     for (const f of fields) {
       if (f === 'id') row.id = id;
@@ -247,8 +254,44 @@ function generateEntity(spec, scenario, counts, built) {
   }
 
   // Explicit nulls ("nulls: { email: 2 }") to exercise client assumptions.
+  const nulled = new Map();
   for (const [field, k] of Object.entries(spec.nulls || {})) {
-    for (const idx of createRng(scenario.seed, `nulls:${spec.name}.${field}`).sample(n, k)) rows[idx][field] = null;
+    const indices = createRng(scenario.seed, `nulls:${spec.name}.${field}`).sample(n, k);
+    for (const idx of indices) rows[idx][field] = null;
+    nulled.set(field, new Set(indices));
+  }
+
+  // Conditional field overrides: applied after normal field assignment (and nulls on other fields)
+  // in topological order, preserving explicit nulls on the target field itself.
+  if (spec.fields) {
+    const entries = Object.entries(spec.fields).filter(([, entry]) => isObj(entry));
+    if (entries.length) {
+      const byKey = new Map(entries);
+      const added = new Set();
+      const visiting = new Set();
+      const conditionals = [];
+      const pushCond = (f) => {
+        if (added.has(f) || visiting.has(f) || !byKey.has(f)) return;
+        visiting.add(f);
+        const entry = byKey.get(f);
+        for (const dep of Object.keys(entry.when)) pushCond(dep);
+        visiting.delete(f);
+        added.add(f);
+        conditionals.push({
+          field: f,
+          when: entry.when,
+          value: entry.value,
+          rng: entry.value.length > 1 ? createRng(scenario.seed, `when:${spec.name}.${f}`) : null,
+        });
+      };
+      for (const [f] of entries) pushCond(f);
+      for (let i = 0; i < rows.length; i++) {
+        for (const c of conditionals) {
+          if (nulled.get(c.field)?.has(i)) continue;
+          if (matchesWhen(rows[i], c.when)) rows[i][c.field] = c.rng ? c.rng.pick(c.value) : c.value[0];
+        }
+      }
+    }
   }
   return { rows, fields };
 }

@@ -82,6 +82,26 @@ world:
 
 Types: `string`, `integer`, `number`, `boolean`, `date` (ISO, within `days` before `now`), `email`, `uuid`, `url`, or a list of values. With `fields`, the entity has **exactly** `id` + the fks of its `ref` + `fields` (+ the `distribution` field and the `amount` fields if you declare them): the template (`customers`, `orders`…) adds neither its own fields nor its defaults. `id` cannot be declared (always integers 1..n). Values come from a dedicated PRNG stream (`fields:<entity>`): adding `fields` to one entity does not change the others.
 
+##### Conditional field values (`{ default, when, value }`)
+
+A field in `fields` can override its drawn `default` when another field (or fields) of the **same row** matches `when`:
+
+```yaml
+world:
+  boards:
+    total: 10
+    fields:
+      name: string
+      is_archived: boolean
+      max_permission: { default: [2], when: { is_archived: true }, value: [0] }
+```
+
+- `default` (required): any valid `fields` type (`string`, `integer`, `number`, `boolean`, `date`, `email`, `uuid`, `url`, or a non-empty list of scalar values). Drawn as usual before conditions are evaluated, so other fields and entities keep the values they had without the rule.
+- `when` (required): non-empty map `<field>: <value>` (or `<field>: [<values>]`). Matches when every listed field of the row equals the given value (or one of the given values).
+- `value` (required): scalar or non-empty list of scalar values compatible with `default`. Single-item lists assign that value directly; multi-item lists pick deterministically per row from a dedicated stream (`when:<entity>.<field>`).
+- Evaluation order: runs deterministically after normal field draws, `values_order: cycle`, `seed_first`, and `nulls` on other fields (explicit `nulls` on the target field itself are preserved). Without conditional fields, scenario normalization and hashes are unchanged.
+- Validation (scenario error): every key in `when` must reference another existing field of the same entity (no self-references or cycles); `value` must be compatible with `default`'s type; impossible conditions (such as matching a `boolean` field against a non-boolean, or an enum/distribution field against an undeclared value) are rejected.
+
 #### `derive`: a foreign key copied through another one
 
 When an entity references two entities that are themselves related (`ref: [widgets, gadgets]`, and each gadget belongs to a widget), the two keys are drawn separately by default, so a piece can end up with `widget_id: 1` and a `gadget_id` of a gadget that belongs to widget 3. `/api/widgets/1/gadgets/<that id>/pieces` is then rightly empty. `derive` ties them together:
