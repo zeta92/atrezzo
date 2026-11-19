@@ -309,7 +309,7 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'include', 'embed', 'shape', 'detail', 'pick', 'latency', 'pluck', 'error'];
+const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'include', 'embed', 'shape', 'detail', 'pick', 'latency', 'pluck', 'error'];
 
 /** Levels of `embed` below an endpoint's entity (the endpoint's own children are level 1). */
 export const MAX_EMBED_DEPTH = 4;
@@ -403,6 +403,10 @@ export const MAX_LATENCY = 60000;
 function parseSort(raw, fields, f, issues) {
   if (raw === undefined) return [{ field: 'id', dir: 'asc' }];
   const list = Array.isArray(raw) ? raw : [raw];
+  if (!list.length) {
+    issues.add(`${f}.sort`, 'must be a field name or a non-empty list of field names');
+    return [];
+  }
   const out = [];
   list.forEach((s, i) => {
     if (typeof s !== 'string' || !s) { issues.add(`${f}.sort[${i}]`, 'must be a field name, prefixed with "-" for descending'); return; }
@@ -412,6 +416,42 @@ function parseSort(raw, fields, f, issues) {
     else out.push({ field, dir });
   });
   return out;
+}
+
+function parseSorts(raw, fields, filters, pagination, f, issues) {
+  if (raw === undefined) return null;
+  if (!isObj(raw)) { issues.add(`${f}.sorts`, `must be a map { by, order, fields }; got ${typeName(raw)}`); return null; }
+  issues.unknownKeys(raw, ['by', 'order', 'fields'], `${f}.sorts`);
+  let by = 'sort_by';
+  if (raw.by !== undefined) {
+    if (typeof raw.by !== 'string' || !raw.by || /\s/.test(raw.by)) issues.add(`${f}.sorts.by`, 'must be a query parameter name (non-empty, no spaces)');
+    else by = raw.by;
+  }
+  let order = null;
+  if (raw.order !== undefined && raw.order !== null) {
+    if (typeof raw.order !== 'string' || !raw.order || /\s/.test(raw.order)) issues.add(`${f}.sorts.order`, 'must be a query parameter name (non-empty, no spaces)');
+    else if (raw.order === by) issues.add(`${f}.sorts.order`, `must differ from "by" ("${by}")`);
+    else order = raw.order;
+  }
+  const pgNames = pagination ? [pagination.limit, pagination.page ?? pagination.offset] : [];
+  for (const [k, name] of [['by', by], ['order', order]]) {
+    if (!name) continue;
+    if (filters.includes(name)) issues.add(`${f}.sorts.${k}`, `parameter "${name}" conflicts with a declared filter of the same name`);
+    if (pgNames.includes(name)) issues.add(`${f}.sorts.${k}`, `parameter "${name}" conflicts with a pagination parameter of the same name`);
+  }
+  const sortFields = [];
+  if (!Array.isArray(raw.fields) || !raw.fields.length) {
+    issues.add(`${f}.sorts.fields`, `required; a non-empty list of sortable fields (fields: ${fields.join(', ')})`);
+  } else {
+    raw.fields.forEach((fld, j) => {
+      const ff = `${f}.sorts.fields[${j}]`;
+      if (typeof fld !== 'string' || !fld) issues.add(ff, 'must be a field name');
+      else if (!fields.includes(fld)) issues.add(ff, `field "${fld}" does not exist (fields: ${fields.join(', ')})`);
+      else if (sortFields.includes(fld)) issues.add(ff, `"${fld}" is listed twice`);
+      else sortFields.push(fld);
+    });
+  }
+  return { by, order, fields: sortFields };
 }
 
 function normalizeEndpoints(endpoints, world, issues) {
@@ -537,10 +577,12 @@ function normalizeEndpoints(endpoints, world, issues) {
         else error = { status, body: ep.error.body === undefined ? { error: String(status) } : ep.error.body };
       }
     }
+    const sorts = parseSorts(ep.sorts, fields, filters, pagination, f, issues);
     const norm = {
       path, entity: spec.name, filters, pagination,
       sort: parseSort(ep.sort, fields, f, issues), include, shape, detail: ep.detail ?? true,
     };
+    if (sorts) norm.sorts = sorts; // only when declared: keeps scenario hashes stable
     if (pick) norm.pick = pick; // only when declared: keeps 0.1 scenario hashes stable
     if (latency !== null) norm.latency = latency; // same: absent unless declared
     if (params.length) norm.params = params; // same

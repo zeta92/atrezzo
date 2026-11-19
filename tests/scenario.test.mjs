@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseYaml, YamlError } from '../scripts/lib/yaml.mjs';
 import { normalizeScenario } from '../scripts/lib/scenario.mjs';
+import { scenarioHash } from '../scripts/lib/world.mjs';
 import { AtrezzoError } from '../scripts/lib/errors.mjs';
 import { SCENARIO, tmpProject, cli } from './helpers.mjs';
 
@@ -103,4 +104,35 @@ test('pre-0.4 Spanish template names fail with the English alternative (no silen
   for (const [es, en] of [['pedidos', 'orders'], ['usuarios', 'users'], ['productos', 'products']]) {
     assert.match(errorOf(() => norm(SCENARIO.replace('  users: 2', `  users: 2\n  ${es}: 1`))).message, new RegExp(`use "${en}"`));
   }
+});
+
+test('sorts: valid configuration normalizes and scenarios without sorts keep their hash', () => {
+  const base = norm(SCENARIO);
+  assert.equal(base.endpoints[0].sorts, undefined);
+  const withSorts = norm(SCENARIO.replace(
+    '    filters: [status, customer_id]\n',
+    '    filters: [status, customer_id]\n    sorts: { by: sort_by, order: order_by, fields: [id, status, created_at] }\n',
+  ));
+  assert.deepEqual(withSorts.endpoints[0].sorts, { by: 'sort_by', order: 'order_by', fields: ['id', 'status', 'created_at'] });
+  assert.notEqual(scenarioHash(withSorts), scenarioHash(base));
+
+  const single = norm(SCENARIO.replace(
+    '    filters: [status, customer_id]\n',
+    '    filters: [status, customer_id]\n    sorts: { by: sort, fields: [id, created_at] }\n',
+  ));
+  assert.deepEqual(single.endpoints[0].sorts, { by: 'sort', order: null, fields: ['id', 'created_at'] });
+});
+
+test('sorts validation: invalid fields, types, duplicates and parameter collisions fail clearly', () => {
+  const inject = (line) => SCENARIO.replace('    filters: [status, customer_id]\n', `    filters: [status, customer_id]\n    ${line}\n`);
+  assert.match(errorOf(() => norm(inject('sorts: [id]'))).message, /endpoints\[0\]\.sorts": must be a map/);
+  assert.match(errorOf(() => norm(inject('sorts: { by: sort_by, extra: 1, fields: [id] }'))).message, /sorts\.extra": unknown field/);
+  assert.match(errorOf(() => norm(inject('sorts: { by: sort_by }'))).message, /sorts\.fields": required; a non-empty list/);
+  assert.match(errorOf(() => norm(inject('sorts: { by: sort_by, fields: [] }'))).message, /sorts\.fields": required; a non-empty list/);
+  assert.match(errorOf(() => norm(inject('sorts: { by: sort_by, fields: [id, bogus] }'))).message, /sorts\.fields\[1\]": field "bogus" does not exist/);
+  assert.match(errorOf(() => norm(inject('sorts: { by: sort_by, fields: [id, id] }'))).message, /sorts\.fields\[1\]": "id" is listed twice/);
+  assert.match(errorOf(() => norm(inject('sorts: { by: sort_by, order: sort_by, fields: [id] }'))).message, /sorts\.order": must differ from "by"/);
+  assert.match(errorOf(() => norm(inject('sorts: { by: status, fields: [id] }'))).message, /sorts\.by": parameter "status" conflicts with a declared filter/);
+  assert.match(errorOf(() => norm(inject('sorts: { by: limit, fields: [id] }'))).message, /sorts\.by": parameter "limit" conflicts with a pagination parameter/);
+  assert.match(errorOf(() => norm(inject('sort: []'))).message, /endpoints\[0\]\.sort": must be a field name or a non-empty list/);
 });

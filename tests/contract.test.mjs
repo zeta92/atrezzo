@@ -155,3 +155,139 @@ test('object Accept with zero or many rows ⇒ 406 PGRST116', () => {
   assert.equal(none.status, 406);
   assert.equal(none.body.code, 'PGRST116');
 });
+
+// ---------- Dynamic sorting (`sorts`) ----------
+
+const SORTED_SCENARIO = `name: sortable
+seed: 7712
+now: 2025-03-01T09:00:00Z
+world:
+  customers: 3
+  orders:
+    total: 40
+    distribution: { paid: 34, pending: 3, issue: 3 }
+    amount: { min: 20, max: 900, currency: EUR }
+endpoints:
+  - path: /api/orders
+    entity: orders
+    filters: [status, customer_id]
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: id
+    sorts: { by: sort_by, order: order_by, fields: [id, status, created_at] }
+  - path: /api/by-prefix
+    entity: orders
+    pagination: { param_limit: limit, param_offset: offset }
+    sorts: { by: sort, fields: [id, amount, created_at] }
+  - path: /api/by-dot
+    entity: orders
+    pagination: { param_limit: limit, param_offset: offset }
+    sorts: { by: order, fields: [id, created_at] }
+  - path: /api/static-only
+    entity: orders
+    sort: -id
+`;
+
+const sortedDataset = generateWorld(normalizeScenario(parseYaml(SORTED_SCENARIO, 's.yaml'), 's.yaml'));
+const sortedEngine = createEngine(sortedDataset);
+const getS = (path) => {
+  const u = new URL(path, 'http://x');
+  return sortedEngine.handle({ method: 'GET', pathname: u.pathname, query: u.searchParams });
+};
+
+test('sorts: ascending and descending via by + order parameters, not listed in x-atrezzo-ignored', () => {
+  const asc = getS('/api/orders?sort_by=id&order_by=asc');
+  assert.equal(asc.status, 200);
+  assert.deepEqual(ids(asc), Array.from({ length: 40 }, (_, i) => i + 1));
+  assert.equal(asc.headers['x-atrezzo-ignored'], undefined);
+
+  const desc = getS('/api/orders?sort_by=id&order_by=desc');
+  assert.equal(desc.status, 200);
+  assert.deepEqual(ids(desc), Array.from({ length: 40 }, (_, i) => 40 - i));
+  assert.equal(desc.headers['x-atrezzo-ignored'], undefined);
+
+  // omit order_by ⇒ defaults to asc
+  const defDir = getS('/api/orders?sort_by=created_at');
+  assert.equal(defDir.status, 200);
+  for (let i = 1; i < defDir.body.length; i++) assert.ok(defDir.body[i - 1].created_at <= defDir.body[i].created_at);
+
+  // only order_by=desc ⇒ applies desc to default sort field
+  const onlyOrder = getS('/api/orders?order_by=desc');
+  assert.equal(onlyOrder.status, 200);
+  assert.deepEqual(ids(onlyOrder), Array.from({ length: 40 }, (_, i) => 40 - i));
+});
+
+test('sorts: supports -field and field.asc|desc syntaxes', () => {
+  const neg = getS('/api/by-prefix?sort=-amount');
+  assert.equal(neg.status, 200);
+  for (let i = 1; i < neg.body.length; i++) assert.ok(neg.body[i - 1].amount >= neg.body[i].amount);
+  assert.equal(neg.headers['x-atrezzo-ignored'], undefined);
+
+  const dotDesc = getS('/api/by-dot?order=created_at.desc');
+  assert.equal(dotDesc.status, 200);
+  for (let i = 1; i < dotDesc.body.length; i++) assert.ok(dotDesc.body[i - 1].created_at >= dotDesc.body[i].created_at);
+  assert.equal(dotDesc.headers['x-atrezzo-ignored'], undefined);
+
+  const dotAsc = getS('/api/by-dot?order=created_at.asc');
+  assert.equal(dotAsc.status, 200);
+  for (let i = 1; i < dotAsc.body.length; i++) assert.ok(dotAsc.body[i - 1].created_at <= dotAsc.body[i].created_at);
+});
+
+test('sorts: applies before pagination', () => {
+  const page = getS('/api/orders?sort_by=id&order_by=desc&limit=5&offset=5');
+  assert.equal(page.status, 200);
+  assert.deepEqual(ids(page), [35, 34, 33, 32, 31]);
+  assert.equal(page.headers['x-total-count'], '40');
+
+  const negPage = getS('/api/by-prefix?sort=-id&limit=4&offset=2');
+  assert.equal(negPage.status, 200);
+  assert.deepEqual(ids(negPage), [38, 37, 36, 35]);
+});
+
+test('sorts: disallowed field or invalid order ⇒ 400 with clear error (never silent)', () => {
+  const badField = getS('/api/orders?sort_by=amount&order_by=asc');
+  assert.equal(badField.status, 400);
+  assert.match(badField.body.error, /amount.*not allowed.*sortable|allowed: id, status, created_at/);
+
+  const badNeg = getS('/api/by-prefix?sort=-status');
+  assert.equal(badNeg.status, 400);
+  assert.match(badNeg.body.error, /"status" is not allowed/);
+
+  const badDot = getS('/api/by-dot?order=amount.desc');
+  assert.equal(badDot.status, 400);
+  assert.match(badDot.body.error, /"amount" is not allowed/);
+
+  const badOrder = getS('/api/orders?sort_by=id&order_by=sideways');
+  assert.equal(badOrder.status, 400);
+  assert.match(badOrder.body.error, /"order_by" must be "asc" or "desc"; got "sideways"/);
+
+  const badDotOrder = getS('/api/by-dot?order=id.sideways');
+  assert.equal(badDotOrder.status, 400);
+  assert.match(badDotOrder.body.error, /must be "asc" or "desc"; got "sideways"/);
+
+  const conflict = getS('/api/orders?sort_by=-id&order_by=asc');
+  assert.equal(conflict.status, 400);
+  assert.match(conflict.body.error, /conflicting sort order/);
+});
+
+test('without sorts: query sort params keep being ignored and static sort applies', () => {
+  const r = getS('/api/static-only?sort_by=id&order_by=asc');
+  assert.equal(r.status, 200);
+  assert.equal(r.headers['x-atrezzo-ignored'], 'sort_by,order_by');
+  assert.deepEqual(ids(r), Array.from({ length: 40 }, (_, i) => 40 - i));
+
+  const r2 = get('/api/orders?sort_by=id&order_by=desc');
+  assert.equal(r2.status, 200);
+  assert.equal(r2.headers['x-atrezzo-ignored'], 'sort_by,order_by');
+  assert.deepEqual(ids(r2), Array.from({ length: 40 }, (_, i) => i + 1));
+});
+
+test('sorts: order without by on an endpoint with empty sort returns 400 instead of throwing', () => {
+  const emptySortDataset = {
+    ...sortedDataset,
+    endpoints: [{ ...sortedDataset.endpoints[0], sort: [] }],
+  };
+  const eng = createEngine(emptySortDataset);
+  const res = eng.handle({ method: 'GET', pathname: '/api/orders', query: new URLSearchParams('order_by=desc') });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /cannot apply "order_by" without "sort_by"/);
+});

@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.11.0
+
+**Dynamic sorting per endpoint (`sorts`).** An endpoint can declare `sorts: { by: sort_by, order: order_by, fields: [id, title, created_at] }` (with configurable query parameter names and an explicit field allowlist). The contract engine resolves `order=asc|desc`, `-field` / `+field`, and `field.asc` / `field.desc` before pagination and `shape: object`, consumes the declared parameters so they leave `X-Atrezzo-Ignored`, and rejects any disallowed field or invalid direction loudly (`400`, never silent). Scenario validation checks `fields` against the entity and rejects parameter collisions; endpoints without `sorts` keep their exact behaviour and scenario hash. Documented in `references/scenario.md`, covered in `tests/contract.test.mjs` and `tests/scenario.test.mjs`.
+
 ### 0.10.0
 
 **Four things a response could not say.** `embed` entries nest (`- entity: items` + `embed: [tags]`, up to 4 levels; a cycle is a scenario error naming its path); `pluck: <field>` answers that field of each row as a string (`["1","2","3"]`) with filters, sort, pagination, `envelope` and `detail`; `values_order: cycle` hands out each list of values in the written order on every seed; `error: { status, body }` makes an endpoint always answer that error (reported by `serve`, read by `verify` as a real answer). Scenarios without them keep their hash; see `references/scenario.md`, covered in `tests/projection.test.mjs`: 226 tests green.
