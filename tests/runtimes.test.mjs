@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { chownSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { chownSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, statfsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { SCENARIO, tmpProject, cli } from './helpers.mjs';
@@ -161,16 +161,29 @@ test('supabase: seed.sql with as many rows as the world, stable ids and well-for
 const PG_BIN = ['17', '16', '15', '14'].map((v) => `/usr/lib/postgresql/${v}/bin`).find((d) => existsSync(join(d, 'initdb')));
 const canPg = PG_BIN && process.getuid?.() === 0 && spawnSync('psql', ['--version']).status === 0;
 
+function pgTempRoot() {
+  const minBytes = 80 * 1024 * 1024;
+  for (const dir of [tmpdir(), '/var/tmp']) {
+    try {
+      const s = statfsSync(dir);
+      if (Number(s.bavail) * Number(s.bsize) >= minBytes) return dir;
+    } catch {}
+  }
+  return tmpdir();
+}
+
 test('supabase: reset.sh loads the seed into a real Postgres, twice (idempotent)', { skip: canPg ? false : 'no local Postgres (initdb + psql as root)' }, () => {
   const proj = tmpProject({ 'atrezzo.config.json': JSON.stringify({ ...DEFAULT_CONFIG, runtime: 'supabase' }), 'e.yaml': SCENARIO });
   assert.equal(cli(['world', 'e.yaml'], proj).code, 0);
-  const pg = mkdtempSync(join(tmpdir(), 'atrezzo-pg-'));
+  const pg = mkdtempSync(join(pgTempRoot(), 'atrezzo-pg-'));
   chownSync(pg, Number(spawnSync('id', ['-u', 'postgres'], { encoding: 'utf8' }).stdout.trim()), 0);
   const port = String(56000 + (process.pid % 1000));
   const su = (cmd) => spawnSync('su', ['postgres', '-c', cmd], { encoding: 'utf8' });
   try {
-    assert.equal(su(`${PG_BIN}/initdb -D ${pg}/data -A trust -U postgres`).status, 0);
-    assert.equal(su(`${PG_BIN}/pg_ctl -D ${pg}/data -w -o "-p ${port} -k ${pg} -c listen_addresses=" -l ${pg}/log start`).status, 0);
+    const init = su(`${PG_BIN}/initdb -D ${pg}/data -A trust -U postgres`);
+    assert.equal(init.status, 0, init.stderr);
+    const start = su(`${PG_BIN}/pg_ctl -D ${pg}/data -w -o "-p ${port} -k ${pg} -c listen_addresses=" -l ${pg}/log start`);
+    assert.equal(start.status, 0, start.stderr);
     const dsn = `postgresql://postgres@localhost:${port}/postgres?host=${pg}`;
     const env = { ...process.env };
     const reset = join(proj, 'atrezzo/.generated/supabase/conciliacion/reset.sh');
@@ -184,6 +197,7 @@ test('supabase: reset.sh loads the seed into a real Postgres, twice (idempotent)
   } finally {
     su(`${PG_BIN}/pg_ctl -D ${pg}/data -m immediate stop`);
     rmSync(pg, { recursive: true, force: true });
+    rmSync(proj, { recursive: true, force: true });
   }
 });
 
