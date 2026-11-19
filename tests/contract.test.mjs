@@ -332,19 +332,38 @@ endpoints:
   - path: /api/empty-feed
     entity: items
     filters: { source_id: { from: sources, where: { tier: bogus } } }
+  - path: /api/groups/:group_id/items
+    entity: items
+    filters:
+      source_id: { from: sources, where: { active: true } }
+      status: status
+    pagination: { param_limit: limit, param_offset: offset }
+  - path: /api/featured
+    entity: items
+    filters:
+      source_id: { from: sources, where: { active: true } }
+      status: status
+    sort: id
+    shape: object
+  - path: /api/empty-featured
+    entity: items
+    filters: { source_id: { from: sources, where: { tier: bogus } } }
+    shape: object
 `;
 
 const wfScenario = normalizeScenario(parseYaml(WORLD_FILTER_SCENARIO, 'wf.yaml'), 'wf.yaml');
 const wfDataset = generateWorld(wfScenario);
 const wfEngine = createEngine(wfDataset);
-const getWF = (path) => {
+const getWF = (path, headers) => {
   const u = new URL(path, 'http://x');
-  return wfEngine.handle({ method: 'GET', pathname: u.pathname, query: u.searchParams });
+  return wfEngine.handle({ method: 'GET', pathname: u.pathname, query: u.searchParams, headers });
 };
 
 test('world-resolved filter selects rows whose FK matches `from` rows satisfying `where`, without query params', () => {
   const activeIds = new Set(wfDataset.entities.sources.filter((s) => s.active === true).map((s) => s.id));
   assert.ok(activeIds.size > 0 && activeIds.size < wfDataset.entities.sources.length);
+  const nullSourceItems = wfDataset.entities.items.filter((it) => it.source_id === null);
+  assert.equal(nullSourceItems.length, 3);
   const expected = wfDataset.entities.items.filter((it) => it.source_id !== null && activeIds.has(it.source_id));
   assert.ok(expected.length > 0 && expected.length < wfDataset.entities.items.length);
 
@@ -353,6 +372,7 @@ test('world-resolved filter selects rows whose FK matches `from` rows satisfying
   assert.deepEqual(ids(res), expected.map((it) => it.id));
   assert.equal(res.headers['x-total-count'], String(expected.length));
   assert.ok(res.body.every((it) => it.source_id !== null && activeIds.has(it.source_id)));
+  assert.ok(nullSourceItems.every((n) => !res.body.some((it) => it.id === n.id)));
 
   // No query param exists for the resolved filter: passing ?source_id=1 is ignored
   const withParam = getWF('/api/feed?source_id=1');
@@ -360,10 +380,15 @@ test('world-resolved filter selects rows whose FK matches `from` rows satisfying
   assert.deepEqual(ids(withParam), expected.map((it) => it.id));
   assert.equal(withParam.headers['x-atrezzo-ignored'], 'source_id');
 
-  // head=true counts only the resolved rows
+  // head=true and HEAD + Prefer: count=exact count only the resolved rows
   const head = getWF('/api/feed?head=true');
   assert.equal(head.status, 200);
   assert.equal(head.headers['x-total-count'], String(expected.length));
+  const headMethod = wfEngine.handle({ method: 'HEAD', pathname: '/api/feed', headers: { prefer: 'count=exact' } });
+  assert.equal(headMethod.status, 200);
+  assert.equal(headMethod.body, null);
+  assert.equal(headMethod.headers['x-total-count'], String(expected.length));
+  assert.equal(headMethod.headers['content-range'], `0-${expected.length - 1}/${expected.length}`);
 
   // Multi-key + list value in `where`
   const coreIds = new Set(wfDataset.entities.sources.filter((s) => s.active === true && ['core', 'extra'].includes(s.tier)).map((s) => s.id));
@@ -459,4 +484,114 @@ endpoints:
   assert.match(parseErr('{ source_id: { where: { active: true } } }'), /filters\.source_id\.from": required; a declared world entity/);
   assert.match(parseErr('{ source_id: { from: sources, where: { active: true }, extra: 1 } }'), /filters\.source_id\.extra": unknown field/);
   assert.match(parseErr('{ source_id: { from: sources, where: { active: [] } } }'), /filters\.source_id\.where\.active": must be a scalar value or a non-empty list/);
+});
+
+test('world-resolved filter combines with path parameters and shape: object', () => {
+  const activeIds = new Set(wfDataset.entities.sources.filter((s) => s.active === true).map((s) => s.id));
+  const group1Expected = wfDataset.entities.items.filter(
+    (it) => it.group_id === 1 && it.source_id !== null && activeIds.has(it.source_id),
+  );
+  assert.ok(group1Expected.length > 0);
+
+  const g1 = getWF('/api/groups/1/items');
+  assert.equal(g1.status, 200);
+  assert.deepEqual(ids(g1), group1Expected.map((it) => it.id));
+  assert.equal(g1.headers['x-total-count'], String(group1Expected.length));
+
+  const g1Live = getWF('/api/groups/1/items?status=live&limit=2&offset=0');
+  const g1LiveExpected = group1Expected.filter((it) => it.status === 'live');
+  assert.equal(g1Live.status, 200);
+  assert.equal(g1Live.headers['x-total-count'], String(g1LiveExpected.length));
+  assert.deepEqual(ids(g1Live), g1LiveExpected.slice(0, 2).map((it) => it.id));
+
+  // shape: object returns the first row after world filter (and query filter)
+  const allActive = wfDataset.entities.items.filter((it) => it.source_id !== null && activeIds.has(it.source_id));
+  const feat = getWF('/api/featured');
+  assert.equal(feat.status, 200);
+  assert.equal(feat.body.id, allActive[0].id);
+
+  const featLive = getWF('/api/featured?status=live');
+  assert.equal(featLive.status, 200);
+  assert.equal(featLive.body.id, allActive.find((it) => it.status === 'live').id);
+
+  const featNoneQuery = getWF('/api/featured?status=nonexistent');
+  assert.equal(featNoneQuery.status, 404);
+  assert.match(featNoneQuery.body.error, /no items matches status=nonexistent/);
+
+  const featEmptyWorld = getWF('/api/empty-featured');
+  assert.equal(featEmptyWorld.status, 404);
+  assert.equal(featEmptyWorld.miss, undefined);
+  assert.match(featEmptyWorld.body.error, /no items matches world filter in scenario "world-filters"/);
+});
+
+test('world-resolved filter rejects type-incompatible values in where and accepts compatible ones', () => {
+  const parseErr = (filterLine, extraWorld = '') => {
+    const yaml = `name: bad-wf-types
+seed: 1
+world:
+  groups: 2
+  sources: { total: 3, ref: groups, nulls: { group_id: 1 }, fields: { name: string, active: boolean, tier: [core, extra] } }
+  users: 2
+  products: 2
+  items: { total: 6, ref: [sources, users, products], fields: { title: string, status: [draft, live] } }${extraWorld}
+endpoints:
+  - path: /api/items
+    entity: items
+    filters: ${filterLine}
+`;
+    try {
+      normalizeScenario(parseYaml(yaml, 'bad.yaml'), 'bad.yaml');
+    } catch (e) {
+      assert.ok(e instanceof AtrezzoError);
+      assert.equal(e.exitCode, 3);
+      return e.message;
+    }
+    assert.fail(`expected scenario validation error for: ${filterLine}`);
+  };
+
+  assert.match(parseErr('{ source_id: { from: sources, where: { active: "true" } } }'), /where\.active": value "true" is incompatible with field "active" in "sources"/);
+  assert.match(parseErr('{ source_id: { from: sources, where: { active: 1 } } }'), /where\.active": value 1 is incompatible with field "active" in "sources"/);
+  assert.match(parseErr('{ source_id: { from: sources, where: { active: null } } }'), /where\.active": value null is incompatible with field "active" in "sources"/);
+  assert.match(parseErr('{ source_id: { from: sources, where: { active: [true, "false"] } } }'), /where\.active": value "false" is incompatible with field "active" in "sources"/);
+  assert.match(parseErr('{ source_id: { from: sources, where: { id: "1" } } }'), /where\.id": value "1" is incompatible with field "id" in "sources"/);
+  assert.match(parseErr('{ source_id: { from: sources, where: { id: null } } }'), /where\.id": value null is incompatible with field "id" in "sources"/);
+  assert.match(parseErr('{ source_id: { from: sources, where: { group_id: "1" } } }'), /where\.group_id": value "1" is incompatible with field "group_id" in "sources"/);
+  assert.match(parseErr('{ source_id: { from: sources, where: { tier: 123 } } }'), /where\.tier": value 123 is incompatible with field "tier" in "sources"/);
+  assert.match(parseErr('{ user_id: { from: users, where: { role: 1 } } }'), /where\.role": value 1 is incompatible with field "role" in "users"/);
+  assert.match(parseErr('{ product_id: { from: products, where: { stock: "5" } } }'), /where\.stock": value "5" is incompatible with field "stock" in "products"/);
+
+  // Compatible types (id, nullable FK, template entity role, numeric stock) succeed and match rows
+  const okYaml = `name: ok-wf-types
+seed: 7
+world:
+  groups: 2
+  sources: { total: 4, ref: groups, nulls: { group_id: 1 }, fields: { name: string, active: boolean } }
+  users: 3
+  items: { total: 8, ref: [sources, users], fields: { title: string } }
+endpoints:
+  - path: /api/by-id
+    entity: items
+    filters: { source_id: { from: sources, where: { id: [1, 2] } } }
+  - path: /api/null-group
+    entity: items
+    filters: { source_id: { from: sources, where: { group_id: null } } }
+  - path: /api/admin-items
+    entity: items
+    filters: { user_id: { from: users, where: { role: admin } } }
+`;
+  const okDs = generateWorld(normalizeScenario(parseYaml(okYaml, 'ok.yaml'), 'ok.yaml'));
+  const okEng = createEngine(okDs);
+  const byId = okEng.handle({ method: 'GET', pathname: '/api/by-id' });
+  assert.equal(byId.status, 200);
+  assert.ok(byId.body.length > 0 && byId.body.every((it) => it.source_id === 1 || it.source_id === 2));
+
+  const nullGroupSourceIds = new Set(okDs.entities.sources.filter((s) => s.group_id === null).map((s) => s.id));
+  assert.equal(nullGroupSourceIds.size, 1);
+  const nullGroupRes = okEng.handle({ method: 'GET', pathname: '/api/null-group' });
+  assert.equal(nullGroupRes.status, 200);
+  assert.ok(nullGroupRes.body.every((it) => nullGroupSourceIds.has(it.source_id)));
+
+  const adminRes = okEng.handle({ method: 'GET', pathname: '/api/admin-items' });
+  assert.equal(adminRes.status, 200);
+  assert.ok(adminRes.body.length > 0 && adminRes.body.every((it) => it.user_id === 1));
 });

@@ -250,22 +250,42 @@ function fkTargetEntity(spec, condField) {
   return spec.refs.find((r) => templateFor(r).fk === condField) ?? null;
 }
 
-function isWhenValuePossible(v, condField, spec, byName) {
-  const refEntity = fkTargetEntity(spec, condField);
-  if (v === null) {
-    if (condField === 'id') return false;
-    if ((spec.nulls?.[condField] ?? 0) > 0) return true;
-    if (refEntity) {
-      const derived = spec.derive?.[condField];
-      return Boolean(derived && (byName[derived.from]?.nulls?.[derived.field] ?? 0) > 0);
-    }
-    if (spec.distribution && condField === spec.distribution.field) return false;
-    if (spec.pools && Object.hasOwn(spec.pools, condField)) return spec.pools[condField].includes(null);
-    const entry = spec.fields?.[condField];
-    if (isObj(entry)) return (Array.isArray(entry.default) && entry.default.includes(null)) || entry.value.includes(null);
-    if (Array.isArray(entry)) return entry.includes(null);
-    return false;
+function canFieldBeNull(field, spec, byName) {
+  if (field === 'id') return false;
+  if ((spec.nulls?.[field] ?? 0) > 0) return true;
+  const refEntity = fkTargetEntity(spec, field);
+  if (refEntity) {
+    const derived = spec.derive?.[field];
+    return Boolean(derived && (byName[derived.from]?.nulls?.[derived.field] ?? 0) > 0);
   }
+  if (spec.distribution && field === spec.distribution.field) return false;
+  if (spec.pools && Object.hasOwn(spec.pools, field)) return spec.pools[field].includes(null);
+  const entry = spec.fields?.[field];
+  if (isObj(entry)) return (Array.isArray(entry.default) && entry.default.includes(null)) || entry.value.includes(null);
+  if (Array.isArray(entry)) return entry.includes(null);
+  return false;
+}
+
+function isWhereValueCompatible(v, field, spec, byName) {
+  if (v === null) return canFieldBeNull(field, spec, byName);
+  if (field === 'id' || fkTargetEntity(spec, field)) return Number.isInteger(v);
+  if (spec.distribution && field === spec.distribution.field) return typeof v === 'string';
+  const amountField = templateFor(spec.name).amountField || 'amount';
+  if (spec.amount && field === 'currency') return typeof v === 'string';
+  if (spec.amount && field === amountField) return typeof v === 'number' && Number.isFinite(v);
+  if (spec.pools && Object.hasOwn(spec.pools, field)) return isValueCompatibleWithDefault(v, spec.pools[field]);
+  if (spec.fields && Object.hasOwn(spec.fields, field)) {
+    const entry = spec.fields[field];
+    if (isObj(entry)) return isValueCompatibleWithDefault(v, entry.default) || entry.value.some((ev) => ev !== null && isValueCompatibleWithDefault(v, [ev]));
+    return isValueCompatibleWithDefault(v, entry);
+  }
+  if (spec.name === 'products' && field === 'stock') return Number.isInteger(v);
+  return typeof v === 'string';
+}
+
+function isWhenValuePossible(v, condField, spec, byName) {
+  if (v === null) return canFieldBeNull(condField, spec, byName);
+  const refEntity = fkTargetEntity(spec, condField);
   if (condField === 'id') return Number.isInteger(v) && v >= 1 && v <= spec.count;
   if (refEntity) {
     const targetCount = byName[refEntity]?.count ?? 0;
@@ -305,7 +325,7 @@ function describeTargetField(condField, spec, byName) {
     const def = isObj(entry) ? entry.default : entry;
     return Array.isArray(def) ? `enum ${JSON.stringify(def)}` : def;
   }
-  return 'integer >= 1';
+  return spec.name === 'products' && condField === 'stock' ? 'integer' : 'string';
 }
 
 function validateConditionals(spec, f, byName, issues) {
@@ -692,8 +712,24 @@ function parseWorldFilter(field, raw, spec, fkTarget, byName, ff, issues) {
         whereOk = false;
       }
       const val = parseScalarOrList(wv, wff, issues);
-      if (val === undefined) whereOk = false;
-      else parsed[wk] = val;
+      if (val === undefined) {
+        whereOk = false;
+      } else {
+        if (fromSpec && fromFields.includes(wk)) {
+          const candidates = Array.isArray(val) ? val : [val];
+          let typeOk = true;
+          for (const v of candidates) {
+            if (!isWhereValueCompatible(v, wk, fromSpec, byName)) {
+              issues.add(wff, `value ${JSON.stringify(v)} is incompatible with field "${wk}" in "${from}" (${describeTargetField(wk, fromSpec, byName)})`);
+              typeOk = false;
+              whereOk = false;
+            }
+          }
+          if (typeOk) parsed[wk] = val;
+        } else {
+          parsed[wk] = val;
+        }
+      }
     }
     if (whereOk) where = parsed;
   }

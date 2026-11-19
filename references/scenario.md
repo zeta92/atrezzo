@@ -237,7 +237,7 @@ endpoints:
 - **No query parameter**: unlike `status: status` or `[status]`, a world-resolved filter does not expose a query parameter (sending `?source_id=1` is ignored and listed in `X-Atrezzo-Ignored`).
 - **Combines naturally**: runs together with path parameters, normal query filters (`?status=live`), `sort`/`sorts`, `pagination` (`X-Total-Count` counts the resolved + filtered rows before pagination), `shape: object`, and `head=true`.
 - **Short form unchanged**: `filters: [status, source_id]` and `filters: { status: status, ":pid": project_id }` keep their exact behaviour and scenario hashes.
-- **Validation (scenario error)**: `from` must be a declared entity in `world`; the filter key must be a foreign key of the endpoint's entity pointing to `from` (via `ref:`); `where` must be a non-empty map whose keys are existing fields of `from` with scalar or non-empty scalar-list values.
+- **Validation (scenario error)**: `from` must be a declared entity in `world`; the filter key must be a foreign key of the endpoint's entity pointing to `from` (via `ref:`); `where` must be a non-empty map whose keys are existing fields of `from` with scalar or non-empty scalar-list values compatible with each field's type.
 
 #### Paths with parameters (`/projects/:project_id/views/:view_id/tasks`)
 
