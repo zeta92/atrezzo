@@ -317,6 +317,24 @@ export function createEngine(dataset) {
     return rows.filter((r) => bound.every((p) => r[p.field] !== null && r[p.field] !== undefined && String(r[p.field]) === params[p.name]));
   }
 
+  function matchesWhere(row, cond) {
+    return Object.entries(cond).every(([k, expected]) => (Array.isArray(expected) ? expected.includes(row[k]) : row[k] === expected));
+  }
+
+  /** Rows whose FK points to rows in `from` matching `where` (resolved against the world, no query param). */
+  function byWorldFilters(rows, ep) {
+    if (!ep.worldFilters?.length) return rows;
+    let out = rows;
+    for (const wf of ep.worldFilters) {
+      const allowedIds = new Set();
+      for (const target of dataset.entities[wf.from] ?? []) {
+        if (matchesWhere(target, wf.where)) allowedIds.add(target.id);
+      }
+      out = out.filter((r) => r[wf.field] !== null && r[wf.field] !== undefined && allowedIds.has(r[wf.field]));
+    }
+    return out;
+  }
+
   /**
    * @param {{ method?: string, pathname: string, query?: URLSearchParams | Record<string,string>,
    *   headers?: Headers | Record<string, string | string[]> }} req
@@ -352,7 +370,7 @@ export function createEngine(dataset) {
       ...(ep.pagination ? [ep.pagination.limit, ep.pagination.page ?? ep.pagination.offset] : []),
       ...(ep.sorts ? [ep.sorts.by, ...(ep.sorts.order ? [ep.sorts.order] : [])] : []),
     ];
-    let result = rows;
+    let result = byWorldFilters(rows, ep);
     for (const [key, raw] of params) {
       if (reserved.includes(key)) continue;
       if (ep.filters.includes(key)) result = result.filter((r) => matchesFilter(r[key], raw));
@@ -400,7 +418,8 @@ export function createEngine(dataset) {
       }
       if (!result.length) {
         const q = [...params].filter(([k]) => ep.filters.includes(k)).map(([k, v]) => `${k}=${v}`).join('&');
-        return json(404, { error: `no ${ep.entity} matches ${q || '(no filter)'}${where(ep, m.params)} in scenario "${dataset.scenario}"` }, h);
+        const label = q || (ep.worldFilters?.length ? 'world filter' : '(no filter)');
+        return json(404, { error: `no ${ep.entity} matches ${label}${where(ep, m.params)} in scenario "${dataset.scenario}"` }, h);
       }
       return json(200, answerRow(result[0], ep, counts), h);
     }

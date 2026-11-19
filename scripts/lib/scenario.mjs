@@ -250,22 +250,42 @@ function fkTargetEntity(spec, condField) {
   return spec.refs.find((r) => templateFor(r).fk === condField) ?? null;
 }
 
-function isWhenValuePossible(v, condField, spec, byName) {
-  const refEntity = fkTargetEntity(spec, condField);
-  if (v === null) {
-    if (condField === 'id') return false;
-    if ((spec.nulls?.[condField] ?? 0) > 0) return true;
-    if (refEntity) {
-      const derived = spec.derive?.[condField];
-      return Boolean(derived && (byName[derived.from]?.nulls?.[derived.field] ?? 0) > 0);
-    }
-    if (spec.distribution && condField === spec.distribution.field) return false;
-    if (spec.pools && Object.hasOwn(spec.pools, condField)) return spec.pools[condField].includes(null);
-    const entry = spec.fields?.[condField];
-    if (isObj(entry)) return (Array.isArray(entry.default) && entry.default.includes(null)) || entry.value.includes(null);
-    if (Array.isArray(entry)) return entry.includes(null);
-    return false;
+function canFieldBeNull(field, spec, byName) {
+  if (field === 'id') return false;
+  if ((spec.nulls?.[field] ?? 0) > 0) return true;
+  const refEntity = fkTargetEntity(spec, field);
+  if (refEntity) {
+    const derived = spec.derive?.[field];
+    return Boolean(derived && (byName[derived.from]?.nulls?.[derived.field] ?? 0) > 0);
   }
+  if (spec.distribution && field === spec.distribution.field) return false;
+  if (spec.pools && Object.hasOwn(spec.pools, field)) return spec.pools[field].includes(null);
+  const entry = spec.fields?.[field];
+  if (isObj(entry)) return (Array.isArray(entry.default) && entry.default.includes(null)) || entry.value.includes(null);
+  if (Array.isArray(entry)) return entry.includes(null);
+  return false;
+}
+
+function isWhereValueCompatible(v, field, spec, byName) {
+  if (v === null) return canFieldBeNull(field, spec, byName);
+  if (field === 'id' || fkTargetEntity(spec, field)) return Number.isInteger(v);
+  if (spec.distribution && field === spec.distribution.field) return typeof v === 'string';
+  const amountField = templateFor(spec.name).amountField || 'amount';
+  if (spec.amount && field === 'currency') return typeof v === 'string';
+  if (spec.amount && field === amountField) return typeof v === 'number' && Number.isFinite(v);
+  if (spec.pools && Object.hasOwn(spec.pools, field)) return isValueCompatibleWithDefault(v, spec.pools[field]);
+  if (spec.fields && Object.hasOwn(spec.fields, field)) {
+    const entry = spec.fields[field];
+    if (isObj(entry)) return isValueCompatibleWithDefault(v, entry.default) || entry.value.some((ev) => ev !== null && isValueCompatibleWithDefault(v, [ev]));
+    return isValueCompatibleWithDefault(v, entry);
+  }
+  if (spec.name === 'products' && field === 'stock') return Number.isInteger(v);
+  return typeof v === 'string';
+}
+
+function isWhenValuePossible(v, condField, spec, byName) {
+  if (v === null) return canFieldBeNull(condField, spec, byName);
+  const refEntity = fkTargetEntity(spec, condField);
   if (condField === 'id') return Number.isInteger(v) && v >= 1 && v <= spec.count;
   if (refEntity) {
     const targetCount = byName[refEntity]?.count ?? 0;
@@ -305,7 +325,7 @@ function describeTargetField(condField, spec, byName) {
     const def = isObj(entry) ? entry.default : entry;
     return Array.isArray(def) ? `enum ${JSON.stringify(def)}` : def;
   }
-  return 'integer >= 1';
+  return spec.name === 'products' && condField === 'stock' ? 'integer' : 'string';
 }
 
 function validateConditionals(spec, f, byName, issues) {
@@ -656,6 +676,67 @@ function parseSorts(raw, fields, filters, pagination, f, issues) {
   return { by, order, fields: sortFields };
 }
 
+function parseWorldFilter(field, raw, spec, fkTarget, byName, ff, issues) {
+  issues.unknownKeys(raw, ['from', 'where'], ff);
+  const from = raw.from;
+  let fromSpec = null;
+  if (typeof from !== 'string' || !from) {
+    issues.add(`${ff}.from`, `required; a declared world entity (declared: ${Object.keys(byName).join(', ') || 'none'})`);
+  } else if (!Object.hasOwn(byName, from)) {
+    issues.add(`${ff}.from`, `"${from}" is not declared in world (declared: ${Object.keys(byName).join(', ') || 'none'})`);
+  } else {
+    fromSpec = byName[from];
+  }
+
+  const fks = Object.keys(fkTarget);
+  let fkOk = false;
+  if (!Object.hasOwn(fkTarget, field)) {
+    issues.add(ff, `"${field}" is not a foreign key of "${spec.name}" (its foreign keys: ${fks.join(', ') || 'none; declare ref: first'})`);
+  } else if (fromSpec && fkTarget[field] !== from) {
+    issues.add(`${ff}.from`, `"${field}" is a foreign key to "${fkTarget[field]}", not "${from}"`);
+  } else if (fromSpec) {
+    fkOk = true;
+  }
+
+  let where = null;
+  if (!isObj(raw.where) || !Object.keys(raw.where).length) {
+    issues.add(`${ff}.where`, 'required; must be a non-empty map field: value');
+  } else {
+    const fromFields = fromSpec ? entityFields(fromSpec) : null;
+    const parsed = {};
+    let whereOk = true;
+    for (const [wk, wv] of Object.entries(raw.where)) {
+      const wff = `${ff}.where.${wk}`;
+      if (fromFields && !fromFields.includes(wk)) {
+        issues.add(wff, `field "${wk}" does not exist in "${from}" (fields: ${fromFields.join(', ')})`);
+        whereOk = false;
+      }
+      const val = parseScalarOrList(wv, wff, issues);
+      if (val === undefined) {
+        whereOk = false;
+      } else {
+        if (fromSpec && fromFields.includes(wk)) {
+          const candidates = Array.isArray(val) ? val : [val];
+          let typeOk = true;
+          for (const v of candidates) {
+            if (!isWhereValueCompatible(v, wk, fromSpec, byName)) {
+              issues.add(wff, `value ${JSON.stringify(v)} is incompatible with field "${wk}" in "${from}" (${describeTargetField(wk, fromSpec, byName)})`);
+              typeOk = false;
+              whereOk = false;
+            }
+          }
+          if (typeOk) parsed[wk] = val;
+        } else {
+          parsed[wk] = val;
+        }
+      }
+    }
+    if (whereOk) where = parsed;
+  }
+
+  return fkOk && where ? { field, from, where } : null;
+}
+
 function normalizeEndpoints(endpoints, world, issues) {
   if (!Array.isArray(endpoints) || !endpoints.length) { issues.add('endpoints', 'required; a list with at least one endpoint'); return []; }
   const byName = Object.fromEntries(world.map((s) => [s.name, s]));
@@ -677,7 +758,9 @@ function normalizeEndpoints(endpoints, world, issues) {
     const spec = byName[ep.entity];
     if (!spec) { issues.add(`${f}.entity`, `"${ep.entity}" is not declared in world (declared: ${Object.keys(byName).join(', ') || 'none'})`); return; }
     const fields = entityFields(spec);
+    const fkTarget = Object.fromEntries(spec.refs.map((r) => [templateFor(r).fk, r]));
     const filters = [];
+    const worldFilters = [];
     const bound = {}; // ":param" -> field | null, from the map form of `filters`
     if (ep.filters !== undefined) {
       if (Array.isArray(ep.filters)) {
@@ -692,11 +775,14 @@ function normalizeEndpoints(endpoints, world, issues) {
             if (!names.includes(k.slice(1))) issues.add(ff, `"${k}" is not a parameter of "${path}" (parameters: ${names.map((n) => `:${n}`).join(', ') || 'none'})`);
             else if (v !== null && !fields.includes(v)) issues.add(ff, `field ${JSON.stringify(v)} does not exist in "${spec.name}" (fields: ${fields.join(', ')}); null accepts any value without filtering`);
             else bound[k.slice(1)] = v;
-          } else if (v !== k) issues.add(ff, `a query filter filters the field of its own name: write "${k}: ${k}" (or use the list form)`);
+          } else if (isObj(v)) {
+            const wf = parseWorldFilter(k, v, spec, fkTarget, byName, ff, issues);
+            if (wf) worldFilters.push(wf);
+          } else if (v !== k) issues.add(ff, `a query filter filters the field of its own name: write "${k}: ${k}" (or use the list form, or { from, where })`);
           else if (!fields.includes(k)) issues.add(ff, `field "${k}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
           else filters.push(k);
         }
-      } else issues.add(`${f}.filters`, 'must be a list of fields, or a map { field: field, ":param": field }');
+      } else issues.add(`${f}.filters`, 'must be a list of fields, or a map { field: field, field: { from, where }, ":param": field }');
     }
     const params = [];
     for (const name of names) {
@@ -785,6 +871,7 @@ function normalizeEndpoints(endpoints, world, issues) {
       sort: parseSort(ep.sort, fields, f, issues), include, shape, detail: ep.detail ?? true,
     };
     if (sorts) norm.sorts = sorts; // only when declared: keeps scenario hashes stable
+    if (worldFilters.length) norm.worldFilters = worldFilters; // same: absent unless declared
     if (pick) norm.pick = pick; // only when declared: keeps 0.1 scenario hashes stable
     if (latency !== null) norm.latency = latency; // same: absent unless declared
     if (params.length) norm.params = params; // same

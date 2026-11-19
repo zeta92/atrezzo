@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.13.0
+
+**World-resolved filters (`filters: { <fk>: { from, where } }`).** An endpoint can filter by a condition on a referenced entity in `world` instead of requiring a query parameter (e.g., `filters: { source_id: { from: sources, where: { active: true } } }`). The contract engine resolves matching target ids from `from` and returns rows whose foreign key points to them, combining cleanly with normal query filters, path parameters, `sort`/`sorts`, `pagination` (`X-Total-Count` reflects the resolved subset), `shape: object`, and `head=true`. Validation rejects undeclared `from` entities, filter keys that are not foreign keys to `from`, and unknown fields in `where`; short-form `filters` (`[field]` and `{ field: field, ":param": field }`) keep their exact behaviour and scenario hashes. Documented in `references/scenario.md`, covered in `tests/contract.test.mjs`.
+
 ### 0.12.0
 
 **Conditional fields in `world` (`{ default, when, value }`).** An entity field in `fields` can declare `{ default: [2], when: { is_archived: true }, value: [0] }` so rows matching `when` on other fields of the same row deterministically override their drawn `default` value before the world is finalized. Validation checks that `when` references existing fields of the same entity (without cycles), that `value` matches the field's type, and rejects impossible conditions (such as comparing a `boolean` field to a non-boolean or an enum to an undeclared value); scenarios without conditional fields keep their exact normalized form and hash. Documented in `references/scenario.md`, covered in `tests/world.test.mjs`.

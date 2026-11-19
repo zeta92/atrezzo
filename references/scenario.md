@@ -181,7 +181,7 @@ Generator guarantees:
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
+`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields for query filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
 
 - Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
 - `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` uses `data`). A single key, no nested paths.
@@ -209,6 +209,35 @@ endpoints:
 - **`fields`** (required, non-empty list): allowed fields of the entity. Declared `by`/`order` parameters are consumed by sorting (not listed in `X-Atrezzo-Ignored`), and sorting runs **before** pagination and `shape: object`.
 - **No silent errors**: in the scenario, an unknown entity field in `fields`, missing/empty `fields`, duplicate field, `by == order`, or collision with `filters`/`pagination` is a scenario error (exit 3). At request time, a field outside `fields`, an invalid direction (anything other than `asc`/`desc`), or a conflicting direction (`?sort_by=-id&order_by=asc`) answers `400 { error: ... }`.
 - Without `sorts:`, behaviour and scenario hashes are unchanged (client sort parameters stay in `X-Atrezzo-Ignored`).
+
+#### World-resolved filters (`filters: { <fk>: { from, where } }`)
+
+When an endpoint shows only the rows whose foreign key points to rows of another entity matching a condition (such as a personal feed whose backend resolves the filter server-side without a query parameter), `filters` accepts the long form `{ from, where }`:
+
+```yaml
+world:
+  sources:
+    total: 6
+    fields: { name: string, active: boolean }
+  items:
+    total: 30
+    ref: sources
+    fields: { title: string, status: [draft, live] }
+endpoints:
+  - path: /api/feed
+    entity: items
+    filters:
+      source_id: { from: sources, where: { active: true } }
+      status: status              # normal query filter: ?status=live
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: -id
+```
+
+- **Semantics**: returns only the rows of the endpoint's entity whose foreign key (`source_id`) points to a row of `from` (`sources`) where every field in `where` matches (a list in `where` matches any of its values, e.g. `where: { tier: [core, extra] }`). Rows with `null` in that foreign key are excluded.
+- **No query parameter**: unlike `status: status` or `[status]`, a world-resolved filter does not expose a query parameter (sending `?source_id=1` is ignored and listed in `X-Atrezzo-Ignored`).
+- **Combines naturally**: runs together with path parameters, normal query filters (`?status=live`), `sort`/`sorts`, `pagination` (`X-Total-Count` counts the resolved + filtered rows before pagination), `shape: object`, and `head=true`.
+- **Short form unchanged**: `filters: [status, source_id]` and `filters: { status: status, ":pid": project_id }` keep their exact behaviour and scenario hashes.
+- **Validation (scenario error)**: `from` must be a declared entity in `world`; the filter key must be a foreign key of the endpoint's entity pointing to `from` (via `ref:`); `where` must be a non-empty map whose keys are existing fields of `from` with scalar or non-empty scalar-list values compatible with each field's type.
 
 #### Paths with parameters (`/projects/:project_id/views/:view_id/tasks`)
 
@@ -361,7 +390,7 @@ endpoints:
 - Only `serve` waits: the MSW handlers ignore `latency` (wrap them with MSW's own `delay()` if you need it there). The data never changes with the latency.
 
 Projection semantics (identical in `serve` and the MSW handlers, same `runtime.mjs` file):
-1. Equality filters; a comma means any of the values; `null` matches nulls.
+1. World-resolved filters (`{ from, where }`) and query equality filters; a comma means any of the values; `null` matches nulls.
 2. Sorted by `sorts` query parameters when declared and sent (else the endpoint's `sort`), nulls last, ties broken by original position (stable).
 3. `X-Total-Count` = total after filters, before pagination.
 4. `limit` above the total ⇒ everything; out-of-range `offset` ⇒ `[]`; non-integer values ⇒ 400.
