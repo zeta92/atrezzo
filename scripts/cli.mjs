@@ -177,6 +177,7 @@ function cmdWorld({ pos, flags }) {
   for (const ep of scenario.endpoints) {
     const bits = [ep.entity];
     if (ep.filters.length) bits.push(`filters: ${ep.filters.join(',')}`);
+    if (ep.worldFilters?.length) bits.push(`world-filters: ${ep.worldFilters.map((w) => `${w.field}→${w.from}`).join(',')}`);
     if (ep.pagination) bits.push(`pagination: ${ep.pagination.limit}/${ep.pagination.page ?? ep.pagination.offset}${ep.pagination.page ? ' (by page)' : ''}`);
     bits.push(`sort: ${ep.sort.map((s) => (s.dir === 'desc' ? '-' : '') + s.field).join(',')}`);
     if (ep.sorts) bits.push(`sorts: ${ep.sorts.by}${ep.sorts.order ? `/${ep.sorts.order}` : ''} (${ep.sorts.fields.join(',')})`);

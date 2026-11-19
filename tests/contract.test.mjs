@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeScenario } from '../scripts/lib/scenario.mjs';
 import { parseYaml } from '../scripts/lib/yaml.mjs';
-import { generateWorld } from '../scripts/lib/world.mjs';
+import { generateWorld, scenarioHash } from '../scripts/lib/world.mjs';
 import { createEngine } from '../scripts/lib/contract.mjs';
+import { AtrezzoError } from '../scripts/lib/errors.mjs';
 import { SCENARIO } from './helpers.mjs';
 
 const dataset = generateWorld(normalizeScenario(parseYaml(SCENARIO, 't.yaml'), 't.yaml'));
@@ -290,4 +291,172 @@ test('sorts: order without by on an endpoint with empty sort returns 400 instead
   const res = eng.handle({ method: 'GET', pathname: '/api/orders', query: new URLSearchParams('order_by=desc') });
   assert.equal(res.status, 400);
   assert.match(res.body.error, /cannot apply "order_by" without "sort_by"/);
+});
+
+// ---------- World-resolved filters (`filters: { <fk>: { from, where } }`) ----------
+
+const WORLD_FILTER_SCENARIO = `name: world-filters
+seed: 4242
+now: 2025-03-01T09:00:00Z
+world:
+  groups: 2
+  sources:
+    total: 6
+    fields:
+      name: string
+      active: boolean
+      tier: [core, extra, archive]
+  items:
+    total: 30
+    ref: [sources, groups]
+    nulls: { source_id: 3 }
+    fields:
+      title: string
+      status: [draft, live]
+endpoints:
+  - path: /api/feed
+    entity: items
+    filters:
+      source_id: { from: sources, where: { active: true } }
+  - path: /api/combined
+    entity: items
+    filters:
+      source_id: { from: sources, where: { active: true } }
+      status: status
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: id
+    sorts: { by: sort_by, order: order_by, fields: [id, status] }
+  - path: /api/core-feed
+    entity: items
+    filters: { source_id: { from: sources, where: { active: true, tier: [core, extra] } } }
+  - path: /api/empty-feed
+    entity: items
+    filters: { source_id: { from: sources, where: { tier: bogus } } }
+`;
+
+const wfScenario = normalizeScenario(parseYaml(WORLD_FILTER_SCENARIO, 'wf.yaml'), 'wf.yaml');
+const wfDataset = generateWorld(wfScenario);
+const wfEngine = createEngine(wfDataset);
+const getWF = (path) => {
+  const u = new URL(path, 'http://x');
+  return wfEngine.handle({ method: 'GET', pathname: u.pathname, query: u.searchParams });
+};
+
+test('world-resolved filter selects rows whose FK matches `from` rows satisfying `where`, without query params', () => {
+  const activeIds = new Set(wfDataset.entities.sources.filter((s) => s.active === true).map((s) => s.id));
+  assert.ok(activeIds.size > 0 && activeIds.size < wfDataset.entities.sources.length);
+  const expected = wfDataset.entities.items.filter((it) => it.source_id !== null && activeIds.has(it.source_id));
+  assert.ok(expected.length > 0 && expected.length < wfDataset.entities.items.length);
+
+  const res = getWF('/api/feed');
+  assert.equal(res.status, 200);
+  assert.deepEqual(ids(res), expected.map((it) => it.id));
+  assert.equal(res.headers['x-total-count'], String(expected.length));
+  assert.ok(res.body.every((it) => it.source_id !== null && activeIds.has(it.source_id)));
+
+  // No query param exists for the resolved filter: passing ?source_id=1 is ignored
+  const withParam = getWF('/api/feed?source_id=1');
+  assert.equal(withParam.status, 200);
+  assert.deepEqual(ids(withParam), expected.map((it) => it.id));
+  assert.equal(withParam.headers['x-atrezzo-ignored'], 'source_id');
+
+  // head=true counts only the resolved rows
+  const head = getWF('/api/feed?head=true');
+  assert.equal(head.status, 200);
+  assert.equal(head.headers['x-total-count'], String(expected.length));
+
+  // Multi-key + list value in `where`
+  const coreIds = new Set(wfDataset.entities.sources.filter((s) => s.active === true && ['core', 'extra'].includes(s.tier)).map((s) => s.id));
+  const coreExpected = wfDataset.entities.items.filter((it) => it.source_id !== null && coreIds.has(it.source_id));
+  assert.deepEqual(ids(getWF('/api/core-feed')), coreExpected.map((it) => it.id));
+
+  // Empty `where` match answers [] with X-Total-Count: 0
+  const empty = getWF('/api/empty-feed');
+  assert.equal(empty.status, 200);
+  assert.deepEqual(empty.body, []);
+  assert.equal(empty.headers['x-total-count'], '0');
+});
+
+test('world-resolved filter combines with normal query filters and sort', () => {
+  const activeIds = new Set(wfDataset.entities.sources.filter((s) => s.active === true).map((s) => s.id));
+  const expectedLive = wfDataset.entities.items.filter((it) => it.source_id !== null && activeIds.has(it.source_id) && it.status === 'live');
+  assert.ok(expectedLive.length > 0);
+
+  const r = getWF('/api/combined?status=live');
+  assert.equal(r.status, 200);
+  assert.deepEqual(ids(r), expectedLive.map((it) => it.id));
+  assert.equal(r.headers['x-total-count'], String(expectedLive.length));
+  assert.equal(r.headers['x-atrezzo-ignored'], undefined);
+
+  const rEq = getWF('/api/combined?status=eq.live&sort_by=id&order_by=desc');
+  assert.equal(rEq.status, 200);
+  assert.deepEqual(ids(rEq), [...expectedLive.map((it) => it.id)].reverse());
+
+  // Short-form scenarios keep their exact normalized filters and hash
+  const shortNorm = normalizeScenario(parseYaml(SCENARIO, 's.yaml'), 's.yaml');
+  assert.deepEqual(shortNorm.endpoints[0].filters, ['status', 'customer_id']);
+  assert.equal(shortNorm.endpoints[0].worldFilters, undefined);
+  assert.equal(scenarioHash(shortNorm), dataset.hash);
+});
+
+test('world-resolved filter combines with pagination and keeps accurate X-Total-Count', () => {
+  const activeIds = new Set(wfDataset.entities.sources.filter((s) => s.active === true).map((s) => s.id));
+  const expectedIds = wfDataset.entities.items
+    .filter((it) => it.source_id !== null && activeIds.has(it.source_id))
+    .map((it) => it.id);
+  assert.ok(expectedIds.length > 3);
+
+  const p1 = getWF('/api/combined?limit=3&offset=0');
+  assert.equal(p1.status, 200);
+  assert.equal(p1.headers['x-total-count'], String(expectedIds.length));
+  assert.deepEqual(ids(p1), expectedIds.slice(0, 3));
+
+  const p2 = getWF('/api/combined?limit=3&offset=3');
+  assert.equal(p2.status, 200);
+  assert.equal(p2.headers['x-total-count'], String(expectedIds.length));
+  assert.deepEqual(ids(p2), expectedIds.slice(3, 6));
+
+  // Combined with query filter + pagination
+  const liveIds = wfDataset.entities.items
+    .filter((it) => it.source_id !== null && activeIds.has(it.source_id) && it.status === 'live')
+    .map((it) => it.id);
+  const pl = getWF('/api/combined?status=live&limit=2&offset=1');
+  assert.equal(pl.status, 200);
+  assert.equal(pl.headers['x-total-count'], String(liveIds.length));
+  assert.deepEqual(ids(pl), liveIds.slice(1, 3));
+});
+
+test('world-resolved filter validation: undeclared from, non-FK field, mismatched FK, and unknown where field fail', () => {
+  const parseErr = (filterLine) => {
+    const yaml = `name: bad-wf
+seed: 1
+world:
+  groups: 2
+  sources: { total: 3, fields: { name: string, active: boolean } }
+  items: { total: 6, ref: [sources, groups], fields: { title: string, status: [draft, live] } }
+endpoints:
+  - path: /api/items
+    entity: items
+    filters: ${filterLine}
+`;
+    try {
+      normalizeScenario(parseYaml(yaml, 'bad.yaml'), 'bad.yaml');
+    } catch (e) {
+      assert.ok(e instanceof AtrezzoError);
+      assert.equal(e.exitCode, 3);
+      return e.message;
+    }
+    assert.fail(`expected scenario validation error for: ${filterLine}`);
+  };
+
+  assert.match(parseErr('{ source_id: { from: unknown, where: { active: true } } }'), /filters\.source_id\.from": "unknown" is not declared in world/);
+  assert.match(parseErr('{ status: { from: sources, where: { active: true } } }'), /filters\.status": "status" is not a foreign key of "items"/);
+  assert.match(parseErr('{ bogus_id: { from: sources, where: { active: true } } }'), /filters\.bogus_id": "bogus_id" is not a foreign key of "items"/);
+  assert.match(parseErr('{ group_id: { from: sources, where: { active: true } } }'), /filters\.group_id\.from": "group_id" is a foreign key to "groups", not "sources"/);
+  assert.match(parseErr('{ source_id: { from: sources, where: { missing_col: true } } }'), /filters\.source_id\.where\.missing_col": field "missing_col" does not exist in "sources"/);
+  assert.match(parseErr('{ source_id: { from: sources, where: {} } }'), /filters\.source_id\.where": required; must be a non-empty map/);
+  assert.match(parseErr('{ source_id: { from: sources } }'), /filters\.source_id\.where": required; must be a non-empty map/);
+  assert.match(parseErr('{ source_id: { where: { active: true } } }'), /filters\.source_id\.from": required; a declared world entity/);
+  assert.match(parseErr('{ source_id: { from: sources, where: { active: true }, extra: 1 } }'), /filters\.source_id\.extra": unknown field/);
+  assert.match(parseErr('{ source_id: { from: sources, where: { active: [] } } }'), /filters\.source_id\.where\.active": must be a scalar value or a non-empty list/);
 });
