@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.12.0
+
+**Conditional fields in `world` (`{ default, when, value }`).** An entity field in `fields` can declare `{ default: [2], when: { is_archived: true }, value: [0] }` so rows matching `when` on other fields of the same row deterministically override their drawn `default` value before the world is finalized. Validation checks that `when` references existing fields of the same entity (without cycles), that `value` matches the field's type, and rejects impossible conditions (such as comparing a `boolean` field to a non-boolean or an enum to an undeclared value); scenarios without conditional fields keep their exact normalized form and hash. Documented in `references/scenario.md`, covered in `tests/world.test.mjs`.
+
 ### 0.11.0
 
 **Dynamic sorting per endpoint (`sorts`).** An endpoint can declare `sorts: { by: sort_by, order: order_by, fields: [id, title, created_at] }` (with configurable query parameter names and an explicit field allowlist). The contract engine resolves `order=asc|desc`, `-field` / `+field`, and `field.asc` / `field.desc` before pagination and `shape: object`, consumes the declared parameters so they leave `X-Atrezzo-Ignored`, and rejects any disallowed field or invalid direction loudly (`400`, never silent). Scenario validation checks `fields` against the entity and rejects parameter collisions; endpoints without `sorts` keep their exact behaviour and scenario hash. Documented in `references/scenario.md`, covered in `tests/contract.test.mjs` and `tests/scenario.test.mjs`.
