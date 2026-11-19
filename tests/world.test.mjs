@@ -243,7 +243,7 @@ test('conditional field: validation errors', () => {
     bad('      is_archived: boolean\n      count: { default: integer, when: { is_archived: true }, value: [1.5] }'),
     /boards\.fields\.count\.value": value 1\.5 is incompatible with type integer/,
   );
-  // Self-reference and cycle
+  // Self-reference and cycles (2-node and 3-node)
   assert.match(
     bad('      max_permission: { default: [2], when: { max_permission: 2 }, value: [0] }'),
     /boards\.fields\.max_permission\.when\.max_permission": field "max_permission" cannot reference itself/,
@@ -251,6 +251,31 @@ test('conditional field: validation errors', () => {
   assert.match(
     bad('      a: { default: [1, 2], when: { b: 1 }, value: [2] }\n      b: { default: [1, 2], when: { a: 2 }, value: [1] }'),
     /cycle in conditional fields/,
+  );
+  assert.match(
+    bad('      a: { default: [1, 2], when: { b: 1 }, value: [2] }\n      b: { default: [1, 2], when: { c: 2 }, value: [1] }\n      c: { default: [1, 2], when: { a: 1 }, value: [2] }'),
+    /cycle in conditional fields: a → b → c → a/,
+  );
+  // Out-of-range id and foreign key bounds
+  assert.match(
+    bad('      flag: { default: boolean, when: { id: 6 }, value: true }'),
+    /boards\.fields\.flag\.when\.id": value 6 is impossible for field "id" \(integer 1\.\.5\)/,
+  );
+  assert.match(
+    bad('      flag: { default: boolean, when: { id: 0 }, value: true }'),
+    /boards\.fields\.flag\.when\.id": value 0 is impossible for field "id" \(integer 1\.\.5\)/,
+  );
+  assert.throws(
+    () => scenario(SCENARIO.replace('  users: 2', '  users: 2\n  boards: { total: 4, ref: customers, fields: { flag: { default: boolean, when: { customer_id: 999 }, value: true } } }')),
+    (e) => e instanceof AtrezzoError && /when\.customer_id": value 999 is impossible for field "customer_id" \(integer 1\.\.3 \(customers\)\)/.test(e.issues.join('\n')),
+  );
+  assert.throws(
+    () => scenario(SCENARIO.replace('  users: 2', '  users: 2\n  boards: { total: 4, ref: customers, fields: { flag: { default: boolean, when: { customer_id: [1, 4] }, value: true } } }')),
+    (e) => e instanceof AtrezzoError && /when\.customer_id": value 4 is impossible for field "customer_id" \(integer 1\.\.3 \(customers\)\)/.test(e.issues.join('\n')),
+  );
+  assert.throws(
+    () => scenario(SCENARIO.replace('  users: 2', '  users: 2\n  boards: { total: 4, ref: customers, fields: { flag: { default: boolean, when: { customer_id: null }, value: true } } }')),
+    (e) => e instanceof AtrezzoError && /when\.customer_id": value null is impossible for field "customer_id" \(integer 1\.\.3 \(customers\)\)/.test(e.issues.join('\n')),
   );
   // Missing keys / unknown keys / empty maps
   assert.match(
@@ -261,4 +286,35 @@ test('conditional field: validation errors', () => {
     bad('      is_archived: boolean\n      max_permission: { default: [2], when: { is_archived: true }, value: [0], extra: 1 }'),
     /boards\.fields\.max_permission\.extra": unknown field/,
   );
+});
+
+test('conditional field: in-bounds id, foreign key, and acyclic multi-step chain work deterministically', () => {
+  const yaml = SCENARIO.replace(
+    '  users: 2',
+    `  users: 2
+  boards:
+    total: 4
+    ref: customers
+    fields:
+      tier: [basic, pro]
+      a: { default: [0], when: { id: [1, 4], customer_id: 3 }, value: [10] }
+      b: { default: [0], when: { a: 10 }, value: [20] }
+      c: { default: [0], when: { a: 10, b: 20, tier: pro }, value: [30] }
+      d: { default: [0], when: { customer_id: null }, value: [99] }
+    nulls: { customer_id: 1 }`,
+  );
+  const w = generateWorld(scenario(yaml));
+  for (const row of w.entities.boards) {
+    if (row.customer_id === null) assert.equal(row.d, 99);
+    else assert.equal(row.d, 0);
+    if ((row.id === 1 || row.id === 4) && row.customer_id === 3) {
+      assert.equal(row.a, 10);
+      assert.equal(row.b, 20);
+      assert.equal(row.c, row.tier === 'pro' ? 30 : 0);
+    } else {
+      assert.equal(row.a, 0);
+      assert.equal(row.b, 0);
+      assert.equal(row.c, 0);
+    }
+  }
 });

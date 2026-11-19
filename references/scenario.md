@@ -100,7 +100,7 @@ world:
 - `when` (required): non-empty map `<field>: <value>` (or `<field>: [<values>]`). Matches when every listed field of the row equals the given value (or one of the given values).
 - `value` (required): scalar or non-empty list of scalar values compatible with `default`. Single-item lists assign that value directly; multi-item lists pick deterministically per row from a dedicated stream (`when:<entity>.<field>`).
 - Evaluation order: runs deterministically after normal field draws, `values_order: cycle`, `seed_first`, and `nulls` on other fields (explicit `nulls` on the target field itself are preserved). Without conditional fields, scenario normalization and hashes are unchanged.
-- Validation (scenario error): every key in `when` must reference another existing field of the same entity (no self-references or cycles); `value` must be compatible with `default`'s type; impossible conditions (such as matching a `boolean` field against a non-boolean, or an enum/distribution field against an undeclared value) are rejected.
+- Validation (scenario error): every key in `when` must reference another existing field of the same entity (no self-references or cycles); `value` must be compatible with `default`'s type; impossible conditions (such as matching a `boolean` field against a non-boolean, an enum/distribution field against an undeclared value, or an `id`/foreign key outside `1..total`) are rejected.
 
 #### `derive`: a foreign key copied through another one
 

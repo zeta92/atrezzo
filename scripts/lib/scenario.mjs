@@ -246,10 +246,19 @@ function isValueCompatibleWithDefault(v, def) {
   return false;
 }
 
-function isWhenValuePossible(v, condField, spec) {
+function fkTargetEntity(spec, condField) {
+  return spec.refs.find((r) => templateFor(r).fk === condField) ?? null;
+}
+
+function isWhenValuePossible(v, condField, spec, byName) {
+  const refEntity = fkTargetEntity(spec, condField);
   if (v === null) {
     if (condField === 'id') return false;
     if ((spec.nulls?.[condField] ?? 0) > 0) return true;
+    if (refEntity) {
+      const derived = spec.derive?.[condField];
+      return Boolean(derived && (byName[derived.from]?.nulls?.[derived.field] ?? 0) > 0);
+    }
     if (spec.distribution && condField === spec.distribution.field) return false;
     if (spec.pools && Object.hasOwn(spec.pools, condField)) return spec.pools[condField].includes(null);
     const entry = spec.fields?.[condField];
@@ -257,12 +266,17 @@ function isWhenValuePossible(v, condField, spec) {
     if (Array.isArray(entry)) return entry.includes(null);
     return false;
   }
-  if (condField === 'id') return Number.isInteger(v) && v >= 1;
+  if (condField === 'id') return Number.isInteger(v) && v >= 1 && v <= spec.count;
+  if (refEntity) {
+    const targetCount = byName[refEntity]?.count ?? 0;
+    return Number.isInteger(v) && v >= 1 && v <= targetCount;
+  }
   if (spec.distribution && condField === spec.distribution.field) {
     return typeof v === 'string' && Object.hasOwn(spec.distribution.counts, v);
   }
+  const amountField = templateFor(spec.name).amountField || 'amount';
   if (spec.amount && condField === 'currency') return v === spec.amount.currency;
-  if (spec.amount && condField === 'amount') {
+  if (spec.amount && condField === amountField) {
     return typeof v === 'number' && Number.isFinite(v) && v >= spec.amount.min && v <= spec.amount.max;
   }
   if (spec.pools && Object.hasOwn(spec.pools, condField)) return spec.pools[condField].includes(v);
@@ -271,16 +285,20 @@ function isWhenValuePossible(v, condField, spec) {
     const inType = (t) => (Array.isArray(t) ? t.includes(v) : isScalarCompatibleWithType(v, t));
     return isObj(entry) ? (inType(entry.default) || entry.value.includes(v)) : inType(entry);
   }
-  const fks = spec.refs.map((r) => templateFor(r).fk);
-  if (fks.includes(condField)) return Number.isInteger(v) && v >= 1;
   return false;
 }
 
-function describeTargetField(condField, spec) {
-  if (condField === 'id') return 'integer >= 1';
+function describeTargetField(condField, spec, byName) {
+  if (condField === 'id') return spec.count >= 1 ? `integer 1..${spec.count}` : 'no rows (total is 0)';
+  const refEntity = fkTargetEntity(spec, condField);
+  if (refEntity) {
+    const targetCount = byName[refEntity]?.count ?? 0;
+    return targetCount >= 1 ? `integer 1..${targetCount} (${refEntity})` : `no rows in "${refEntity}" (total is 0)`;
+  }
   if (spec.distribution && condField === spec.distribution.field) return `distribution: ${Object.keys(spec.distribution.counts).join(', ')}`;
+  const amountField = templateFor(spec.name).amountField || 'amount';
   if (spec.amount && condField === 'currency') return JSON.stringify(spec.amount.currency);
-  if (spec.amount && condField === 'amount') return `number ${spec.amount.min}..${spec.amount.max}`;
+  if (spec.amount && condField === amountField) return `number ${spec.amount.min}..${spec.amount.max}`;
   if (spec.pools && Object.hasOwn(spec.pools, condField)) return `values: ${JSON.stringify(spec.pools[condField])}`;
   if (spec.fields && Object.hasOwn(spec.fields, condField)) {
     const entry = spec.fields[condField];
@@ -290,7 +308,7 @@ function describeTargetField(condField, spec) {
   return 'integer >= 1';
 }
 
-function validateConditionals(spec, f, issues) {
+function validateConditionals(spec, f, byName, issues) {
   if (!spec.fields) return;
   const allFields = entityFields(spec);
   const condEntries = Object.entries(spec.fields).filter(([, entry]) => isObj(entry));
@@ -317,8 +335,8 @@ function validateConditionals(spec, f, issues) {
       }
       const candidates = Array.isArray(expected) ? expected : [expected];
       for (const val of candidates) {
-        if (!isWhenValuePossible(val, ck, spec)) {
-          issues.add(cff, `value ${JSON.stringify(val)} is impossible for field "${ck}" (${describeTargetField(ck, spec)})`);
+        if (!isWhenValuePossible(val, ck, spec, byName)) {
+          issues.add(cff, `value ${JSON.stringify(val)} is impossible for field "${ck}" (${describeTargetField(ck, spec, byName)})`);
         }
       }
     }
@@ -486,7 +504,7 @@ function normalizeWorld(world, issues) {
         else spec.nulls[k] = n;
       }
     }
-    validateConditionals(spec, f, issues);
+    validateConditionals(spec, f, byName, issues);
   }
   return specs.map(({ spec }) => spec);
 }
