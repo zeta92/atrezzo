@@ -134,4 +134,5 @@ test('sorts validation: invalid fields, types, duplicates and parameter collisio
   assert.match(errorOf(() => norm(inject('sorts: { by: sort_by, order: sort_by, fields: [id] }'))).message, /sorts\.order": must differ from "by"/);
   assert.match(errorOf(() => norm(inject('sorts: { by: status, fields: [id] }'))).message, /sorts\.by": parameter "status" conflicts with a declared filter/);
   assert.match(errorOf(() => norm(inject('sorts: { by: limit, fields: [id] }'))).message, /sorts\.by": parameter "limit" conflicts with a pagination parameter/);
+  assert.match(errorOf(() => norm(inject('sort: []'))).message, /endpoints\[0\]\.sort": must be a field name or a non-empty list/);
 });

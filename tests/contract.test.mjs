@@ -280,3 +280,14 @@ test('without sorts: query sort params keep being ignored and static sort applie
   assert.equal(r2.headers['x-atrezzo-ignored'], 'sort_by,order_by');
   assert.deepEqual(ids(r2), Array.from({ length: 40 }, (_, i) => i + 1));
 });
+
+test('sorts: order without by on an endpoint with empty sort returns 400 instead of throwing', () => {
+  const emptySortDataset = {
+    ...sortedDataset,
+    endpoints: [{ ...sortedDataset.endpoints[0], sort: [] }],
+  };
+  const eng = createEngine(emptySortDataset);
+  const res = eng.handle({ method: 'GET', pathname: '/api/orders', query: new URLSearchParams('order_by=desc') });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /cannot apply "order_by" without "sort_by"/);
+});

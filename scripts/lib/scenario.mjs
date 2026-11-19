@@ -403,6 +403,10 @@ export const MAX_LATENCY = 60000;
 function parseSort(raw, fields, f, issues) {
   if (raw === undefined) return [{ field: 'id', dir: 'asc' }];
   const list = Array.isArray(raw) ? raw : [raw];
+  if (!list.length) {
+    issues.add(`${f}.sort`, 'must be a field name or a non-empty list of field names');
+    return [];
+  }
   const out = [];
   list.forEach((s, i) => {
     if (typeof s !== 'string' || !s) { issues.add(`${f}.sort[${i}]`, 'must be a field name, prefixed with "-" for descending'); return; }

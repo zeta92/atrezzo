@@ -23,12 +23,13 @@ function parseNonNegInt(raw, name) {
  * Unknown fields or invalid directions return `{ error }` so callers fail loudly with 400.
  */
 function resolveSort(ep, params, scenario) {
-  if (!ep.sorts) return { sort: ep.sort };
+  const fallback = ep.sort ?? [];
+  if (!ep.sorts) return { sort: fallback };
   const rawBy = params.get(ep.sorts.by);
   const rawOrder = ep.sorts.order ? params.get(ep.sorts.order) : null;
   const hasBy = rawBy !== null && rawBy !== '';
   const hasOrder = rawOrder !== null && rawOrder !== '';
-  if (!hasBy && !hasOrder) return { sort: ep.sort };
+  if (!hasBy && !hasOrder) return { sort: fallback };
 
   let orderDir = null;
   if (hasOrder) {
@@ -40,7 +41,10 @@ function resolveSort(ep, params, scenario) {
   }
 
   if (!hasBy) {
-    return { sort: [{ field: ep.sort[0].field, dir: orderDir }, ...ep.sort.slice(1)] };
+    if (!fallback.length) {
+      return { error: `cannot apply "${ep.sorts.order}" without "${ep.sorts.by}" on ${ep.path} in scenario "${scenario}" (endpoint has no default sort)` };
+    }
+    return { sort: [{ field: fallback[0].field, dir: orderDir }, ...fallback.slice(1)] };
   }
 
   const out = [];
