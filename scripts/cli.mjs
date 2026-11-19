@@ -179,6 +179,7 @@ function cmdWorld({ pos, flags }) {
     if (ep.filters.length) bits.push(`filters: ${ep.filters.join(',')}`);
     if (ep.pagination) bits.push(`pagination: ${ep.pagination.limit}/${ep.pagination.page ?? ep.pagination.offset}${ep.pagination.page ? ' (by page)' : ''}`);
     bits.push(`sort: ${ep.sort.map((s) => (s.dir === 'desc' ? '-' : '') + s.field).join(',')}`);
+    if (ep.sorts) bits.push(`sorts: ${ep.sorts.by}${ep.sorts.order ? `/${ep.sorts.order}` : ''} (${ep.sorts.fields.join(',')})`);
     if (ep.pick) bits.push(`envelope: ${ep.pick}`);
     if (ep.params) bits.push(`params: ${ep.params.map((x) => `:${x.name}→${x.field ?? 'any'}`).join(',')}`);
     if (ep.embed) bits.push(`embed: ${embedLabel(ep.embed)}`);

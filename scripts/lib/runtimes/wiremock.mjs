@@ -74,7 +74,11 @@ export function combinations(ep, dataset, requests = []) {
     }
     if (!sizes.length) skipped.push('pagination without default_limit/max_limit: only the pages flows request');
   }
-  const known = new Set([...ep.filters, ...(ep.pagination ? [ep.pagination.limit, ep.pagination.page ?? ep.pagination.offset] : [])]);
+  const known = new Set([
+    ...ep.filters,
+    ...(ep.pagination ? [ep.pagination.limit, ep.pagination.page ?? ep.pagination.offset] : []),
+    ...(ep.sorts ? [ep.sorts.by, ...(ep.sorts.order ? [ep.sorts.order] : [])] : []),
+  ]);
   for (const r of requests) {
     const u = new URL(r, 'http://x');
     if ((u.pathname.replace(/\/+$/, '') || '/') !== ep.path) continue;

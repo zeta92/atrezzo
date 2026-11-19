@@ -124,6 +124,16 @@ export function openapiDocument(dataset, config) {
       if (ep.pagination.page) parameters.push({ name: ep.pagination.page, in: 'query', required: false, schema: { type: 'integer', minimum: 1, default: 1 } });
       else parameters.push({ name: ep.pagination.offset, in: 'query', required: false, schema: { type: 'integer', minimum: 0, default: 0 } });
     }
+    if (ep.sorts) {
+      parameters.push({
+        name: ep.sorts.by, in: 'query', required: false,
+        description: `Sort field (${ep.sorts.fields.join(', ')}); prefix "-" or suffix ".desc" for descending.`,
+        schema: { type: 'string' },
+      });
+      if (ep.sorts.order) {
+        parameters.push({ name: ep.sorts.order, in: 'query', required: false, schema: { type: 'string', enum: ['asc', 'desc'] } });
+      }
+    }
     const item = itemSchema(ep, dataset, names);
     const list = { type: 'array', items: item };
     const schema = ep.shape === 'envelope'
@@ -163,7 +173,7 @@ export function openapiDocument(dataset, config) {
           content: { 'application/json': { schema, examples } },
         },
       };
-    if (ep.pagination) responses[400] = { description: 'Non-integer pagination parameter', content: { 'application/json': { schema: errorSchema } } };
+    if (ep.pagination || ep.sorts) responses[400] = { description: 'Invalid pagination or sort query parameter', content: { 'application/json': { schema: errorSchema } } };
     paths[oasPath] = { get: { operationId: `list_${op}`, summary: `${ep.entity} (atrezzo projection)`, parameters, responses } };
     if (ep.detail) {
       const first = rows[0];

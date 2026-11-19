@@ -17,6 +17,63 @@ function parseNonNegInt(raw, name) {
   return { value: Number.parseInt(raw, 10) };
 }
 
+/**
+ * Dynamic sort from `ep.sorts` (`{ by, order, fields }`). Supports `?by=field&order=asc|desc`,
+ * `?by=-field` (or `+field`), `?by=field.asc|desc`, and comma-separated multi-field lists.
+ * Unknown fields or invalid directions return `{ error }` so callers fail loudly with 400.
+ */
+function resolveSort(ep, params, scenario) {
+  if (!ep.sorts) return { sort: ep.sort };
+  const rawBy = params.get(ep.sorts.by);
+  const rawOrder = ep.sorts.order ? params.get(ep.sorts.order) : null;
+  const hasBy = rawBy !== null && rawBy !== '';
+  const hasOrder = rawOrder !== null && rawOrder !== '';
+  if (!hasBy && !hasOrder) return { sort: ep.sort };
+
+  let orderDir = null;
+  if (hasOrder) {
+    const lower = rawOrder.toLowerCase();
+    if (lower !== 'asc' && lower !== 'desc') {
+      return { error: `"${ep.sorts.order}" must be "asc" or "desc"; got "${rawOrder}"` };
+    }
+    orderDir = lower;
+  }
+
+  if (!hasBy) {
+    return { sort: [{ field: ep.sort[0].field, dir: orderDir }, ...ep.sort.slice(1)] };
+  }
+
+  const out = [];
+  for (const part of rawBy.split(',')) {
+    const item = part.trim();
+    if (!item) return { error: `invalid "${ep.sorts.by}" value "${rawBy}"` };
+    let dir = null;
+    let rest = item;
+    if (item.startsWith('-')) { dir = 'desc'; rest = item.slice(1); }
+    else if (item.startsWith('+')) { dir = 'asc'; rest = item.slice(1); }
+    const dot = rest.indexOf('.');
+    let field = rest;
+    if (dot !== -1) {
+      if (dir !== null) return { error: `invalid sort "${item}" in "${ep.sorts.by}": cannot combine "${item[0]}" prefix with "." direction` };
+      field = rest.slice(0, dot);
+      const rawDir = rest.slice(dot + 1);
+      const lowerDir = rawDir.toLowerCase();
+      if (lowerDir !== 'asc' && lowerDir !== 'desc') {
+        return { error: `sort order in "${item}" must be "asc" or "desc"; got "${rawDir}"` };
+      }
+      dir = lowerDir;
+    }
+    if (!ep.sorts.fields.includes(field)) {
+      return { error: `sort field "${field}" is not allowed on ${ep.path} in scenario "${scenario}" (allowed: ${ep.sorts.fields.join(', ')})` };
+    }
+    if (dir !== null && orderDir !== null && dir !== orderDir) {
+      return { error: `conflicting sort order for "${field}": "${item}" vs "${ep.sorts.order}=${rawOrder}"` };
+    }
+    out.push({ field, dir: dir ?? orderDir ?? 'asc' });
+  }
+  return { sort: out };
+}
+
 // PostgREST operator prefixes: `eq.`, `neq.`, `gt.`, `gte.`, `lt.`, `lte.`, `like.`, `ilike.`,
 // `is.` (null/true/false) and `in.(a,b,c)`. A value with no prefix is an equality, and a
 // comma-separated list is still an OR of equalities (`?status=issue,pending`).
@@ -287,7 +344,10 @@ export function createEngine(dataset) {
     }
 
     const ignored = [];
-    const reserved = ep.pagination ? [ep.pagination.limit, ep.pagination.page ?? ep.pagination.offset] : [];
+    const reserved = [
+      ...(ep.pagination ? [ep.pagination.limit, ep.pagination.page ?? ep.pagination.offset] : []),
+      ...(ep.sorts ? [ep.sorts.by, ...(ep.sorts.order ? [ep.sorts.order] : [])] : []),
+    ];
     let result = rows;
     for (const [key, raw] of params) {
       if (reserved.includes(key)) continue;
@@ -296,6 +356,9 @@ export function createEngine(dataset) {
       else if (key === 'head' && (raw === 'true' || raw === 'false')) continue;
       else ignored.push(key);
     }
+
+    const sortRes = resolveSort(ep, params, dataset.scenario);
+    if (sortRes.error) return json(400, { error: sortRes.error });
 
     // Count only: `head=true`, or a HEAD request with `Prefer: count=exact`. Empty body and
     // `Content-Range: 0-<n-1>/<n>` over every row that passes the filters (pagination does not apply).
@@ -308,7 +371,7 @@ export function createEngine(dataset) {
 
     const indexed = result.map((r, i) => [r, i]);
     indexed.sort(([a, ia], [b, ib]) => {
-      for (const { field, dir } of ep.sort) {
+      for (const { field, dir } of sortRes.sort) {
         const c = compare(a[field], b[field]);
         if (c !== 0) return dir === 'desc' ? -c : c;
       }

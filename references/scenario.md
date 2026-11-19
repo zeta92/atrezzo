@@ -27,6 +27,7 @@ endpoints:
     filters: [status, customer_id]    # ?status=issue  ·  ?status=pending,issue
     pagination: { param_limit: limit, param_offset: offset, default_limit: 50, max_limit: 100 }
     sort: -created_at                 # or a list: [status, -amount]; default id
+    sorts: { by: sort_by, order: order_by, fields: [id, status, created_at] }   # optional dynamic sort
     include: [customers]              # embeds the parent as "customer"
     shape: array                      # array (default) | envelope → { data, total, limit, offset } | object → first row
     detail: true                      # also generates /api/orders/:id (default true)
@@ -160,10 +161,34 @@ Generator guarantees:
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields; a map also binds path parameters), `pagination`, `sort`, `include` (referenced entities only), `embed` (entities that reference this one, nestable), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
+`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
 
 - Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
 - `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` uses `data`). A single key, no nested paths.
+
+#### Dynamic sorting (`sorts`)
+
+`sort` sets the endpoint's default order; `sorts` lets the client choose it at request time from an explicit allowlist of fields:
+
+```yaml
+endpoints:
+  - path: /api/orders
+    entity: orders
+    sort: -created_at                                          # default when the request sends no sort param
+    sorts: { by: sort_by, order: order_by, fields: [id, status, created_at] }
+  - path: /api/items
+    entity: items
+    sorts: { by: sort, fields: [id, name, created_at] }        # single param: ?sort=-created_at or ?sort=name
+  - path: /api/tasks
+    entity: tasks
+    sorts: { by: order, fields: [id, created_at] }             # PostgREST style: ?order=created_at.desc
+```
+
+- **`by`** (default `sort_by`): query parameter naming the field(s) to sort by. Accepts `field`, `-field` / `+field`, `field.asc` / `field.desc`, and comma-separated lists (`status.asc,created_at.desc`).
+- **`order`** (optional): query parameter naming the direction (`asc` or `desc`, case-insensitive) when sent separately (`?sort_by=id&order_by=desc`); omitted when direction lives in `by` (`-field` or `field.desc`). Defaults to `asc` when `by` is sent without direction, or applies to `sort[0]` when only `order` is sent.
+- **`fields`** (required, non-empty list): allowed fields of the entity. Declared `by`/`order` parameters are consumed by sorting (not listed in `X-Atrezzo-Ignored`), and sorting runs **before** pagination and `shape: object`.
+- **No silent errors**: in the scenario, an unknown entity field in `fields`, missing/empty `fields`, duplicate field, `by == order`, or collision with `filters`/`pagination` is a scenario error (exit 3). At request time, a field outside `fields`, an invalid direction (anything other than `asc`/`desc`), or a conflicting direction (`?sort_by=-id&order_by=asc`) answers `400 { error: ... }`.
+- Without `sorts:`, behaviour and scenario hashes are unchanged (client sort parameters stay in `X-Atrezzo-Ignored`).
 
 #### Paths with parameters (`/projects/:project_id/views/:view_id/tasks`)
 
@@ -317,7 +342,7 @@ endpoints:
 
 Projection semantics (identical in `serve` and the MSW handlers, same `runtime.mjs` file):
 1. Equality filters; a comma means any of the values; `null` matches nulls.
-2. Sorted by `sort`, nulls last, ties broken by original position (stable).
+2. Sorted by `sorts` query parameters when declared and sent (else the endpoint's `sort`), nulls last, ties broken by original position (stable).
 3. `X-Total-Count` = total after filters, before pagination.
 4. `limit` above the total ⇒ everything; out-of-range `offset` ⇒ `[]`; non-integer values ⇒ 400.
 5. Undeclared parameters are ignored and listed in `X-Atrezzo-Ignored`.
