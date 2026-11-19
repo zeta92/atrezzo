@@ -178,6 +178,10 @@ const wantsCount = (headers) => (headerValue(headers, 'prefer') ?? '').split(','
 
 export function createEngine(dataset) {
   const routes = dataset.endpoints.map((ep) => ({ ...ep }));
+  const authUser = dataset.auth?.user ?? null;
+  const currentUser = authUser
+    ? (dataset.entities[authUser.entity] ?? []).find((r) => r.id === authUser.id) ?? null
+    : null;
 
   /**
    * Counted relations asked in `select`: [{ key, byParent }] for every `child(count)` whose child
@@ -317,8 +321,21 @@ export function createEngine(dataset) {
     return rows.filter((r) => bound.every((p) => r[p.field] !== null && r[p.field] !== undefined && String(r[p.field]) === params[p.name]));
   }
 
+  function matchesWhereValue(actual, expected) {
+    if (typeof expected === 'string' && expected.startsWith('$user.')) {
+      if (!currentUser) return false;
+      const val = currentUser[expected.slice(6)];
+      return val !== null && val !== undefined && actual === val;
+    }
+    return actual === expected;
+  }
+
   function matchesWhere(row, cond) {
-    return Object.entries(cond).every(([k, expected]) => (Array.isArray(expected) ? expected.includes(row[k]) : row[k] === expected));
+    return Object.entries(cond).every(([k, expected]) => (
+      Array.isArray(expected)
+        ? expected.some((v) => matchesWhereValue(row[k], v))
+        : matchesWhereValue(row[k], expected)
+    ));
   }
 
   /** Rows whose FK points to rows in `from` matching `where` (resolved against the world, no query param). */
@@ -331,6 +348,19 @@ export function createEngine(dataset) {
         if (matchesWhere(target, wf.where)) allowedIds.add(target.id);
       }
       out = out.filter((r) => r[wf.field] !== null && r[wf.field] !== undefined && allowedIds.has(r[wf.field]));
+    }
+    return out;
+  }
+
+  /** Rows matching `$user.<field>` filters resolved from the seeded auth user (no query param). */
+  function byUserFilters(rows, ep) {
+    if (!ep.userFilters?.length) return rows;
+    if (!currentUser) return [];
+    let out = rows;
+    for (const uf of ep.userFilters) {
+      const expected = currentUser[uf.userField];
+      if (expected === null || expected === undefined) return [];
+      out = out.filter((r) => r[uf.field] === expected);
     }
     return out;
   }
@@ -370,7 +400,7 @@ export function createEngine(dataset) {
       ...(ep.pagination ? [ep.pagination.limit, ep.pagination.page ?? ep.pagination.offset] : []),
       ...(ep.sorts ? [ep.sorts.by, ...(ep.sorts.order ? [ep.sorts.order] : [])] : []),
     ];
-    let result = byWorldFilters(rows, ep);
+    let result = byUserFilters(byWorldFilters(rows, ep), ep);
     for (const [key, raw] of params) {
       if (reserved.includes(key)) continue;
       if (ep.filters.includes(key)) result = result.filter((r) => matchesFilter(r[key], raw));
@@ -418,7 +448,11 @@ export function createEngine(dataset) {
       }
       if (!result.length) {
         const q = [...params].filter(([k]) => ep.filters.includes(k)).map(([k, v]) => `${k}=${v}`).join('&');
-        const label = q || (ep.worldFilters?.length ? 'world filter' : '(no filter)');
+        const resolved = [
+          ...(ep.worldFilters?.length ? ['world filter'] : []),
+          ...(ep.userFilters?.length ? ['user filter'] : []),
+        ].join(' and ');
+        const label = q || resolved || '(no filter)';
         return json(404, { error: `no ${ep.entity} matches ${label}${where(ep, m.params)} in scenario "${dataset.scenario}"` }, h);
       }
       return json(200, answerRow(result[0], ep, counts), h);
@@ -456,5 +490,5 @@ export function createEngine(dataset) {
     return json(200, page, out);
   }
 
-  return { match, handle, dataset };
+  return { match, handle, dataset, currentUser: currentUser ? { ...currentUser } : null };
 }

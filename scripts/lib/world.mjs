@@ -331,7 +331,7 @@ export function generateWorld(scenario) {
     };
     entities[spec.name] = rows;
   }
-  return {
+  const dataset = {
     atrezzo: 1,
     scenario: scenario.name,
     seed: scenario.seed,
@@ -341,6 +341,8 @@ export function generateWorld(scenario) {
     endpoints: scenario.endpoints,
     entities,
   };
+  if (scenario.auth) dataset.auth = scenario.auth;
+  return dataset;
 }
 
 /** Referential integrity check: returns a list of violations (empty = OK). */

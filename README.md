@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.14.0
+
+**Seeded current user (`auth` and `$user.<field>` filters).** A scenario can declare `auth: { user: { entity: authors, id: 1 } }` at the root to designate a seeded row from `world` as the current session user. The projection engine exposes that row as `currentUser` and resolves `$user.<field>` tokens in endpoint `filters` (such as `filters: { id: "$user.id" }` on `/api/user` or `/api/me` with `shape: object`, or `filters: { author_id: "$user.id" }` on collection endpoints, as well as inside `{ from, where }` world filters) without exposing a client-overridable query parameter. Validation rejects undeclared entities, nonexistent `id`s, and invalid `$user.<field>` references with a scenario error (exit 3); scenarios without `auth` keep their exact behaviour and hash. Documented in `references/scenario.md`, covered in `tests/contract.test.mjs`.
+
 ### 0.13.0
 
 **World-resolved filters (`filters: { <fk>: { from, where } }`).** An endpoint can filter by a condition on a referenced entity in `world` instead of requiring a query parameter (e.g., `filters: { source_id: { from: sources, where: { active: true } } }`). The contract engine resolves matching target ids from `from` and returns rows whose foreign key points to them, combining cleanly with normal query filters, path parameters, `sort`/`sorts`, `pagination` (`X-Total-Count` reflects the resolved subset), `shape: object`, and `head=true`. Validation rejects undeclared `from` entities, filter keys that are not foreign keys to `from`, and unknown fields in `where`; short-form `filters` (`[field]` and `{ field: field, ":param": field }`) keep their exact behaviour and scenario hashes. Documented in `references/scenario.md`, covered in `tests/contract.test.mjs`.
