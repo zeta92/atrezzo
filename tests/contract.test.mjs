@@ -1,11 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeScenario } from '../scripts/lib/scenario.mjs';
+import { join } from 'node:path';
+import { normalizeScenario, loadFlow } from '../scripts/lib/scenario.mjs';
 import { parseYaml } from '../scripts/lib/yaml.mjs';
 import { generateWorld, scenarioHash } from '../scripts/lib/world.mjs';
 import { createEngine } from '../scripts/lib/contract.mjs';
+import { createMockServer } from '../scripts/lib/serve.mjs';
+import { runVerify } from '../scripts/lib/verify.mjs';
+import { openapiDocument } from '../scripts/lib/runtimes/prism.mjs';
 import { AtrezzoError } from '../scripts/lib/errors.mjs';
-import { SCENARIO } from './helpers.mjs';
+import { SCENARIO, tmpProject } from './helpers.mjs';
 
 const dataset = generateWorld(normalizeScenario(parseYaml(SCENARIO, 't.yaml'), 't.yaml'));
 const engine = createEngine(dataset);
@@ -959,4 +963,242 @@ endpoints:
   assert.equal(okEng.handle({ method: 'GET', pathname: '/api/by-email' }).status, 200);
   assert.equal(okEng.handle({ method: 'GET', pathname: '/api/by-score' }).status, 200);
   assert.equal(okEng.handle({ method: 'GET', pathname: '/api/by-group-name' }).status, 200);
+});
+
+// ---------- Custom envelope keys (`shape: envelope` + `envelope: { items, total, page, per_page }`) ----------
+
+const ENVELOPE_SCENARIO = `name: custom-envelopes
+seed: 3131
+now: 2025-03-01T09:00:00Z
+world:
+  authors: 2
+  articles:
+    total: 15
+    ref: authors
+    fields:
+      title: string
+      status: [draft, published]
+endpoints:
+  - path: /api/articles
+    entity: articles
+    filters: [status, author_id]
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: id
+    shape: envelope
+    envelope: { items: articles, total: articlesCount }
+  - path: /api/paged-articles
+    entity: articles
+    filters: [status]
+    pagination: { param_page: page, param_limit: per_page, default_limit: 4 }
+    sort: id
+    shape: envelope
+    envelope: { items: articles, total: articlesCount, page: currentPage, per_page: pageSize }
+  - path: /api/offset-paged
+    entity: articles
+    pagination: { param_limit: limit, param_offset: offset, default_limit: 5 }
+    shape: envelope
+    envelope: { items: rows, total: count, page: page }
+  - path: /api/unpaginated-paged
+    entity: articles
+    shape: envelope
+    envelope: { items: records, total: totalRecords, page: page, per_page: perPage }
+  - path: /api/meta-articles
+    entity: articles
+    pagination: { param_page: page, param_limit: per_page, default_limit: 3 }
+    shape: envelope
+    envelope: { items: data, total: meta.total, page: meta.page, per_page: meta.per_page }
+  - path: /api/default-envelope
+    entity: articles
+    pagination: { param_limit: limit, param_offset: offset }
+    shape: envelope
+`;
+
+const envNorm = normalizeScenario(parseYaml(ENVELOPE_SCENARIO, 'env.yaml'), 'env.yaml');
+const envDataset = generateWorld(envNorm);
+const envEngine = createEngine(envDataset);
+const getEnv = (path) => {
+  const u = new URL(path, 'http://x');
+  return envEngine.handle({ method: 'GET', pathname: u.pathname, query: u.searchParams });
+};
+
+test('envelope: custom keys without page/per_page return exact keys and omit page fields', () => {
+  const r = getEnv('/api/articles?limit=3&offset=2');
+  assert.equal(r.status, 200);
+  assert.deepEqual(Object.keys(r.body), ['articles', 'articlesCount']);
+  assert.deepEqual(r.body.articles.map((a) => a.id), [3, 4, 5]);
+  assert.equal(r.body.articlesCount, 15);
+  assert.equal(r.headers['x-total-count'], '15');
+
+  // Filters update articlesCount consistently with X-Total-Count
+  const pub = envDataset.entities.articles.filter((a) => a.status === 'published');
+  const filtered = getEnv('/api/articles?status=published&limit=2&offset=0');
+  assert.equal(filtered.status, 200);
+  assert.deepEqual(Object.keys(filtered.body), ['articles', 'articlesCount']);
+  assert.equal(filtered.body.articlesCount, pub.length);
+  assert.equal(filtered.headers['x-total-count'], String(pub.length));
+  assert.deepEqual(filtered.body.articles.map((a) => a.id), pub.slice(0, 2).map((a) => a.id));
+
+  // Nested path key such as { data, meta: { total, page, per_page } }
+  const meta = getEnv('/api/meta-articles?page=2&per_page=4');
+  assert.equal(meta.status, 200);
+  assert.deepEqual(Object.keys(meta.body), ['data', 'meta']);
+  assert.deepEqual(meta.body.data.map((a) => a.id), [5, 6, 7, 8]);
+  assert.deepEqual(meta.body.meta, { total: 15, page: 2, per_page: 4 });
+});
+
+test('envelope: custom keys with page and per_page (both page-based and offset-based)', () => {
+  // Default page (1) and default_limit (4)
+  const p1 = getEnv('/api/paged-articles');
+  assert.equal(p1.status, 200);
+  assert.deepEqual(Object.keys(p1.body), ['articles', 'articlesCount', 'currentPage', 'pageSize']);
+  assert.deepEqual(p1.body.articles.map((a) => a.id), [1, 2, 3, 4]);
+  assert.equal(p1.body.articlesCount, 15);
+  assert.equal(p1.body.currentPage, 1);
+  assert.equal(p1.body.pageSize, 4);
+
+  // Explicit page & per_page query params
+  const p2 = getEnv('/api/paged-articles?page=2&per_page=5');
+  assert.equal(p2.status, 200);
+  assert.deepEqual(p2.body.articles.map((a) => a.id), [6, 7, 8, 9, 10]);
+  assert.equal(p2.body.articlesCount, 15);
+  assert.equal(p2.body.currentPage, 2);
+  assert.equal(p2.body.pageSize, 5);
+
+  // Offset-based pagination derives 1-based page and omits per_page when not declared
+  const off = getEnv('/api/offset-paged?limit=5&offset=10');
+  assert.equal(off.status, 200);
+  assert.deepEqual(Object.keys(off.body), ['rows', 'count', 'page']);
+  assert.deepEqual(off.body.rows.map((a) => a.id), [11, 12, 13, 14, 15]);
+  assert.equal(off.body.count, 15);
+  assert.equal(off.body.page, 3);
+
+  // Endpoint without pagination: page is 1 and per_page is null
+  const unpag = getEnv('/api/unpaginated-paged');
+  assert.equal(unpag.status, 200);
+  assert.deepEqual(Object.keys(unpag.body), ['records', 'totalRecords', 'page', 'perPage']);
+  assert.equal(unpag.body.records.length, 15);
+  assert.equal(unpag.body.totalRecords, 15);
+  assert.equal(unpag.body.page, 1);
+  assert.equal(unpag.body.perPage, null);
+
+  // Default envelope without `envelope:` keeps `{ data, total, limit, offset }` and scenarios without it keep their hash
+  const def = getEnv('/api/default-envelope?limit=3&offset=1');
+  assert.deepEqual(Object.keys(def.body), ['data', 'total', 'limit', 'offset']);
+  assert.equal(def.body.total, 15);
+  const shortNorm = normalizeScenario(parseYaml(SCENARIO, 's.yaml'), 's.yaml');
+  assert.equal(shortNorm.endpoints[0].envelope, undefined);
+  assert.equal(scenarioHash(shortNorm), dataset.hash);
+
+  // Prism OpenAPI schema matches custom envelope keys (including nested meta)
+  const oas = openapiDocument(envDataset, { mock: { baseUrl: 'http://127.0.0.1:4010' } });
+  const articlesSchema = oas.paths['/api/articles'].get.responses[200].content['application/json'].schema;
+  assert.deepEqual(Object.keys(articlesSchema.properties), ['articles', 'articlesCount']);
+  assert.deepEqual(articlesSchema.required, ['articles', 'articlesCount']);
+  const metaSchema = oas.paths['/api/meta-articles'].get.responses[200].content['application/json'].schema;
+  assert.deepEqual(Object.keys(metaSchema.properties.meta.properties), ['total', 'page', 'per_page']);
+});
+
+test('envelope: validation rejects empty keys, duplicates, nested conflicts, pick conflicts, and non-envelope shape', () => {
+  const parseErr = (epExtra) => {
+    const yaml = `name: bad-env
+seed: 1
+world:
+  articles: 3
+endpoints:
+  - path: /api/articles
+    entity: articles
+${epExtra}`;
+    try {
+      normalizeScenario(parseYaml(yaml, 'bad-env.yaml'), 'bad-env.yaml');
+    } catch (e) {
+      assert.ok(e instanceof AtrezzoError);
+      assert.equal(e.exitCode, 3);
+      return e.message;
+    }
+    assert.fail(`expected scenario validation error for:\n${epExtra}`);
+  };
+
+  assert.match(parseErr('    envelope: { items: articles, total: articlesCount }\n'), /envelope": requires shape: "envelope" \(got none \(default "array"\)\)/);
+  assert.match(parseErr('    shape: array\n    envelope: { items: articles, total: articlesCount }\n'), /envelope": requires shape: "envelope" \(got "array"\)/);
+  assert.match(parseErr('    shape: object\n    envelope: { items: articles, total: articlesCount }\n'), /envelope": requires shape: "envelope" \(got "object"\)/);
+  assert.match(parseErr('    shape: envelope\n    pick: articles\n    envelope: { items: articles, total: articlesCount }\n'), /cannot combine "pick" with "envelope"/);
+  assert.match(parseErr('    shape: envelope\n    envelope: {}\n'), /envelope": must be a non-empty map/);
+  assert.match(parseErr('    shape: envelope\n    envelope: articles\n'), /envelope": must be a non-empty map/);
+  assert.match(parseErr('    shape: envelope\n    envelope: { items: articles, offset: skip }\n'), /envelope\.offset": unknown field \(allowed: items, total, page, per_page\)/);
+  assert.match(parseErr('    shape: envelope\n    envelope: { items: "", total: articlesCount }\n'), /envelope\.items": must be a non-empty key name/);
+  assert.match(parseErr('    shape: envelope\n    envelope: { items: "   ", total: articlesCount }\n'), /envelope\.items": must be a non-empty key name/);
+  assert.match(parseErr('    shape: envelope\n    envelope: { items: articles, total: null }\n'), /envelope\.total": must be a non-empty key name/);
+  assert.match(parseErr('    shape: envelope\n    envelope: { items: articles, total: "meta..total" }\n'), /envelope\.total": invalid key "meta\.\.total"/);
+  assert.match(parseErr('    shape: envelope\n    envelope: { items: articles, total: articles }\n'), /envelope\.total": duplicate key "articles" \(already used by "items"\)/);
+  assert.match(parseErr('    shape: envelope\n    envelope: { items: articles, total: articlesCount, page: articlesCount }\n'), /envelope\.page": duplicate key "articlesCount" \(already used by "total"\)/);
+  assert.match(parseErr('    shape: envelope\n    envelope: { total: data }\n'), /envelope\.total": duplicate key "data" \(already used by "items" default\)/);
+  assert.match(parseErr('    shape: envelope\n    envelope: { items: meta, total: meta.total }\n'), /envelope\.total": key "meta\.total" conflicts with nested key "meta"/);
+});
+
+test('envelope: serve and verify handle custom envelope keys identically (with and without page)', async () => {
+  const dir = tmpProject({
+    'scenarios/custom-envelopes.yaml': ENVELOPE_SCENARIO,
+    'flow.yaml': `scenario: scenarios/custom-envelopes.yaml
+steps:
+  - screen: feed
+    requests:
+      articles: GET /api/articles?limit=5&offset=0
+      paged: GET /api/paged-articles?page=2&per_page=4
+      meta: GET /api/meta-articles?page=1&per_page=3
+    expect:
+      - selector: "[data-testid=article-row]"
+        count: 5
+        data: { request: articles }
+      - selector: "[data-testid=paged-row]"
+        count: 4
+        data: { request: paged, pick: articles }
+      - selector: "[data-testid=meta-row]"
+        count: 3
+        data: { request: meta }
+`,
+    'flow-ko.yaml': `scenario: scenarios/custom-envelopes.yaml
+steps:
+  - screen: feed
+    requests:
+      articles: GET /api/articles?limit=4&offset=0
+    expect:
+      - selector: "[data-testid=published]"
+        count: ${envDataset.entities.articles.filter((a) => a.status === 'published').length}
+        data: { request: articles, where: { status: published } }
+`,
+  });
+  const mock = createMockServer({ scenariosDir: join(dir, 'scenarios'), scenario: 'custom-envelopes' });
+  const url = `http://127.0.0.1:${(await mock.listen(0)).port}`;
+  try {
+    for (const path of [
+      '/api/articles?limit=3&offset=2',
+      '/api/paged-articles?page=2&per_page=5',
+      '/api/meta-articles?page=2&per_page=4',
+      '/api/default-envelope?limit=3&offset=1',
+    ]) {
+      const res = await fetch(`${url}${path}`);
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      const expected = getEnv(path);
+      assert.deepEqual(body, expected.body, path);
+      assert.equal(res.headers.get('x-total-count'), expected.headers['x-total-count'], path);
+    }
+
+    const ok = await runVerify(loadFlow(join(dir, 'flow.yaml')), { url, driver: 'http' });
+    assert.equal(ok.exitCode, 0);
+    assert.deepEqual(ok.rows.map((r) => [r.obtained, r.status]), [[5, 'OK'], [4, 'OK'], [3, 'OK']]);
+
+    // When paginated, verify --diagnose inspects the unpaginated custom envelope too
+    const ko = await runVerify(loadFlow(join(dir, 'flow-ko.yaml')), { url, driver: 'http', diagnose: true });
+    const pubTotal = envDataset.entities.articles.filter((a) => a.status === 'published').length;
+    const pubPage1 = envDataset.entities.articles.slice(0, 4).filter((a) => a.status === 'published').length;
+    if (pubPage1 < pubTotal) {
+      assert.equal(ko.exitCode, 1);
+      assert.ok(ko.rows[0].hypotheses.some((h) => h.type === 'pagination-mismatch'));
+    } else {
+      assert.equal(ko.exitCode, 0);
+    }
+  } finally {
+    await mock.close();
+  }
 });

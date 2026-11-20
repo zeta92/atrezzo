@@ -583,7 +583,7 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'include', 'embed', 'shape', 'detail', 'pick', 'latency', 'pluck', 'error'];
+const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'include', 'embed', 'shape', 'envelope', 'detail', 'pick', 'latency', 'pluck', 'error'];
 
 /** Levels of `embed` below an endpoint's entity (the endpoint's own children are level 1). */
 export const MAX_EMBED_DEPTH = 4;
@@ -669,8 +669,60 @@ function paramField(name, path, count, fields) {
   return paramCandidates(name, path, count).find((c) => fields.includes(c)) ?? null;
 }
 
-/** array: a JSON list · envelope: { data, total, limit, offset } · object: the first row as a JSON object. */
+/** array: a JSON list · envelope: { data, total, limit, offset } (or custom keys via `envelope`) · object: the first row as a JSON object. */
 export const SHAPES = ['array', 'envelope', 'object'];
+const ENVELOPE_KEYS = ['items', 'total', 'page', 'per_page'];
+const FORBIDDEN_ENVELOPE_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function parseEnvelope(raw, rawShape, hasPick, f, issues) {
+  if (rawShape !== 'envelope') {
+    const got = rawShape === undefined ? 'none (default "array")' : JSON.stringify(rawShape);
+    issues.add(f, `requires shape: "envelope" (got ${got})`);
+  }
+  if (hasPick) {
+    issues.add(f, 'cannot combine "pick" with "envelope" (declare "items" inside "envelope")');
+  }
+  if (!isObj(raw) || !Object.keys(raw).length) {
+    issues.add(f, `must be a non-empty map { ${ENVELOPE_KEYS.join(', ')} }; got ${isObj(raw) ? 'empty map' : typeName(raw)}`);
+    return null;
+  }
+  issues.unknownKeys(raw, ENVELOPE_KEYS, f);
+  const parsed = {};
+  for (const k of ENVELOPE_KEYS) {
+    if (!Object.hasOwn(raw, k)) continue;
+    const v = raw[k];
+    if (typeof v !== 'string' || v.trim() === '') {
+      issues.add(`${f}.${k}`, 'must be a non-empty key name');
+      continue;
+    }
+    const parts = v.split('.');
+    if (parts.some((p) => !p || /\s/.test(p) || FORBIDDEN_ENVELOPE_SEGMENTS.has(p))) {
+      issues.add(`${f}.${k}`, `invalid key ${JSON.stringify(v)}: must be non-empty without whitespace or empty segments`);
+      continue;
+    }
+    parsed[k] = v;
+  }
+  const hasItemsKey = Object.hasOwn(raw, 'items');
+  const out = { items: parsed.items ?? 'data' };
+  const used = hasItemsKey && parsed.items === undefined ? [] : [['items', out.items, parsed.items !== undefined]];
+  for (const k of ['total', 'page', 'per_page']) {
+    if (parsed[k] === undefined) continue;
+    const val = parsed[k];
+    const dup = used.find(([, uv]) => uv === val);
+    if (dup) {
+      issues.add(`${f}.${k}`, `duplicate key ${JSON.stringify(val)} (already used by "${dup[0]}"${dup[2] ? '' : ' default'})`);
+      continue;
+    }
+    const conflict = used.find(([, uv]) => uv.startsWith(`${val}.`) || val.startsWith(`${uv}.`));
+    if (conflict) {
+      issues.add(`${f}.${k}`, `key ${JSON.stringify(val)} conflicts with nested key ${JSON.stringify(conflict[1])} ("${conflict[0]}"${conflict[2] ? '' : ' default'})`);
+      continue;
+    }
+    out[k] = val;
+    used.push([k, val, true]);
+  }
+  return out;
+}
 /** Upper bound for `latency` (scenario) and `serve --latency`: a slow backend, not a hung one. */
 export const MAX_LATENCY = 60000;
 
@@ -928,6 +980,10 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
       else if (ep.shape === 'array' || ep.shape === 'object') issues.add(`${f}.pick`, `incompatible with shape: ${ep.shape} (pick implies an envelope)`);
       else { pick = ep.pick; shape = 'envelope'; }
     }
+    let envelope = null;
+    if (ep.envelope !== undefined) {
+      envelope = parseEnvelope(ep.envelope, ep.shape, ep.pick !== undefined, `${f}.envelope`, issues);
+    }
     // A singleton answers one row: there is no list to page through.
     if (shape === 'object' && pagination) issues.add(`${f}.pagination`, 'incompatible with shape: object (the response is a single row, not a list)');
     if (ep.detail !== undefined && typeof ep.detail !== 'boolean') issues.add(`${f}.detail`, 'must be true or false');
@@ -964,6 +1020,7 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
     if (worldFilters.length) norm.worldFilters = worldFilters; // same: absent unless declared
     if (userFilters.length) norm.userFilters = userFilters; // same: absent unless declared
     if (pick) norm.pick = pick; // only when declared: keeps 0.1 scenario hashes stable
+    if (envelope) norm.envelope = envelope; // same: absent unless declared
     if (latency !== null) norm.latency = latency; // same: absent unless declared
     if (params.length) norm.params = params; // same
     if (embed.length) norm.embed = embed; // same
