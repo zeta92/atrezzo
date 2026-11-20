@@ -156,12 +156,23 @@ async function defaultPageFactory(cwd, { viewport } = {}) {
 
 const normPath = (p) => (p.length > 1 ? p.replace(/\/+$/, '') : p);
 const LOGIN_RE = /(^|\/)(login|signin|sign-in|iniciar-sesion|auth)(\/|$)/i;
+const samePath = (a, b) => a.origin === b.origin && normPath(a.pathname) === normPath(b.pathname);
+
+function matchesRedirectTarget(got, expected) {
+  if (!samePath(got, expected)) return false;
+  if (expected.search && got.search !== expected.search) return false;
+  if (expected.hash && got.hash !== expected.hash) return false;
+  return true;
+}
 
 /**
- * Open a step's page. Returns null if the page is the one asked for, or a sentence
- * explaining why the step can't be trusted (redirect, HTTP error, wait_for timeout).
+ * Open a step's page. Returns { fail, redirect } where `fail` is null if the page
+ * matches what was expected (or a declared redirect), or a sentence explaining why
+ * the step can't be trusted (unexpected/wrong redirect, HTTP error, wait_for timeout).
  */
 async function openStep(pw, url, step, headers, storageScript) {
+  const ok = (redirect = null) => ({ fail: null, redirect });
+  const ko = (fail, redirect = null) => ({ fail, redirect });
   const target = joinUrl(url, step.visit);
   if (pw.context?.setExtraHTTPHeaders) await pw.context.setExtraHTTPHeaders(headers);
   else await pw.page.setExtraHTTPHeaders?.(headers);
@@ -173,25 +184,42 @@ async function openStep(pw, url, step, headers, storageScript) {
   }
   let resp;
   try { resp = await pw.page.goto(target); } catch (e) {
-    return redact(`could not open ${step.visit}: ${e.message.split('\n')[0]}`, headers);
+    return ko(redact(`could not open ${step.visit}: ${e.message.split('\n')[0]}`, headers));
   }
   await pw.page.waitForLoadState?.('networkidle', { timeout: 15_000 })?.catch?.(() => {});
   const finalUrl = typeof pw.page.url === 'function' ? pw.page.url() : null;
+  let redirect = null;
   if (finalUrl) {
     const want = new URL(target); const got = new URL(finalUrl);
-    if (got.origin !== want.origin || normPath(got.pathname) !== normPath(want.pathname)) {
-      const where = got.origin === want.origin ? got.pathname + got.search : finalUrl;
-      return `the app redirected ${step.visit} → ${where}` + (LOGIN_RE.test(got.pathname) ? ' (login screen: no session or session expired; check the flow headers/Cookie)' : '');
+    const where = got.origin === want.origin ? got.pathname + got.search : finalUrl;
+    if (step.redirectsTo) {
+      const expected = new URL(joinUrl(url, step.redirectsTo));
+      const matched = matchesRedirectTarget(got, expected);
+      if (!samePath(got, want)) {
+        redirect = { from: step.visit, to: where, declared: matched };
+        if (!matched) return ko(`the app redirected ${step.visit} → ${where} (expected ${step.redirectsTo})`, redirect);
+      } else if (matched && (expected.search || expected.hash) && (got.search !== want.search || got.hash !== want.hash)) {
+        redirect = { from: step.visit, to: where, declared: true };
+      } else if (!matched) {
+        return ko(`expected ${step.visit} to redirect to ${step.redirectsTo}, but stayed on ${where}`);
+      }
+    } else if (!samePath(got, want)) {
+      redirect = { from: step.visit, to: where, declared: Boolean(step.allowRedirect) };
+      if (!step.allowRedirect) {
+        return ko(`the app redirected ${step.visit} → ${where}` + (LOGIN_RE.test(got.pathname) ? ' (login screen: no session or session expired; check the flow headers/Cookie)' : ''), redirect);
+      }
     }
+  } else if (step.redirectsTo) {
+    return ko(`could not verify redirect to ${step.redirectsTo}: page URL is unavailable`);
   }
   const status = typeof resp?.status === 'function' ? resp.status() : null;
-  if (status !== null && status >= 400) return `${step.visit} answered HTTP ${status}`;
+  if (status !== null && status >= 400) return ko(`${redirect?.to ?? step.visit} answered HTTP ${status}`, redirect);
   if (step.waitFor) {
     try { await pw.page.waitForSelector(step.waitFor, { state: 'attached', timeout: 10_000 }); } catch {
-      return `wait_for "${step.waitFor}" did not appear within 10 s`;
+      return ko(`wait_for "${step.waitFor}" did not appear within 10 s`, redirect);
     }
   }
-  return null;
+  return ok(redirect);
 }
 
 // ---------- main ----------
@@ -229,6 +257,7 @@ export async function runVerify(flow, opts) {
   if (driver === 'playwright') pw = await (opts.pageFactory ? opts.pageFactory({ viewport: flow.viewport ?? null }) : defaultPageFactory(cwd, { viewport: flow.viewport ?? null }));
 
   const rows = [];
+  const stepResults = [];
   try {
     for (const step of flow.steps) {
       const headers = mergeHeaders(flowHeaders, runHeaders, step.headers);
@@ -247,11 +276,16 @@ export async function runVerify(flow, opts) {
       let stepFailRow = null;
       if (pw) {
         if (!step.visit) {
+          stepResults.push({ screen: step.screen });
           for (const e of step.expect) rows.push({ screen: step.screen, expect: e, status: 'N/V', obtained: null, note: 'the step has no "visit": playwright does not know which page to open' });
           continue;
         }
         const storage = mergeStorage(flowStorage, step.storage);
-        stepFail = await openStep(pw, url, step, headers, seeder.next(new URL(joinUrl(url, step.visit)).origin, storage));
+        const nav = await openStep(pw, url, step, headers, seeder.next(new URL(joinUrl(url, step.visit)).origin, storage));
+        stepFail = nav.fail;
+        stepResults.push({ screen: step.screen, visit: step.visit, ...(nav.redirect ? { redirect: nav.redirect } : {}) });
+      } else {
+        stepResults.push({ screen: step.screen, ...(step.visit ? { visit: step.visit } : {}) });
       }
       for (const e of step.expect) {
         const row = { screen: step.screen, expect: e, status: 'N/V', obtained: null, note: '' };
@@ -287,7 +321,12 @@ export async function runVerify(flow, opts) {
         if (stepFail) {
           // say it once per step; the other rows of the step point at it
           if (stepFailRow === null) { stepFailRow = rows.length + 1; row.note = stepFail; } else row.note = `same cause as #${stepFailRow}`;
-          if (wantDiag && stepFailRow === rows.length + 1) row.hypotheses = [{ type: 'navigation', confidence: 'high', evidence: `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.` }];
+          if (wantDiag && stepFailRow === rows.length + 1) {
+            const evidence = step.redirectsTo
+              ? `expected redirect to "${step.redirectsTo}" for step "${step.screen}", but landed elsewhere; the scenario and selectors are not the cause. Fix navigation/guard before looking at anything else.`
+              : `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.`;
+            row.hypotheses = [{ type: 'navigation', confidence: 'high', evidence }];
+          }
         } else if (row.status === 'KO' && wantDiag) row.hypotheses = diagnose(row, ctx);
         rows.push(row);
       }
@@ -300,7 +339,7 @@ export async function runVerify(flow, opts) {
   const nv = rows.filter((r) => r.status === 'N/V').length;
   const exitCode = ko ? EXIT.FAIL : nv || !rows.length ? EXIT.UNVERIFIABLE : EXIT.OK;
   const shownHeaders = maskHeaders(mergeHeaders(flowHeaders, runHeaders, ...flow.steps.map((st) => st.headers)));
-  const out = { rows, exitCode, warnings, scenario: flow.scenario?.name ?? null, seed: flow.scenario?.seed ?? null, url, driver, viewport: flow.viewport ?? null, headers: shownHeaders };
+  const out = { rows, steps: stepResults, exitCode, warnings, scenario: flow.scenario?.name ?? null, seed: flow.scenario?.seed ?? null, url, driver, viewport: flow.viewport ?? null, headers: shownHeaders };
   // keys only: a storage value may be a session
   if (anyStorage && driver === 'playwright') out.storage = storageKeys(mergeStorage(flowStorage, ...flow.steps.map((st) => st.storage)));
   return out;

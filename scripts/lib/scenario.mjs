@@ -1102,9 +1102,25 @@ export function loadFlow(file) {
   doc.steps.forEach((st, i) => {
     const f = `steps[${i}]`;
     if (!isObj(st)) { issues.add(f, 'must be a map'); return; }
-    issues.unknownKeys(st, ['screen', 'visit', 'wait_for', 'headers', 'storage', 'requests', 'expect'], f);
+    issues.unknownKeys(st, ['screen', 'visit', 'wait_for', 'headers', 'storage', 'requests', 'expect', 'redirects_to', 'allow_redirect'], f);
     if (typeof st.screen !== 'string') issues.add(`${f}.screen`, 'required; the screen name');
     else if (path.length && !path.includes(st.screen)) issues.add(`${f}.screen`, `"${st.screen}" is not in the scenario path (${path.join(' → ')})`);
+    let redirectsTo = null;
+    if (st.redirects_to !== undefined) {
+      if (typeof st.redirects_to !== 'string' || !/^(\/|https?:\/\/)/.test(st.redirects_to.trim())) {
+        issues.add(`${f}.redirects_to`, 'must be a path starting with "/" or an http(s) URL (e.g. "/login")');
+      } else {
+        redirectsTo = st.redirects_to.trim();
+      }
+    }
+    let allowRedirect = false;
+    if (st.allow_redirect !== undefined) {
+      if (typeof st.allow_redirect !== 'boolean') issues.add(`${f}.allow_redirect`, 'must be true or false');
+      else allowRedirect = st.allow_redirect;
+    }
+    if (st.redirects_to !== undefined && st.allow_redirect !== undefined) {
+      issues.add(f, 'use "redirects_to" or "allow_redirect", not both');
+    }
     const requests = {};
     if (st.requests !== undefined) {
       if (!isObj(st.requests)) issues.add(`${f}.requests`, 'must be a map name: "GET /path"');
@@ -1121,7 +1137,7 @@ export function loadFlow(file) {
     });
     const stepHeaders = parseHeaders(st.headers, `${f}.headers`, issues);
     const stepStorage = parseStorage(st.storage, `${f}.storage`, issues);
-    steps.push({ screen: st.screen, visit: st.visit ?? null, waitFor: st.wait_for ?? null, headers: stepHeaders, storage: stepStorage, requests, expect });
+    steps.push({ screen: st.screen, visit: st.visit ?? null, waitFor: st.wait_for ?? null, redirectsTo, allowRedirect, headers: stepHeaders, storage: stepStorage, requests, expect });
   });
 
   // Scenario-level expectations go to their screen (default: last of path, else last step).
