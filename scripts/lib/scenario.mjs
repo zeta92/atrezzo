@@ -588,7 +588,7 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'include', 'embed', 'counts', 'shape', 'envelope', 'detail', 'pick', 'latency', 'pluck', 'error', 'passthrough'];
+const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'scopes', 'include', 'embed', 'counts', 'shape', 'envelope', 'detail', 'pick', 'latency', 'pluck', 'error', 'passthrough'];
 
 /** Levels of `embed` below an endpoint's entity (the endpoint's own children are level 1). */
 export const MAX_EMBED_DEPTH = 4;
@@ -785,6 +785,63 @@ function parseSorts(raw, fields, filters, pagination, f, issues) {
     });
   }
   return { by, order, fields: sortFields };
+}
+
+const SCOPE_DEFAULTS = ['exclude', 'include'];
+const SCOPE_ACTIONS = ['add', 'only'];
+
+/**
+ * `scopes: { <param>: { field, default, when_true, when_false } }` (or `<param>: <field>`): query
+ * parameters that choose the SET of rows by a boolean field, instead of filtering by a value.
+ * `default` (exclude | include) is the set without the parameter; `when_true` / `when_false`
+ * (add | only) either add the rows with that value to the default set or keep only them.
+ */
+function parseScopes(raw, spec, fields, filters, pagination, sorts, f, issues) {
+  if (raw === undefined) return null;
+  if (!isObj(raw) || !Object.keys(raw).length) {
+    issues.add(`${f}.scopes`, `must be a map <param>: { field, default, when_true, when_false } (or <param>: <boolean field>); got ${typeName(raw)}`);
+    return null;
+  }
+  const taken = [
+    ...filters.map((n) => [n, 'a declared filter']),
+    ...(pagination ? [pagination.limit, pagination.page ?? pagination.offset] : []).map((n) => [n, 'a pagination parameter']),
+    ...(sorts ? [sorts.by, ...(sorts.order ? [sorts.order] : [])] : []).map((n) => [n, 'a sort parameter']),
+    ['select', 'the PostgREST "select" parameter'], ['head', 'the PostgREST "head" parameter'],
+  ];
+  const out = [];
+  for (const [param, entry] of Object.entries(raw)) {
+    const sf = `${f}.scopes.${param}`;
+    if (!/^[A-Za-z_][\w.-]*$/.test(param)) { issues.add(sf, 'must be a query parameter name'); continue; }
+    const clash = taken.find(([n]) => n === param);
+    if (clash) { issues.add(sf, `parameter "${param}" conflicts with ${clash[1]} of the same name`); continue; }
+    const cfg = typeof entry === 'string' ? { field: entry } : entry;
+    if (!isObj(cfg)) { issues.add(sf, `must be a boolean field name or a map { field, default, when_true, when_false }; got ${typeName(entry)}`); continue; }
+    issues.unknownKeys(cfg, ['field', 'default', 'when_true', 'when_false'], sf);
+    let ok = true;
+    if (typeof cfg.field !== 'string' || !cfg.field) {
+      issues.add(`${sf}.field`, `required; a boolean field of "${spec.name}"`); ok = false;
+    } else if (!fields.includes(cfg.field)) {
+      issues.add(`${sf}.field`, `field "${cfg.field}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`); ok = false;
+    } else {
+      const types = fieldValueTypes(cfg.field, spec);
+      if (types.length !== 1 || types[0] !== 'boolean') {
+        issues.add(`${sf}.field`, `field "${cfg.field}" is not a boolean (a scope selects rows by true/false; declare it as "${cfg.field}: boolean")`); ok = false;
+      }
+    }
+    const pick = (key, allowed, fallback) => {
+      if (cfg[key] === undefined) return fallback;
+      if (!allowed.includes(cfg[key])) { issues.add(`${sf}.${key}`, `must be ${allowed.map((a) => `"${a}"`).join(' or ')}; got ${JSON.stringify(cfg[key])}`); ok = false; }
+      return cfg[key];
+    };
+    const scope = {
+      param, field: cfg.field,
+      default: pick('default', SCOPE_DEFAULTS, 'exclude'),
+      when_true: pick('when_true', SCOPE_ACTIONS, 'add'),
+      when_false: pick('when_false', SCOPE_ACTIONS, 'only'),
+    };
+    if (ok) out.push(scope);
+  }
+  return out;
 }
 
 const USER_TOKEN_RE = /^\$user\.([A-Za-z_][A-Za-z0-9_]*)$/;
@@ -1000,7 +1057,7 @@ function parsePassthrough(raw, ep, f, issues) {
     issues.add(`${f}.detail`, 'cannot combine "detail: true" with "passthrough"');
   }
   if (ep.entity === undefined) {
-    for (const k of ['filters', 'pagination', 'sort', 'sorts', 'include', 'embed', 'counts', 'pluck', 'envelope', 'pick']) {
+    for (const k of ['filters', 'pagination', 'sort', 'sorts', 'scopes', 'include', 'embed', 'counts', 'pluck', 'envelope', 'pick']) {
       if (ep[k] !== undefined) issues.add(`${f}.${k}`, `incompatible with "passthrough" without "entity"`);
     }
     if (ep.shape !== undefined && ep.shape !== 'array') {
@@ -1176,6 +1233,8 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
       sort: spec ? parseSort(ep.sort, fields, f, issues) : [], include, shape, detail: ep.detail ?? !passthrough,
     };
     if (sorts) norm.sorts = sorts; // only when declared: keeps scenario hashes stable
+    const scopes = spec ? parseScopes(ep.scopes, spec, fields, filters, pagination, sorts, f, issues) : null;
+    if (scopes?.length) norm.scopes = scopes; // same: absent unless declared
     if (worldFilters.length) norm.worldFilters = worldFilters; // same: absent unless declared
     if (userFilters.length) norm.userFilters = userFilters; // same: absent unless declared
     if (pick) norm.pick = pick; // only when declared: keeps 0.1 scenario hashes stable

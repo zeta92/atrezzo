@@ -2050,3 +2050,141 @@ writes:
   assert.equal(detailLiteralWins.writes[0].inferred, '/api/boards');
   assert.equal(createEngine(generateWorld(detailLiteralWins)).match('/api/boards/1').ep.entity, 'boards');
 });
+
+// ---------- scopes: query parameters with set semantics ----------
+
+const SCOPED = (scopeBlock, extra = '') => `name: scoped
+seed: 31
+world:
+  widgets:
+    total: 30
+    fields: { name: string, finish: [matte, gloss], archived: boolean }
+endpoints:
+  - path: /api/widgets
+    entity: widgets
+    filters: [finish]
+    pagination: { param_limit: limit, param_offset: offset }
+    sorts: { by: sort_by, fields: [id, name] }
+${scopeBlock}
+  - path: /api/plain
+    entity: widgets
+    filters: [finish]
+    pagination: { param_limit: limit, param_offset: offset }
+${extra}`;
+
+const scopedEngine = (scopeBlock, extra) => {
+  const ds = generateWorld(normalizeScenario(parseYaml(SCOPED(scopeBlock, extra), 's.yaml'), 's.yaml'));
+  const e = createEngine(ds);
+  const req = (path, method = 'GET') => {
+    const u = new URL(path, 'http://x');
+    return e.handle({ method, pathname: u.pathname, query: u.searchParams });
+  };
+  return { ds, req, rows: ds.entities.widgets };
+};
+
+test('scopes: ?param=true adds the archived rows, false keeps only the others, absent answers the endpoint default', () => {
+  const { req, rows } = scopedEngine('    scopes: { is_archived: { field: archived } }');
+  const archived = rows.filter((r) => r.archived === true).map((r) => r.id);
+  const live = rows.filter((r) => r.archived !== true).map((r) => r.id);
+  assert.ok(archived.length > 0 && live.length > 0, 'the world holds both kinds of rows');
+
+  const absent = req('/api/widgets');
+  assert.equal(absent.status, 200);
+  assert.deepEqual(ids(absent), live, 'default: exclude hides archived rows');
+  assert.equal(absent.headers['x-total-count'], String(live.length));
+
+  const withTrue = req('/api/widgets?is_archived=true');
+  assert.deepEqual(ids(withTrue), rows.map((r) => r.id), 'true widens the set to every row');
+  assert.equal(withTrue.headers['x-total-count'], String(rows.length));
+  assert.ok(withTrue.body.some((r) => r.archived === true));
+
+  const withFalse = req('/api/widgets?is_archived=false');
+  assert.deepEqual(ids(withFalse), live);
+  assert.ok(withFalse.body.every((r) => r.archived !== true));
+
+  for (const r of [absent, withTrue, withFalse]) assert.equal(r.headers['x-atrezzo-ignored'], undefined);
+  // the detail route is not scoped: an archived row is still reachable by id
+  assert.equal(req(`/api/widgets/${archived[0]}`).status, 200);
+});
+
+test('scopes: absent changes nothing with default: include, and endpoints without scopes keep their behaviour and hash', () => {
+  const { req } = scopedEngine('    scopes: { is_archived: { field: archived, default: include } }');
+  const scoped = req('/api/widgets?limit=7&offset=3&finish=matte');
+  const plain = req('/api/plain?limit=7&offset=3&finish=matte');
+  assert.deepEqual(scoped.body, plain.body);
+  assert.deepEqual(scoped.headers, plain.headers);
+  // without scopes the parameter is still an unknown one
+  assert.equal(req('/api/plain?is_archived=true').headers['x-atrezzo-ignored'], 'is_archived');
+  // a scenario without scopes normalizes without a `scopes` key (hash unchanged)
+  const n = normalizeScenario(parseYaml(SCOPED(''), 's.yaml'), 's.yaml');
+  assert.ok(n.endpoints.every((ep) => !('scopes' in ep)));
+  assert.equal(scenarioHash(n), scenarioHash(normalizeScenario(parseYaml(SCOPED(''), 's.yaml'), 's.yaml')));
+});
+
+test('scopes: invalid values answer 400; empty means absent', () => {
+  const { req, rows } = scopedEngine('    scopes: { is_archived: archived }');
+  for (const q of ['maybe', '1', 'yes', 'null']) {
+    const r = req(`/api/widgets?is_archived=${q}`);
+    assert.equal(r.status, 400, q);
+    assert.match(r.body.error, /"is_archived" must be "true" or "false"/);
+  }
+  const conflict = req('/api/widgets?is_archived=true&is_archived=false');
+  assert.equal(conflict.status, 400);
+  assert.match(conflict.body.error, /conflicting values/);
+  assert.equal(req('/api/widgets?is_archived=TRUE').body.length, rows.length, 'case-insensitive');
+  assert.deepEqual(ids(req('/api/widgets?is_archived=')), ids(req('/api/widgets')));
+});
+
+test('scopes: combine with filters, sort, pagination, head=true and shape: object; the count reflects the resulting set', () => {
+  const { req, rows } = scopedEngine('    scopes: { is_archived: archived }', `  - path: /api/first-widget
+    entity: widgets
+    shape: object
+    scopes: { is_archived: { field: archived, default: include, when_true: only } }
+`);
+  const matteAll = rows.filter((r) => r.finish === 'matte');
+  const matteLive = matteAll.filter((r) => r.archived !== true);
+
+  const page = req('/api/widgets?is_archived=true&finish=matte&sort_by=-id&limit=3&offset=1');
+  assert.equal(page.status, 200);
+  assert.deepEqual(ids(page), matteAll.map((r) => r.id).reverse().slice(1, 4));
+  assert.equal(page.headers['x-total-count'], String(matteAll.length));
+  assert.equal(page.headers['x-atrezzo-ignored'], undefined);
+
+  assert.equal(req('/api/widgets?finish=matte&limit=2').headers['x-total-count'], String(matteLive.length));
+  assert.equal(req('/api/widgets?is_archived=false&finish=matte').headers['x-total-count'], String(matteLive.length));
+
+  const head = req('/api/widgets?is_archived=true&head=true');
+  assert.equal(head.headers['x-total-count'], String(rows.length));
+  assert.equal(head.headers['x-atrezzo-ignored'], undefined);
+
+  const firstArchived = rows.find((r) => r.archived === true);
+  assert.equal(req('/api/first-widget?is_archived=true').body.id, firstArchived.id, 'when_true: only');
+  assert.equal(req('/api/first-widget').body.id, rows[0].id, 'default: include');
+});
+
+test('scopes: when_true: only narrows to the archived rows; when_false: add widens a default: exclude set', () => {
+  const { req, rows } = scopedEngine('    scopes: { is_archived: { field: archived, when_true: only, when_false: add } }');
+  assert.deepEqual(ids(req('/api/widgets?is_archived=true')), rows.filter((r) => r.archived === true).map((r) => r.id));
+  // default exclude ∪ rows with archived ≠ true = still the non-archived rows
+  assert.deepEqual(ids(req('/api/widgets?is_archived=false')), rows.filter((r) => r.archived !== true).map((r) => r.id));
+  const inc = scopedEngine('    scopes: { show_live: { field: archived, default: include, when_false: only } }');
+  assert.deepEqual(ids(inc.req('/api/widgets?show_live=false')), inc.rows.filter((r) => r.archived !== true).map((r) => r.id));
+});
+
+test('scopes: scenario validation (boolean field, actions, parameter collisions)', () => {
+  const bad = (block, re) => assert.throws(
+    () => normalizeScenario(parseYaml(SCOPED(block), 's.yaml'), 's.yaml'),
+    (e) => e instanceof AtrezzoError && re.test(e.message),
+    block,
+  );
+  bad('    scopes: { is_archived: { field: hidden } }', /scopes\.is_archived\.field": field "hidden" does not exist/);
+  bad('    scopes: { is_archived: { field: finish } }', /scopes\.is_archived\.field": field "finish" is not a boolean/);
+  bad('    scopes: { is_archived: {} }', /scopes\.is_archived\.field": required/);
+  bad('    scopes: { is_archived: { field: archived, when_true: maybe } }', /scopes\.is_archived\.when_true": must be "add" or "only"/);
+  bad('    scopes: { is_archived: { field: archived, default: hide } }', /scopes\.is_archived\.default": must be "exclude" or "include"/);
+  bad('    scopes: { is_archived: { field: archived, colour: red } }', /scopes\.is_archived/);
+  bad('    scopes: { finish: archived }', /parameter "finish" conflicts with a declared filter/);
+  bad('    scopes: { limit: archived }', /parameter "limit" conflicts with a pagination parameter/);
+  bad('    scopes: { sort_by: archived }', /parameter "sort_by" conflicts with a sort parameter/);
+  bad('    scopes: []', /scopes": must be a map/);
+});
