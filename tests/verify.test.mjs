@@ -650,3 +650,301 @@ test('--strict-console with http driver is rejected (exit 3), never GREEN', asyn
   assert.match(cliDefault.stderr, /--strict-console requires --driver playwright/);
   assert.doesNotMatch(cliDefault.stdout, /GREEN/);
 });
+
+// ---------- pre-assertion click interactions ----------
+
+test('loadFlow: validates click and click_timeout', () => {
+  const okDir = tmpProject({
+    'single.yaml': 'steps:\n  - screen: a\n    visit: /a\n    click: "text=Open details"\n    expect: [{ selector: ".panel", count: 1 }]\n',
+    'multi.yaml': 'click_timeout: 3000\nsteps:\n  - screen: a\n    visit: /a\n    click: ["#tab-2", "text=Expand"]\n    click_timeout: 1500\n    expect: [{ selector: ".panel", count: 1 }]\n',
+  });
+  const f1 = loadFlow(join(okDir, 'single.yaml'));
+  assert.deepEqual(f1.steps[0].click, ['text=Open details']);
+  assert.equal(f1.steps[0].clickTimeout, null);
+  assert.equal(f1.clickTimeout, null);
+
+  const f2 = loadFlow(join(okDir, 'multi.yaml'));
+  assert.equal(f2.clickTimeout, 3000);
+  assert.deepEqual(f2.steps[0].click, ['#tab-2', 'text=Expand']);
+  assert.equal(f2.steps[0].clickTimeout, 1500);
+
+  for (const [yaml, pattern] of [
+    ['steps:\n  - screen: a\n    visit: /a\n    click: ""\n    expect: [{ selector: x, count: 1 }]\n', /steps\[0\]\.click": must be a non-empty selector/],
+    ['steps:\n  - screen: a\n    visit: /a\n    click: []\n    expect: [{ selector: x, count: 1 }]\n', /steps\[0\]\.click": must be a non-empty selector/],
+    ['steps:\n  - screen: a\n    visit: /a\n    click: ["#ok", ""]\n    expect: [{ selector: x, count: 1 }]\n', /steps\[0\]\.click\[1\]": must be a non-empty selector/],
+    ['steps:\n  - screen: a\n    visit: /a\n    click: 123\n    expect: [{ selector: x, count: 1 }]\n', /steps\[0\]\.click": must be a selector string or a list of selectors/],
+    ['steps:\n  - screen: a\n    visit: /a\n    click: "#ok"\n    click_timeout: 0\n    expect: [{ selector: x, count: 1 }]\n', /steps\[0\]\.click_timeout": must be a positive integer/],
+    ['click_timeout: -5\nsteps:\n  - screen: a\n    visit: /a\n    expect: [{ selector: x, count: 1 }]\n', /field "click_timeout": must be a positive integer/],
+  ]) {
+    const badDir = tmpProject({ 'f.yaml': yaml });
+    assert.throws(() => loadFlow(join(badDir, 'f.yaml')), (e) => e instanceof AtrezzoError && e.exitCode === 3 && e.issues.some((l) => pattern.test(l)));
+  }
+});
+
+function fakeClickPage({ initialCounts = {}, onClick, missingSelectors = [] } = {}) {
+  const events = [];
+  const counts = { ...initialCounts };
+  const missing = new Set(missingSelectors);
+  let current = '';
+  return {
+    events,
+    factory: async () => ({
+      page: {
+        goto: async (u) => { current = u; return { status: () => 200 }; },
+        url: () => current,
+        waitForLoadState: async () => {},
+        waitForSelector: async () => {},
+        locator: (sel) => {
+          const target = {
+            waitFor: async (opts) => {
+              events.push({ type: 'waitFor', sel, timeout: opts?.timeout });
+              if (missing.has(sel)) {
+                const err = new Error(`locator.waitFor: Timeout ${opts?.timeout ?? 5000}ms exceeded.`);
+                err.name = 'TimeoutError';
+                throw err;
+              }
+            },
+            click: async (opts) => {
+              events.push({ type: 'click', sel, timeout: opts?.timeout });
+              await onClick?.(sel, counts);
+            },
+            count: async () => {
+              events.push({ type: 'count', sel });
+              return counts[sel] ?? 0;
+            },
+          };
+          return { ...target, first: () => target };
+        },
+      },
+      close: async () => {},
+    }),
+  };
+}
+
+test('playwright driver (fake page): click list executes in order before assertions, respects timeout, and keeps a single step', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': `click_timeout: 2500
+steps:
+  - screen: details
+    visit: /details
+    click:
+      - "text=Section A"
+      - "[data-testid=open-sub]"
+    expect:
+      - selector: "[data-testid=sub-body]"
+        count: 1
+`,
+  });
+  const fp = fakeClickPage({
+    initialCounts: { '[data-testid=sub-body]': 0 },
+    onClick: (sel, counts) => {
+      if (sel === '[data-testid=open-sub]') counts['[data-testid=sub-body]'] = 1;
+    },
+  });
+  const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', pageFactory: fp.factory });
+  assert.equal(r.exitCode, 0, formatReport(r));
+  assert.equal(r.steps.length, 1);
+  assert.deepEqual(r.rows.map((x) => x.status), ['OK']);
+  assert.deepEqual(
+    fp.events.map((e) => `${e.type}:${e.sel}`),
+    ['waitFor:text=Section A', 'click:text=Section A', 'waitFor:[data-testid=open-sub]', 'click:[data-testid=open-sub]', 'count:[data-testid=sub-body]'],
+  );
+  assert.equal(fp.events[0].timeout, 2500);
+
+  // Step-level click_timeout overrides flow-level and opts.clickTimeout; default is 5000 ms
+  const stepTimeoutDir = tmpProject({
+    'step.yaml': 'click_timeout: 2500\nsteps:\n  - screen: a\n    visit: /a\n    click: "#btn"\n    click_timeout: 1200\n    expect: [{ selector: "#out", count: 1 }]\n',
+    'def.yaml': 'steps:\n  - screen: a\n    visit: /a\n    click: "#btn"\n    expect: [{ selector: "#out", count: 1 }]\n',
+  });
+  const fpStep = fakeClickPage({ initialCounts: { '#out': 1 } });
+  await runVerify(loadFlow(join(stepTimeoutDir, 'step.yaml')), { url, driver: 'playwright', clickTimeout: 4000, pageFactory: fpStep.factory });
+  assert.equal(fpStep.events[0].timeout, 1200);
+
+  const fpDef = fakeClickPage({ initialCounts: { '#out': 1 } });
+  await runVerify(loadFlow(join(stepTimeoutDir, 'def.yaml')), { url, driver: 'playwright', pageFactory: fpDef.factory });
+  assert.equal(fpDef.events[0].timeout, 5000);
+});
+
+test('playwright driver (fake page): missing click target marks step KO with click-target-missing hypothesis', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': `steps:
+  - screen: details
+    visit: /details
+    click:
+      - "#exists"
+      - "#missing"
+    click_timeout: 1500
+    expect:
+      - selector: "#always"
+        count: 1
+      - selector: "#body"
+        count: 1
+`,
+  });
+  const fp = fakeClickPage({
+    initialCounts: { '#always': 1, '#body': 0 },
+    missingSelectors: ['#missing'],
+  });
+  const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', diagnose: true, pageFactory: fp.factory });
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.steps.length, 1);
+  assert.deepEqual(r.rows.map((x) => x.status), ['KO', 'KO']);
+  assert.match(r.rows[0].note, /click "#missing" did not appear within 1500 ms/);
+  assert.equal(r.rows[1].note, 'same cause as #1');
+  assert.equal(r.rows[0].hypotheses[0].type, 'click-target-missing');
+  assert.equal(r.rows[0].hypotheses[0].confidence, 'high');
+  assert.match(r.rows[0].hypotheses[0].evidence, /#missing/);
+});
+
+test('playwright driver: pageerror during click timeout surfaces page-error instead of click-target-missing', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': 'steps:\n  - screen: a\n    visit: /a\n    click: "#btn"\n    click_timeout: 200\n    expect: [{ selector: "#out", count: 1 }]\n',
+  });
+  const emitter = new EventEmitter();
+  let current = '';
+  const factory = async () => ({
+    page: {
+      on: (ev, fn) => emitter.on(ev, fn),
+      off: (ev, fn) => emitter.off(ev, fn),
+      goto: async (u) => {
+        current = u;
+        emitter.emit('pageerror', new Error('crash before render'));
+        return { status: () => 200 };
+      },
+      url: () => current,
+      waitForLoadState: async () => {},
+      locator: () => {
+        const target = {
+          waitFor: async () => { const e = new Error('Timeout 200ms exceeded'); e.name = 'TimeoutError'; throw e; },
+          click: async () => {},
+          count: async () => 0,
+        };
+        return { ...target, first: () => target };
+      },
+    },
+    close: async () => {},
+  });
+  const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', diagnose: true, pageFactory: factory });
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.rows[0].hypotheses[0].type, 'page-error');
+});
+
+test('http driver: click emits warning and ignores clicks', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': `steps:
+  - screen: dashboard
+    visit: /
+    click: "#toggle"
+    requests:
+      customers: GET /api/customers
+    expect:
+      - selector: "[data-testid=customer-chip]"
+        count: 3
+        data: { request: customers }
+`,
+  });
+  const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'http' });
+  assert.equal(r.exitCode, 0);
+  assert.ok(r.warnings.some((w) => /click: is ignored with the http driver/.test(w)));
+});
+
+test('CLI verify --driver playwright (real Chromium): click opens collapsible and asserts inner text in one step', { skip: skipReal, timeout: 60_000 }, async () => {
+  const app = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><html><body>
+      <button type="button" id="toggle">Ver detalles</button>
+      <div id="collapsible-body"></div>
+      <script>
+        document.getElementById('toggle').addEventListener('click', () => {
+          document.getElementById('collapsible-body').innerHTML =
+            '<button type="button" id="more">Mostrar texto</button><div id="inner"></div>';
+          document.getElementById('more').addEventListener('click', () => {
+            document.getElementById('inner').innerHTML =
+              '<p data-testid="collapsible-text">Contenido desplegado del colapsable</p>';
+          });
+        });
+      </script>
+    </body></html>`);
+  });
+  await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve));
+  const appUrl = `http://127.0.0.1:${app.address().port}`;
+  try {
+    const flowDir = tmpProject({
+      'single.yaml': `steps:
+  - screen: details
+    visit: /
+    click: "text=Ver detalles"
+    expect:
+      - selector: "#more"
+        count: 1
+`,
+      'multi.yaml': `steps:
+  - screen: details
+    visit: /
+    click:
+      - "text=Ver detalles"
+      - "#more"
+    expect:
+      - selector: "text=Contenido desplegado del colapsable"
+        count: 1
+      - selector: "[data-testid=collapsible-text]"
+        count: 1
+`,
+    });
+
+    const singleRes = await cliAsync(['verify', join(flowDir, 'single.yaml'), '--url', appUrl, '--driver', 'playwright', '--json'], ROOT);
+    assert.equal(singleRes.code, 0, singleRes.stderr + singleRes.stdout);
+    const singleJson = JSON.parse(singleRes.stdout);
+    assert.equal(singleJson.exitCode, 0);
+    assert.equal(singleJson.steps.length, 1);
+    assert.deepEqual(singleJson.rows.map((r) => r.status), ['OK']);
+
+    const multiRes = await cliAsync(['verify', join(flowDir, 'multi.yaml'), '--url', appUrl, '--driver', 'playwright', '--json'], ROOT);
+    assert.equal(multiRes.code, 0, multiRes.stderr + multiRes.stdout);
+    const multiJson = JSON.parse(multiRes.stdout);
+    assert.equal(multiJson.exitCode, 0);
+    assert.equal(multiJson.steps.length, 1);
+    assert.deepEqual(multiJson.rows.map((r) => r.status), ['OK', 'OK']);
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+  }
+});
+
+test('CLI verify --driver playwright (real Chromium): missing click target gives KO with click-target-missing hypothesis', { skip: skipReal, timeout: 60_000 }, async () => {
+  const app = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end('<!doctype html><html><body><div id="always-present">ok</div></body></html>');
+  });
+  await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve));
+  const appUrl = `http://127.0.0.1:${app.address().port}`;
+  try {
+    const flowDir = tmpProject({
+      'missing.yaml': `steps:
+  - screen: details
+    visit: /
+    click: "#does-not-exist"
+    click_timeout: 200
+    expect:
+      - selector: "#always-present"
+        count: 1
+      - selector: "#collapsed-text"
+        count: 1
+`,
+    });
+    const res = await cliAsync(['verify', join(flowDir, 'missing.yaml'), '--url', appUrl, '--driver', 'playwright', '--diagnose', '--json'], ROOT);
+    assert.equal(res.code, 1, res.stderr + res.stdout);
+    const json = JSON.parse(res.stdout);
+    assert.equal(json.exitCode, 1);
+    assert.equal(json.steps.length, 1);
+    assert.deepEqual(json.rows.map((r) => r.status), ['KO', 'KO']);
+    assert.match(json.rows[0].note, /click "#does-not-exist" did not appear within 200 ms/);
+    assert.equal(json.rows[1].note, 'same cause as #1');
+    assert.equal(json.rows[0].hypotheses[0].type, 'click-target-missing');
+
+    const badCli = await cliAsync(['verify', join(flowDir, 'missing.yaml'), '--url', appUrl, '--driver', 'playwright', '--click-timeout', '0'], ROOT);
+    assert.equal(badCli.code, 3);
+    assert.match(badCli.stderr, /--click-timeout must be a positive integer/);
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+  }
+});

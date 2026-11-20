@@ -584,6 +584,7 @@ With `--driver http` an assertion without `data` stays **not verified** (exit 2)
 scenario: scenarios/orders.yaml      # relative to the flow (optional: see "Real app" below)
 base_url: http://127.0.0.1:4010       # optional (otherwise --url or the config)
 viewport: { width: 1440, height: 1000 }  # optional, playwright only (default 1280x720)
+click_timeout: 5000                   # optional, playwright only: ms to wait per click target (default 5000)
 headers:                              # optional: sent on EVERY request of the flow
   X-Tenant: acme                      # only values safe to commit; a session goes in verify --header
 storage:                              # optional, playwright only: seeded before the page loads
@@ -596,6 +597,8 @@ steps:
     headers: { Accept-Language: en-GB }  # optional; merged with the flow headers
     storage: { local: { theme: dark } }  # optional; merged with the flow storage, the step wins
     wait_for: "[data-testid=ready]"   # optional; waits for the element to exist (not to be visible)
+    click: "[data-testid=expand]"     # optional, playwright only: selector (or list of selectors) clicked before expect
+    click_timeout: 3000               # optional, playwright only: overrides flow click_timeout for this step
     requests:                         # equivalent requests for the http driver
       orders: GET /api/orders?limit=12
       issues: GET /api/orders?status=issue
@@ -649,6 +652,15 @@ Under `--driver playwright`, `verify` listens for `pageerror` (uncaught runtime 
 - **Uncaught exceptions (`pageerror`)**: any uncaught exception marks every assertion of the step `KO` (even if its selector counts happen to match, so a blank-screen crash or error toast never produces a false `OK`), records the message (clipped to 300 characters) in the failure note, and under `--diagnose` emits a `page-error` hypothesis (`confidence: high`) with the clipped message. If `wait_for` timed out on a crashed page, `page-error` is surfaced instead of `navigation`.
 - **Console errors (`console.error`)**: by default, `console.error` entries are emitted as `WARNING:` lines in the report without breaking a step whose assertions pass. Pass `--strict-console` (requires `--driver playwright`; rejected with exit `3` under `--driver http`) to fail (`KO`) any step that emits `console.error` (with a `console-error` hypothesis under `--diagnose`).
 - **`--json` output**: each Playwright step in `steps` includes `console: [{ level, text }]`, where `level` is `'pageerror'` for uncaught exceptions or `'error'` for `console.error` (or `[]` when none occurred).
+
+#### Pre-assertion interactions (`click` and `click_timeout`)
+
+When content lives inside a collapsed accordion, tab, or disclosure that must be opened before `expect` measures the DOM, declare `click` on the step (`--driver playwright` only):
+
+- **`click: "<selector>"`** (CSS selector or Playwright text selector such as `text=Show details`): waits for the element to exist (`attached`), performs a real Playwright click, and then evaluates the step's `expect` assertions.
+- **Multiple clicks in order**: `click: [sel1, sel2]` clicks each target sequentially before `expect` runs. Clicks do not create extra steps: the step remains the same (one entry in `steps`) and all `expect` assertions are measured afterwards.
+- **Timeout (`click_timeout`)**: configurable in milliseconds on the step (`click_timeout: 2000`), at the flow root, or via `verify --click-timeout <ms>` (default `5000` ms / `5 s`; step overrides CLI, which overrides flow root). If any target does not appear or cannot be clicked within the timeout, every assertion of the step is marked `KO` and `--diagnose` emits `click-target-missing` (`confidence: high`).
+- **`http` driver**: `click:` is ignored with a `WARNING:` line (there is no browser to click in).
 
 ## Supported YAML subset
 
