@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseYaml, YamlError } from '../scripts/lib/yaml.mjs';
-import { normalizeScenario } from '../scripts/lib/scenario.mjs';
+import { normalizeScenario, MAX_STREAM_INTERVAL } from '../scripts/lib/scenario.mjs';
 import { scenarioHash } from '../scripts/lib/world.mjs';
 import { AtrezzoError } from '../scripts/lib/errors.mjs';
 import { SCENARIO, tmpProject, cli } from './helpers.mjs';
@@ -163,4 +163,36 @@ test('streams validation: interval > 0, at least one event, valid path and loop'
   assert.match(errorOf(() => norm(withStreams('  "/api/prices": { interval: 100, events: [] }'))).message, /streams\[\/api\/prices\]\.events": required; must be a non-empty list/);
   assert.match(errorOf(() => norm(withStreams('  "/api/prices": { interval: 100, events: [{ a: 1 }], loop: "yes" }'))).message, /streams\[\/api\/prices\]\.loop": must be true or false/);
   assert.match(errorOf(() => norm(withStreams('  "/api/prices": { interval: 100, events: [{ a: 1 }], extra: 1 }'))).message, /streams\[\/api\/prices\]\.extra": unknown field/);
+});
+
+test('streams validation: interval boundary (2^31 - 1 accepted, above rejected)', () => {
+  assert.equal(MAX_STREAM_INTERVAL, 2147483647);
+  const atLimit = norm(`${SCENARIO}streams:\n  "/api/prices": { interval: ${MAX_STREAM_INTERVAL}, events: [{ a: 1 }] }\n`);
+  assert.equal(atLimit.streams[0].interval, 2147483647);
+
+  const aboveLimit = errorOf(() => norm(`${SCENARIO}streams:\n  "/api/prices": { interval: ${MAX_STREAM_INTERVAL + 1}, events: [{ a: 1 }] }\n`));
+  assert.ok(aboveLimit instanceof AtrezzoError);
+  assert.equal(aboveLimit.exitCode, 3);
+  assert.match(aboveLimit.message, /streams\[\/api\/prices\]\.interval": must be an integer > 0 and <= 2147483647/);
+});
+
+test('streams validation: collisions with endpoints (exact, parameterized, and detail routes) are rejected', () => {
+  const exact = errorOf(() => norm(`${SCENARIO}streams:\n  "/api/orders": { interval: 100, events: [{ a: 1 }] }\n`));
+  assert.ok(exact instanceof AtrezzoError);
+  assert.equal(exact.exitCode, 3);
+  assert.match(exact.message, /streams\[\/api\/orders\]": conflicts with endpoint "\/api\/orders"/);
+
+  const trailing = errorOf(() => norm(`${SCENARIO}streams:\n  "/api/orders/": { interval: 100, events: [{ a: 1 }] }\n`));
+  assert.match(trailing.message, /streams\[\/api\/orders\/\]": conflicts with endpoint "\/api\/orders"/);
+
+  const detailCollision = errorOf(() => norm(`${SCENARIO}streams:\n  "/api/orders/live": { interval: 100, events: [{ a: 1 }] }\n`));
+  assert.match(detailCollision.message, /streams\[\/api\/orders\/live\]": conflicts with detail route "\/api\/orders\/:id"/);
+
+  // When detail: false is explicitly set, a sub-path stream does not collide with the list endpoint.
+  const noDetail = norm(SCENARIO.replace('    entity: customers\n', '    entity: customers\n    detail: false\n') + 'streams:\n  "/api/customers/live": { interval: 100, events: [{ a: 1 }] }\n');
+  assert.equal(noDetail.streams[0].path, '/api/customers/live');
+
+  // Parameterized endpoint colliding with a concrete stream path.
+  const paramEp = `${SCENARIO.replace('  - path: /api/customers\n    entity: customers\n', '  - path: /api/customers/:id/events\n    entity: orders\n    filters:\n      ":id": customer_id\n')}streams:\n  "/api/customers/1/events": { interval: 100, events: [{ a: 1 }] }\n`;
+  assert.match(errorOf(() => norm(paramEp)).message, /streams\[\/api\/customers\/1\/events\]": conflicts with endpoint "\/api\/customers\/:id\/events"/);
 });

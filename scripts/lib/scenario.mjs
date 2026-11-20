@@ -729,6 +729,8 @@ function parseEnvelope(raw, rawShape, hasPick, f, issues) {
 }
 /** Upper bound for `latency` (scenario) and `serve --latency`: a slow backend, not a hung one. */
 export const MAX_LATENCY = 60000;
+/** Upper bound for stream `interval`: Node.js `setTimeout` caps delays at 2^31 - 1 ms (~24.9 days). */
+export const MAX_STREAM_INTERVAL = 2147483647;
 
 function parseSort(raw, fields, f, issues) {
   if (raw === undefined) return [{ field: 'id', dir: 'asc' }];
@@ -1414,7 +1416,27 @@ function normalizeWrites(rawWrites, world, auth, authDeclared, issues) {
 
 // ---------- streams ----------
 
-function normalizeStreams(rawStreams, issues) {
+/** True when `parts` fits `patternSegs` segment by segment (`:param` matches any non-empty segment). */
+function pathFits(patternSegs, parts) {
+  return patternSegs.length === parts.length && patternSegs.every((s, i) => (s.startsWith(':') ? Boolean(parts[i]) : s === parts[i]));
+}
+
+/** Check whether a stream path collides with any endpoint's GET route (list or `/:id` detail). */
+function findEndpointCollision(streamPath, endpoints) {
+  const parts = streamPath.split('/');
+  for (const ep of endpoints) {
+    const epSegs = ep.path.split('/');
+    if (pathFits(epSegs, parts)) {
+      return `conflicts with endpoint "${ep.path}" (GET "${streamPath}" cannot serve both a projection and an SSE stream)`;
+    }
+    if (ep.detail && parts.at(-1) && parts.length >= 2 && pathFits(epSegs, parts.slice(0, -1))) {
+      return `conflicts with detail route "${ep.path}/:id" (set detail: false on "${ep.path}" or choose a different stream path)`;
+    }
+  }
+  return null;
+}
+
+function normalizeStreams(rawStreams, endpoints, issues) {
   if (rawStreams === undefined) return [];
   if (!isObj(rawStreams) || !Object.keys(rawStreams).length) {
     issues.add('streams', 'must be a non-empty map "/path": { interval, events, loop }');
@@ -1439,6 +1461,9 @@ function normalizeStreams(rawStreams, issues) {
     }
     seen.add(path);
 
+    const collision = findEndpointCollision(path, endpoints);
+    if (collision) issues.add(f, collision);
+
     if (!isObj(rawCfg)) {
       issues.add(f, `must be a map { interval, events, loop }; got ${typeName(rawCfg)}`);
       continue;
@@ -1448,8 +1473,8 @@ function normalizeStreams(rawStreams, issues) {
     let intervalOk = false;
     if (rawCfg.interval === undefined) {
       issues.add(`${f}.interval`, 'required; integer > 0 (milliseconds)');
-    } else if (!isInt(rawCfg.interval) || rawCfg.interval <= 0) {
-      issues.add(`${f}.interval`, `must be an integer > 0 (milliseconds); got ${JSON.stringify(rawCfg.interval)}`);
+    } else if (!isInt(rawCfg.interval) || rawCfg.interval <= 0 || rawCfg.interval > MAX_STREAM_INTERVAL) {
+      issues.add(`${f}.interval`, `must be an integer > 0 and <= ${MAX_STREAM_INTERVAL} (milliseconds); got ${JSON.stringify(rawCfg.interval)}`);
     } else {
       intervalOk = true;
     }
@@ -1469,7 +1494,7 @@ function normalizeStreams(rawStreams, issues) {
       else loop = rawCfg.loop;
     }
 
-    if (intervalOk && eventsOk) {
+    if (!collision && intervalOk && eventsOk) {
       out.push({ path, interval: rawCfg.interval, events: rawCfg.events, loop });
     }
   }
@@ -1496,7 +1521,7 @@ export function normalizeScenario(doc, file = '<scenario>') {
   const auth = normalizeAuth(doc.auth, world, issues);
   const endpoints = normalizeEndpoints(doc.endpoints, world, auth, doc.auth !== undefined, issues);
   const writes = normalizeWrites(doc.writes, world, auth, doc.auth !== undefined, issues);
-  const streams = normalizeStreams(doc.streams, issues);
+  const streams = normalizeStreams(doc.streams, endpoints, issues);
 
   let path = [];
   if (doc.path !== undefined) {

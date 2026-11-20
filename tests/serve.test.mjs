@@ -389,3 +389,41 @@ test('SSE streams: POST /__atrezzo/reset closes active streams cleanly', async (
     await srv.close();
   }
 });
+
+test('SSE streams: max interval (2147483647) does not overflow setTimeout, and > max or endpoint collisions fail loudly', async () => {
+  const maxYaml = STREAMS_YAML.replace('interval: 25\n    events:\n      - { symbol: "BTC"', 'interval: 2147483647\n    events:\n      - { symbol: "BTC"');
+  const dirMax = tmpProject({ 'scenarios/ticker.yaml': maxYaml });
+  const srv = createMockServer({ scenariosDir: join(dirMax, 'scenarios'), scenario: 'ticker' });
+  const base = `http://127.0.0.1:${(await srv.listen(0)).port}`;
+  try {
+    const ac = new AbortController();
+    const res = await fetch(`${base}/api/prices`, { signal: ac.signal });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /^text\/event-stream/);
+    const reader = res.body.getReader();
+    // With 2147483647 ms, no event should fire immediately (if it overflowed to 1 ms, it would emit right away).
+    const race = await Promise.race([
+      reader.read().then((r) => ({ kind: 'read', r })),
+      new Promise((ok) => setTimeout(() => ok({ kind: 'timeout' }), 40)),
+    ]);
+    assert.equal(race.kind, 'timeout');
+    ac.abort();
+    await reader.cancel().catch(() => {});
+  } finally {
+    await srv.close();
+  }
+
+  const overYaml = STREAMS_YAML.replace('interval: 25\n    events:\n      - { symbol: "BTC"', 'interval: 2147483648\n    events:\n      - { symbol: "BTC"');
+  const dirOver = tmpProject({ 'scenarios/ticker.yaml': overYaml });
+  assert.throws(
+    () => createMockServer({ scenariosDir: join(dirOver, 'scenarios'), scenario: 'ticker' }),
+    /2147483647/,
+  );
+
+  const collideYaml = `${STREAMS_YAML}  "/api/products":\n    interval: 25\n    events: [{ ok: true }]\n`;
+  const dirCollide = tmpProject({ 'scenarios/ticker.yaml': collideYaml });
+  assert.throws(
+    () => createMockServer({ scenariosDir: join(dirCollide, 'scenarios'), scenario: 'ticker' }),
+    /conflicts with endpoint "\/api\/products"/,
+  );
+});

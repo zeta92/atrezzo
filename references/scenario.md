@@ -528,12 +528,12 @@ streams:
     loop: true
 ```
 
-- **Route keys**: paths starting with `/` (no whitespace, query or fragment; trailing slashes normalized).
-- **`interval`** (required): integer `> 0` (milliseconds) between emitted events.
+- **Route keys**: paths starting with `/` (no whitespace, query or fragment; trailing slashes normalized). Must not collide with any `endpoints` route (including `/:id` detail routes unless `detail: false` is set on the endpoint).
+- **`interval`** (required): integer between `1` and `2147483647` (milliseconds, Node.js `setTimeout` limit) between emitted events.
 - **`events`** (required): non-empty list of JSON values. Each event is serialized as `data: <json>\n\n`.
 - **`loop`** (optional, default `false`): when `true`, cycles back to the first event after the last; when `false`, closes the HTTP stream cleanly after emitting all declared events once.
 - **Runtime & lifecycle**: `atrezzo serve` answers `200` with `Content-Type: text/event-stream`, flushes headers immediately, emits each event in order at `interval`, and closes active streams cleanly (clearing timers and ending the response) on client disconnect, `POST /__atrezzo/reset`, `POST /__atrezzo/reload`, or server shutdown. `GET /__atrezzo/state` lists declared streams under `streams`.
-- **Validation (scenario error, exit 3)**: rejects empty `streams`, invalid or duplicate paths, `interval <= 0` or non-integer `interval`, empty or missing `events`, non-boolean `loop`, and unknown fields. Scenarios without `streams` keep their exact behaviour and hash.
+- **Validation (scenario error, exit 3)**: rejects empty `streams`, invalid or duplicate paths, paths colliding with `endpoints` (list, parameterized, or `/:id` detail routes), `interval <= 0`, `interval > 2147483647`, non-integer `interval`, empty or missing `events`, non-boolean `loop`, and unknown fields. Scenarios without `streams` keep their exact behaviour and hash.
 
 ### Counted relations (PostgREST `select` and `head=true`)
 
