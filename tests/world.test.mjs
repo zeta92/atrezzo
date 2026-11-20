@@ -398,6 +398,43 @@ test('empty strings: conditional fields can match the empty value', () => {
   for (const r of generateWorld(scenario(text)).entities.notes) assert.equal(r.has_description, r.description !== '');
 });
 
+test('empty strings: preserved when the same conditional field has a matching override', () => {
+  // All rows match `when: { locked: true }` and assign "texto": `empty` still keeps its share.
+  const partial = withEmpty(
+    '      locked: [true]\n      note: { default: string, when: { locked: true }, value: "texto", empty: 0.4 }',
+    10,
+  );
+  const partialRows = generateWorld(scenario(partial)).entities.notes;
+  assert.equal(partialRows.filter((r) => r.note === '').length, 4);
+  assert.equal(partialRows.filter((r) => r.note === 'texto').length, 6);
+
+  // `empty: true` with an always-matching conditional leaves every row empty.
+  const all = withEmpty(
+    '      locked: [true]\n      note: { default: string, when: { locked: true }, value: "texto", empty: true }',
+    10,
+  );
+  assert.deepEqual(generateWorld(scenario(all)).entities.notes.map((r) => r.note), Array(10).fill(''));
+
+  // With `nulls` + `empty` + conditional on the same field, nulls and empty rows are both preserved.
+  const withNulls = withEmpty(
+    '      locked: [true]\n      note: { default: string, when: { locked: true }, value: "texto", empty: 0.5 }',
+    10,
+  ).replace('    fields:\n', '    nulls: { note: 3 }\n    fields:\n');
+  const mixedRows = generateWorld(scenario(withNulls)).entities.notes;
+  assert.equal(mixedRows.filter((r) => r.note === null).length, 3);
+  assert.equal(mixedRows.filter((r) => r.note === '').length, 5);
+  assert.equal(mixedRows.filter((r) => r.note === 'texto').length, 2);
+
+  // Downstream conditional fields observe the preserved "" rather than the skipped override.
+  const chained = withEmpty(
+    '      locked: [true]\n      note: { default: string, when: { locked: true }, value: "texto", empty: 0.4 }\n      is_empty_note: { default: [false], when: { note: "" }, value: [true] }',
+    10,
+  );
+  for (const r of generateWorld(scenario(chained)).entities.notes) {
+    assert.equal(r.is_empty_note, r.note === '');
+  }
+});
+
 test('empty strings: validation errors', () => {
   const bad = (fieldsYaml) => {
     try {

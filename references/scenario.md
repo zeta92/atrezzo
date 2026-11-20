@@ -105,7 +105,7 @@ world:
 - `empty` (optional): a number `0..1` (share of rows: `round(empty × total)` rows get `""`) or `true` (every row). `empty: 1` = `true`; `empty: 0` = not declared. It can also go on a conditional field whose `default` is `string` (`{ default: string, when, value, empty }`).
 - The rows come from their own stream (`empty:<entity>.<field>`): the drawn values of every other field and entity stay as they were, the non-empty rows keep their value, and scenarios that do not use it keep their hash.
 - With `nulls:` on the same field, the empty rows are drawn among the rows that are not null: a row is null or `""`, never both (with `empty: true`, every non-null row is `""`). The nulls fall on the same rows as without `empty`.
-- Applied after `nulls` and before conditional fields, so a `when: { description: "" }` matches the empty rows.
+- Applied after `nulls` and before conditional fields, so a `when: { description: "" }` matches the empty rows. On a conditional field itself, the emptied rows are preserved (just like `nulls`), so a matching `when` does not overwrite `""`.
 - Validation (scenario error): `empty` only on `string` fields (not `email`, `url`, `uuid`, enums or any other type), and only `0..1` or `true`.
 
 ##### Conditional field values (`{ default, when, value }`)
@@ -125,7 +125,7 @@ world:
 - `default` (required): any valid `fields` type (`string`, `integer`, `number`, `boolean`, `date`, `email`, `uuid`, `url`, or a non-empty list of scalar values). Drawn as usual before conditions are evaluated, so other fields and entities keep the values they had without the rule.
 - `when` (required): non-empty map `<field>: <value>` (or `<field>: [<values>]`). Matches when every listed field of the row equals the given value (or one of the given values).
 - `value` (required): scalar or non-empty list of scalar values compatible with `default`. Single-item lists assign that value directly; multi-item lists pick deterministically per row from a dedicated stream (`when:<entity>.<field>`).
-- Evaluation order: runs deterministically after normal field draws, `values_order: cycle`, `seed_first`, and `nulls` on other fields (explicit `nulls` on the target field itself are preserved). Without conditional fields, scenario normalization and hashes are unchanged.
+- Evaluation order: runs deterministically after normal field draws, `values_order: cycle`, `seed_first`, and `nulls`/`empty` on other fields (explicit `nulls` and `empty` strings on the target field itself are preserved). Without conditional fields, scenario normalization and hashes are unchanged.
 - Validation (scenario error): every key in `when` must reference another existing field of the same entity (no self-references or cycles); `value` must be compatible with `default`'s type; impossible conditions (such as matching a `boolean` field against a non-boolean, an enum/distribution field against an undeclared value, or an `id`/foreign key outside `1..total`) are rejected.
 
 #### `derive`: a foreign key copied through another one

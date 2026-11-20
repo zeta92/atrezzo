@@ -264,14 +264,17 @@ function generateEntity(spec, scenario, counts, built) {
   // Empty strings ("fields: { description: { type: string, empty: 0.4 } }"): round(ratio * total)
   // rows get "", drawn from their own stream (empty:<entity>.<field>) among the rows not set to
   // null, so a row is null or empty, never both. `empty: true` (ratio 1) empties every non-null row.
+  const emptied = new Map();
   for (const [field, ratio] of Object.entries(spec.empty || {})) {
     const eligible = rows.map((_, i) => i).filter((i) => !nulled.get(field)?.has(i));
     const k = Math.min(Math.round(ratio * n), eligible.length);
-    for (const j of createRng(scenario.seed, `empty:${spec.name}.${field}`).sample(eligible.length, k)) rows[eligible[j]][field] = '';
+    const chosen = createRng(scenario.seed, `empty:${spec.name}.${field}`).sample(eligible.length, k).map((j) => eligible[j]);
+    for (const idx of chosen) rows[idx][field] = '';
+    emptied.set(field, new Set(chosen));
   }
 
-  // Conditional field overrides: applied after normal field assignment (and nulls on other fields)
-  // in topological order, preserving explicit nulls on the target field itself.
+  // Conditional field overrides: applied after normal field assignment (and nulls/empty on other fields)
+  // in topological order, preserving explicit nulls and empty strings on the target field itself.
   if (spec.fields) {
     const entries = Object.entries(spec.fields).filter(([, entry]) => isObj(entry));
     if (entries.length) {
@@ -296,7 +299,7 @@ function generateEntity(spec, scenario, counts, built) {
       for (const [f] of entries) pushCond(f);
       for (let i = 0; i < rows.length; i++) {
         for (const c of conditionals) {
-          if (nulled.get(c.field)?.has(i)) continue;
+          if (nulled.get(c.field)?.has(i) || emptied.get(c.field)?.has(i)) continue;
           if (matchesWhen(rows[i], c.when)) rows[i][c.field] = c.rng ? c.rng.pick(c.value) : c.value[0];
         }
       }
