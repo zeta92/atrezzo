@@ -64,7 +64,7 @@ Commands:
   verify <flow.yaml> [--url http://127.0.0.1:4010] [--driver http|playwright] [--header "Name: value"]… [--diagnose]
          [--strict-console] [--no-reset] [--json]
       Runs the flow against the mock (or against the real app if the flow has no scenario) and compares.
-      --strict-console fails a step on browser console.error (playwright driver; otherwise shown as WARNING).
+      --strict-console fails a step on browser console.error (requires --driver playwright; without it, console.error is shown as WARNING).
       Uncaught page errors (pageerror) always fail the step with hypothesis page-error.
       --header adds a header to every request (repeatable; it wins over the flow's headers). Use it for a
       session: the flow keeps only values safe to commit, and atrezzo reads no environment variable.
@@ -263,6 +263,7 @@ async function cmdVerify({ pos, flags }) {
   const flow = loadFlow(resolve(pos[0]));
   const driver = flags.driver ?? cfg.verify.driver;
   if (!['http', 'playwright'].includes(driver)) throw new AtrezzoError(`--driver must be http or playwright (got "${driver}")`);
+  if (flags['strict-console'] && driver !== 'playwright') throw new AtrezzoError('--strict-console requires --driver playwright (the http driver has no browser console)');
   const url = flags.url ?? flow.baseUrl ?? cfg.mock.baseUrl;
   // --header @- takes the header lines from stdin, so the value never sits in argv (ps) or history.
   const items = (flags.header ?? []).flatMap((h) => (h === '@-' ? headerLines(readFileSync(0, 'utf8')) : [h]));

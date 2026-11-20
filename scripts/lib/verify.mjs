@@ -295,6 +295,9 @@ async function openStep(pw, url, step, headers, storageScript) {
  */
 export async function runVerify(flow, opts) {
   const { url, driver = 'http', diagnose: wantDiag = false, strictConsole = false, fetchImpl = fetch, cwd = process.cwd() } = opts;
+  if (strictConsole && driver !== 'playwright') {
+    throw new AtrezzoError('--strict-console requires --driver playwright (the http driver has no browser console)', { exitCode: EXIT.INVALID });
+  }
   const reset = (opts.reset ?? true) && !!flow.scenario; // without a scenario there is no mock to reset
   const flowHeaders = flow.headers ?? {};
   const runHeaders = opts.headers ?? {}; // verify --header: on every request, over flow and step headers

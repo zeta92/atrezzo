@@ -564,3 +564,89 @@ test('CLI verify --driver playwright (real Chromium): console.error only warns u
     await new Promise((resolve) => app.close(resolve));
   }
 });
+
+test('playwright driver: selector failure combined with pageerror marks step KO and formats report cleanly', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': `steps:
+  - screen: orders
+    visit: /orders
+    expect:
+      - selector: "#broken"
+        count: 1
+      - selector: "#ok"
+        count: 1
+`,
+  });
+  const fp = fakeConsolePage({
+    countsByPath: { '/orders': { '#ok': 1 } },
+    onVisit: (_path, { emitPageError }) => emitPageError(new Error('boom during render')),
+    onCount: (_path, sel) => {
+      if (sel === '#broken') throw new Error('Target page, context or browser has been closed');
+    },
+  });
+  const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', diagnose: true, pageFactory: fp.factory });
+  assert.equal(r.exitCode, 1);
+  assert.deepEqual(r.rows.map((x) => x.status), ['KO', 'KO']);
+  assert.deepEqual(r.rows.map((x) => x.obtained), [0, 1]);
+  assert.match(r.rows[0].note, /uncaught page error: Error: boom during render/);
+  assert.equal(r.rows[1].note, 'same cause as #1');
+  assert.equal(r.rows[0].hypotheses[0].type, 'page-error');
+  const report = formatReport(r);
+  assert.match(report, /#broken/);
+  assert.match(report, /RED/);
+});
+
+test('playwright driver: step without expect surfaces synthetic (page) KO on pageerror and --strict-console', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': `steps:
+  - screen: blank
+    visit: /blank
+`,
+  });
+  const fpPageErr = fakeConsolePage({
+    onVisit: (_path, { emitPageError }) => emitPageError(new RangeError('Invalid array length')),
+  });
+  const r1 = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', diagnose: true, pageFactory: fpPageErr.factory });
+  assert.equal(r1.exitCode, 1);
+  assert.equal(r1.rows.length, 1);
+  assert.deepEqual(r1.rows[0].expect, { selector: '(page)', count: 0 });
+  assert.equal(r1.rows[0].status, 'KO');
+  assert.equal(r1.rows[0].obtained, null);
+  assert.equal(r1.rows[0].hypotheses[0].type, 'page-error');
+  const rep1 = formatReport(r1);
+  assert.match(rep1, /\(page\)\s+=0\s+-\s+KO/);
+  assert.match(rep1, /RED/);
+
+  const fpConsoleErr = fakeConsolePage({
+    onVisit: (_path, { emitConsole }) => emitConsole('error', 'Unhandled API failure'),
+  });
+  const r2 = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', diagnose: true, strictConsole: true, pageFactory: fpConsoleErr.factory });
+  assert.equal(r2.exitCode, 1);
+  assert.equal(r2.rows.length, 1);
+  assert.deepEqual(r2.rows[0].expect, { selector: '(page)', count: 0 });
+  assert.equal(r2.rows[0].status, 'KO');
+  assert.equal(r2.rows[0].hypotheses[0].type, 'console-error');
+  const rep2 = formatReport(r2);
+  assert.match(rep2, /\(page\)\s+=0\s+-\s+KO/);
+  assert.match(rep2, /RED/);
+});
+
+test('--strict-console with http driver is rejected (exit 3), never GREEN', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': 'steps:\n  - screen: orders\n    requests: { orders: "GET /api/orders" }\n    expect: [{ selector: ".row", count: 1, data: { request: orders } }]\n',
+  });
+  await assert.rejects(
+    () => runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'http', strictConsole: true }),
+    (e) => e instanceof AtrezzoError && e.exitCode === 3 && /--strict-console requires --driver playwright/.test(e.message),
+  );
+
+  const cliExplicit = await cliAsync(['verify', join(flowDir, 'f.yaml'), '--url', url, '--driver', 'http', '--strict-console'], dir);
+  assert.equal(cliExplicit.code, 3, cliExplicit.stderr + cliExplicit.stdout);
+  assert.match(cliExplicit.stderr, /--strict-console requires --driver playwright/);
+  assert.doesNotMatch(cliExplicit.stdout, /GREEN/);
+
+  const cliDefault = await cliAsync(['verify', join(flowDir, 'f.yaml'), '--url', url, '--strict-console'], dir);
+  assert.equal(cliDefault.code, 3, cliDefault.stderr + cliDefault.stdout);
+  assert.match(cliDefault.stderr, /--strict-console requires --driver playwright/);
+  assert.doesNotMatch(cliDefault.stdout, /GREEN/);
+});

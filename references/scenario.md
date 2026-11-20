@@ -647,7 +647,7 @@ When a flow step intentionally verifies an auth guard or a route redirect, decla
 Under `--driver playwright`, `verify` listens for `pageerror` (uncaught runtime exceptions and unhandled rejections) and `console.error` throughout each step's page load and assertion checks:
 
 - **Uncaught exceptions (`pageerror`)**: any uncaught exception marks every assertion of the step `KO` (even if its selector counts happen to match, so a blank-screen crash or error toast never produces a false `OK`), records the message (clipped to 300 characters) in the failure note, and under `--diagnose` emits a `page-error` hypothesis (`confidence: high`) with the clipped message. If `wait_for` timed out on a crashed page, `page-error` is surfaced instead of `navigation`.
-- **Console errors (`console.error`)**: by default, `console.error` entries are emitted as `WARNING:` lines in the report without breaking a step whose assertions pass. Pass `--strict-console` to fail (`KO`) any step that emits `console.error` (with a `console-error` hypothesis under `--diagnose`).
+- **Console errors (`console.error`)**: by default, `console.error` entries are emitted as `WARNING:` lines in the report without breaking a step whose assertions pass. Pass `--strict-console` (requires `--driver playwright`; rejected with exit `3` under `--driver http`) to fail (`KO`) any step that emits `console.error` (with a `console-error` hypothesis under `--diagnose`).
 - **`--json` output**: each Playwright step in `steps` includes `console: [{ level, text }]`, where `level` is `'pageerror'` for uncaught exceptions or `'error'` for `console.error` (or `[]` when none occurred).
 
 ## Supported YAML subset
