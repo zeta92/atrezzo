@@ -79,7 +79,7 @@ function normalizeExpect(item, field, issues) {
 
 // ---------- world ----------
 
-const ENTITY_KEYS = ['total', 'distribution', 'distribution_field', 'amount', 'ref', 'nulls', 'values', 'days', 'fields', 'derive', 'seed_first', 'values_order'];
+const ENTITY_KEYS = ['total', 'distribution', 'distribution_field', 'amount', 'ref', 'nulls', 'values', 'days', 'fields', 'derive', 'seed_first', 'values_order', 'counts'];
 
 /** `values_order`: how a field with a list of values draws it (random: the PRNG; cycle: row i takes values[i % n]). */
 export const VALUES_ORDERS = ['random', 'cycle'];
@@ -561,6 +561,10 @@ function normalizeWorld(world, issues) {
   for (const { spec, raw, f } of specs) {
     // Only when declared: a scenario without them keeps its normalized form (and its hash).
     if (raw.derive !== undefined) normalizeDerive(spec, raw.derive, `${f}.derive`, byName, issues);
+    if (raw.counts !== undefined) {
+      const parsedCounts = parseCounts(raw.counts, spec, `${f}.counts`, byName, issues);
+      if (parsedCounts.length) spec.counts = parsedCounts;
+    }
     if (raw.seed_first !== undefined) normalizeSeedFirst(spec, raw.seed_first, `${f}.seed_first`, issues);
     if (raw.values_order !== undefined) normalizeValuesOrder(spec, raw.values_order, `${f}.values_order`, issues);
     for (const r of spec.refs) {
@@ -583,7 +587,7 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'include', 'embed', 'shape', 'envelope', 'detail', 'pick', 'latency', 'pluck', 'error'];
+const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'include', 'embed', 'counts', 'shape', 'envelope', 'detail', 'pick', 'latency', 'pluck', 'error'];
 
 /** Levels of `embed` below an endpoint's entity (the endpoint's own children are level 1). */
 export const MAX_EMBED_DEPTH = 4;
@@ -782,6 +786,83 @@ function parseSorts(raw, fields, filters, pagination, f, issues) {
 
 const USER_TOKEN_RE = /^\$user\.([A-Za-z_][A-Za-z0-9_]*)$/;
 
+const FORBIDDEN_COUNT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function parseCounts(raw, parentSpec, f, byName, issues) {
+  if (!isObj(raw) || !Object.keys(raw).length) {
+    issues.add(f, 'must be a non-empty map <name>: { entity: <entity>, on: <fk> }');
+    return [];
+  }
+  const parentFields = entityFields(parentSpec);
+  const out = [];
+  const seenFields = new Map();
+  for (const [key, val] of Object.entries(raw)) {
+    const ff = `${f}.${key}`;
+    if (!PARAM_NAME.test(key) || FORBIDDEN_COUNT_KEYS.has(key)) {
+      issues.add(ff, 'invalid count key (letters, digits, "_")');
+      continue;
+    }
+    if (!isObj(val)) {
+      issues.add(ff, `must be a map { entity, on }; got ${typeName(val)}`);
+      continue;
+    }
+    issues.unknownKeys(val, ['entity', 'on'], ff);
+    const targetEntity = val.entity;
+    let childSpec = null;
+    if (typeof targetEntity !== 'string' || !targetEntity) {
+      issues.add(`${ff}.entity`, `required; a declared world entity (declared: ${Object.keys(byName).join(', ') || 'none'})`);
+    } else if (!Object.hasOwn(byName, targetEntity)) {
+      issues.add(`${ff}.entity`, `"${targetEntity}" is not declared in world (declared: ${Object.keys(byName).join(', ') || 'none'})`);
+    } else {
+      childSpec = byName[targetEntity];
+    }
+    const on = val.on;
+    let onOk = false;
+    if (typeof on !== 'string' || !on) {
+      issues.add(`${ff}.on`, `required; foreign key field on ${childSpec ? `"${targetEntity}"` : 'the child entity'} pointing to "${parentSpec.name}"`);
+    } else if (childSpec) {
+      const childFields = entityFields(childSpec);
+      const childFkTarget = Object.fromEntries(childSpec.refs.map((r) => [templateFor(r).fk, r]));
+      const childFks = Object.keys(childFkTarget);
+      if (!childFields.includes(on)) {
+        issues.add(`${ff}.on`, `field "${on}" does not exist in "${targetEntity}" (fields: ${childFields.join(', ')}; foreign keys: ${childFks.join(', ') || 'none'})`);
+      } else if (!Object.hasOwn(childFkTarget, on)) {
+        issues.add(`${ff}.on`, `"${on}" is not a foreign key of "${targetEntity}" (its foreign keys: ${childFks.join(', ') || `none; declare ref: ${parentSpec.name}`})`);
+      } else if (childFkTarget[on] !== parentSpec.name) {
+        issues.add(`${ff}.on`, `"${on}" is a foreign key to "${childFkTarget[on]}", not "${parentSpec.name}"`);
+      } else {
+        onOk = true;
+      }
+    }
+    if (childSpec && onOk) {
+      const field = key === targetEntity ? `${key}_count` : key;
+      if (field === 'id') {
+        issues.add(ff, 'count field cannot be named "id"');
+        continue;
+      }
+      if (parentFields.includes(field)) {
+        issues.add(ff, `"${field}" is already a field of "${parentSpec.name}"; the count would overwrite it`);
+        continue;
+      }
+      if (seenFields.has(field)) {
+        issues.add(ff, `duplicate output field "${field}" (already used by "${seenFields.get(field)}")`);
+        continue;
+      }
+      seenFields.set(field, key);
+      out.push({ field, entity: targetEntity, on });
+    }
+  }
+  return out;
+}
+
+function mergeCounts(entityCounts, endpointCounts) {
+  if (!entityCounts?.length && !endpointCounts?.length) return [];
+  const byField = new Map();
+  for (const c of entityCounts ?? []) byField.set(c.field, c);
+  for (const c of endpointCounts ?? []) byField.set(c.field, c);
+  return [...byField.values()];
+}
+
 function parseUserToken(val, ff, byName, auth, authDeclared, issues, targetField = null, targetSpec = null) {
   const m = USER_TOKEN_RE.exec(val);
   if (!m) {
@@ -939,6 +1020,8 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
       }
     }
     const embed = ep.embed === undefined ? [] : normalizeEmbed(ep.embed, spec, [spec.name], `${f}.embed`, byName, issues);
+    const epCounts = ep.counts === undefined ? [] : parseCounts(ep.counts, spec, `${f}.counts`, byName, issues);
+    const epRowCounts = mergeCounts(spec.counts, epCounts);
     let pagination = null;
     if (ep.pagination !== undefined && ep.pagination !== null) {
       if (!isObj(ep.pagination)) issues.add(`${f}.pagination`, 'must be a map { param_limit, param_offset, default_limit, max_limit }');
@@ -972,6 +1055,13 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
         else include.push(inc);
       });
     }
+    const embedNames = new Set(embed.map((e) => (typeof e === 'string' ? e : e.entity)));
+    const includeNames = new Set(include.map((inc) => templateFor(inc).singular));
+    for (const c of epRowCounts) {
+      const cf = epCounts.some((ec) => ec.field === c.field) ? `${f}.counts` : f;
+      if (embedNames.has(c.field)) issues.add(cf, `count field "${c.field}" conflicts with embedded "${c.field}"`);
+      else if (includeNames.has(c.field)) issues.add(cf, `count field "${c.field}" conflicts with included "${c.field}"`);
+    }
     let shape = ep.shape ?? 'array';
     if (!SHAPES.includes(shape)) issues.add(`${f}.shape`, `must be ${SHAPES.map((s) => `"${s}"`).join(', ')}; got ${JSON.stringify(shape)}`);
     let pick = null;
@@ -998,7 +1088,10 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
       if (typeof ep.pluck !== 'string' || !ep.pluck) issues.add(`${f}.pluck`, `must be a field name of "${spec.name}" (fields: ${fields.join(', ')})`);
       else if (!fields.includes(ep.pluck)) issues.add(`${f}.pluck`, `field "${ep.pluck}" does not exist in "${spec.name}" (fields: ${fields.join(', ')}); pluck answers that field of each row, as a string`);
       else pluck = ep.pluck;
-      if (include.length || embed.length) issues.add(`${f}.pluck`, `incompatible with ${include.length ? 'include' : 'embed'}: a plucked response is a list of values, not rows`);
+      if (include.length || embed.length || ep.counts !== undefined || epRowCounts.length) {
+        const what = include.length ? 'include' : embed.length ? 'embed' : 'counts';
+        issues.add(`${f}.pluck`, `incompatible with ${what}: a plucked response is a list of values, not rows`);
+      }
     }
     // `error: { status, body }`: the endpoint always answers that, whatever the world holds.
     let error = null;
@@ -1024,6 +1117,7 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
     if (latency !== null) norm.latency = latency; // same: absent unless declared
     if (params.length) norm.params = params; // same
     if (embed.length) norm.embed = embed; // same
+    if (epRowCounts.length) norm.counts = epRowCounts; // same: absent unless declared
     if (pluck) norm.pluck = pluck; // same
     if (error) norm.error = error; // same
     out.push(norm);

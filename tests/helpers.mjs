@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, statfsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -65,9 +65,35 @@ steps:
       issues: GET /api/orders?status=issue
 `;
 
+const createdTmpDirs = new Set();
+let cleanupRegistered = false;
+
+function registerCleanup() {
+  if (cleanupRegistered) return;
+  cleanupRegistered = true;
+  process.on('exit', () => {
+    for (const dir of createdTmpDirs) {
+      try { rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  });
+}
+
+function testTempRoot() {
+  const minBytes = 10 * 1024 * 1024;
+  for (const dir of [tmpdir(), '/var/tmp']) {
+    try {
+      const s = statfsSync(dir);
+      if (Number(s.bavail) * Number(s.bsize) >= minBytes) return dir;
+    } catch {}
+  }
+  return tmpdir();
+}
+
 /** Temp project with the given files. */
 export function tmpProject(files = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'atrezzo-test-'));
+  registerCleanup();
+  const dir = mkdtempSync(join(testTempRoot(), 'atrezzo-test-'));
+  createdTmpDirs.add(dir);
   for (const [rel, content] of Object.entries(files)) {
     mkdirSync(dirname(join(dir, rel)), { recursive: true });
     writeFileSync(join(dir, rel), content);

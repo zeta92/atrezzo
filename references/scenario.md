@@ -65,7 +65,7 @@ expect:
 Any other field is an error (`unknown field`). A scenario can also be `.json` with the same structure (`atrezzo import --format json`).
 
 ### Entities (`world.<name>`)
-An integer (= `total`) or a map with: `total` (required), `distribution`, `distribution_field` (default `status`), `amount`, `ref`, `nulls`, `values`, `days`, `fields`, `derive`, `seed_first`, `values_order`.
+An integer (= `total`) or a map with: `total` (required), `distribution`, `distribution_field` (default `status`), `amount`, `ref`, `nulls`, `values`, `days`, `fields`, `derive`, `seed_first`, `values_order`, `counts`.
 
 #### `fields`: typed fields (written by `atrezzo import`)
 
@@ -182,7 +182,7 @@ Generator guarantees:
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields for query filters, `{ <field>: "$user.<field>" }` for seeded-user filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `shape` (`array` default, `envelope`, `object`), `envelope` (custom response keys `{ items, total, page, per_page }` when `shape: envelope`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
+`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields for query filters, `{ <field>: "$user.<field>" }` for seeded-user filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `counts` (child count fields `{ <name>: { entity, on } }`), `shape` (`array` default, `envelope`, `object`), `envelope` (custom response keys `{ items, total, page, per_page }` when `shape: envelope`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
 
 - Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
 - `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` or `envelope` uses `data`). A single key, no nested paths.
@@ -362,6 +362,31 @@ endpoints:
 - Each level resolves its own relation: the child must `ref:` the entity it is embedded in (its fk is `<singular of that entity>_id`), and every embedded row is the full row of the world, with its nested lists added.
 - At most **4 levels** below the endpoint's entity. An entity that would end up inside its own rows (`alphas → betas → alphas`) is a cycle, and the scenario is invalid with that path in the message.
 - The short form still works (`embed: [items]`, `embed: items`); `{ entity: items }` without `embed` is the same as `items` (same scenario hash).
+
+#### Child counts (`counts`)
+
+When a parent row needs the number of child rows pointing to it (for example a kanban bucket's `count` or `tasks_count` when the child list is paginated or limited), declare `counts` on the **entity** (`world.<name>.counts`) or on an **endpoint** (`endpoints[i].counts`):
+
+```yaml
+world:
+  buckets: 4
+  tasks:
+    total: 20
+    ref: buckets
+endpoints:
+  - path: /api/buckets
+    entity: buckets
+    filters: [id]
+    pagination: { param_limit: limit, param_offset: offset }
+    counts:
+      tasks: { entity: tasks, on: bucket_id }   # → numeric `tasks_count` on each row
+      count: { entity: tasks, on: bucket_id }   # → numeric `count` on each row (declared name)
+```
+
+- **Field naming**: when the key equals the child `entity` name (`tasks: { entity: tasks, on: bucket_id }`), the row exposes `<entity>_count` (`tasks_count`); any other key (`count`, `open_tasks`, `tasks_count`) is exposed under that exact declared name.
+- **Entity or endpoint**: declaring `counts` on `world.<entity>` applies to every endpoint projecting that entity; declaring `counts` on an endpoint adds to (or overrides by output field name) the entity's counts.
+- **World-computed and deterministic**: counts are computed over **all** rows of `entity` in `world` whose `on` foreign key equals the parent row's `id` (`null` foreign keys are skipped; empty child sets or parents with no matching children yield `0`). Counts ignore endpoint `pagination` / `limit` and endpoint filters on the rows—every surviving row after the endpoint's filters, path parameters, `sort`/`sorts`, `shape: object`, `shape: envelope`, and `/:id` detail routes carries its exact world count without mutating `dataset.entities`.
+- **Validation (scenario error)**: `entity` must be declared in `world`, `on` must be an existing foreign key of `entity` pointing to the parent entity, output field names must be unique and not collide with any field of the parent entity (or `include`/`embed` keys on the endpoint), and `counts` (on the entity or endpoint) cannot be combined with `pluck`. Without `counts`, behaviour and scenario hashes stay unchanged.
 
 #### Plain values (`pluck`)
 

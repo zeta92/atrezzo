@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.17.0
+
+**Declarative child counts on entities and endpoints (`counts`).** An entity (`world.<name>.counts`) or endpoint (`endpoints[i].counts`) can declare `counts: { tasks: { entity: tasks, on: bucket_id } }` to expose a numeric `tasks_count` (when the key matches `entity`) or any declared field name (such as `count`) on each projected row. Counts are computed deterministically over all matching rows in `world` (returning `0` when none match or when the child entity has 0 rows), remain exact even when the endpoint applies filters or `limit`/`offset` pagination, work on list, detail (`/:id`), `envelope`, and `object` routes without mutating the dataset, and are reflected in Prism OpenAPI schemas. Validation rejects undeclared child entities, missing or non-matching foreign keys, duplicate output names, and `pluck` combinations (exit 3); scenarios without `counts` keep their exact behaviour and hash. Documented in `references/scenario.md`, covered in `tests/contract.test.mjs`.
+
 ### 0.16.0
 
 **Configurable pagination envelope keys per endpoint (`envelope`).** Endpoints with `shape: envelope` can declare `envelope: { items: articles, total: articlesCount }` (and optionally `page`, `per_page`, including dot-paths like `meta.total`) so APIs returning custom envelope structures such as `{ articles, articlesCount }` or `{ data, meta: { total } }` project exact keys without leaving client reads `undefined`. Without `envelope`, the default `{ data, total, limit, offset }` (or `pick`) envelope and scenario hashes stay unchanged. Validation rejects non-`envelope` shapes, `pick` combinations, empty/invalid keys, duplicates, and nested path conflicts (exit 3); `serve`, `verify`, and Prism OpenAPI output honour the declared keys. Documented in `references/scenario.md`, covered in `tests/contract.test.mjs`.

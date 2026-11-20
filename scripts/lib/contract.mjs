@@ -274,8 +274,31 @@ export function createEngine(dataset) {
     return row;
   }
 
+  // Child counts per parent id, for declarative `ep.counts`: built once per (entity, fk) pair.
+  const rowCountIndex = new Map();
+  function rowCountMap(entity, fk) {
+    const key = `${entity}:${fk}`;
+    if (!rowCountIndex.has(key)) {
+      const byParent = new Map();
+      for (const r of dataset.entities[entity] ?? []) {
+        const v = r[fk];
+        if (v !== null && v !== undefined) byParent.set(v, (byParent.get(v) ?? 0) + 1);
+      }
+      rowCountIndex.set(key, byParent);
+    }
+    return rowCountIndex.get(key);
+  }
+
+  function withRowCounts(row, ep) {
+    if (!ep.counts?.length) return row;
+    for (const { field, entity, on } of ep.counts) {
+      row[field] = rowCountMap(entity, on).get(row.id) ?? 0;
+    }
+    return row;
+  }
+
   /** A row as an endpoint answers it: parents (`include`), children (`embed`) and counts. */
-  const shapeRow = (row, ep, counts) => withCounts(withEmbeds(withIncludes(row, ep), ep.entity, ep.embed), counts);
+  const shapeRow = (row, ep, counts) => withCounts(withRowCounts(withEmbeds(withIncludes(row, ep), ep.entity, ep.embed), ep), counts);
 
   /** `pluck: id`: the row answers that field's value as a string (what `includes(String(id))` compares); null stays null. */
   const answerRow = (row, ep, counts) => {
