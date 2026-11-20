@@ -318,3 +318,142 @@ test('conditional field: in-bounds id, foreign key, and acyclic multi-step chain
     }
   }
 });
+
+// ---------- empty strings (`fields.<f>: { type: string, empty }`) ----------
+
+const withEmpty = (fieldsYaml, total = 200) => SCENARIO.replace(
+  '  users: 2',
+  `  users: 2\n  notes:\n    total: ${total}\n    fields:\n${fieldsYaml}`,
+);
+
+test('empty strings: a proportion empties about that share of the rows', () => {
+  const d = generateWorld(scenario(withEmpty('      title: string\n      description: { type: string, empty: 0.4 }')));
+  const rows = d.entities.notes;
+  const empty = rows.filter((r) => r.description === '').length;
+  assert.ok(Math.abs(empty / rows.length - 0.4) <= 0.05, `${empty} empty of ${rows.length}`);
+  for (const r of rows) {
+    assert.equal(typeof r.description, 'string');
+    assert.notEqual(r.title, '');
+  }
+  // empty: 0 never empties anything.
+  const none = generateWorld(scenario(withEmpty('      description: { type: string, empty: 0 }')));
+  assert.ok(none.entities.notes.every((r) => r.description !== ''));
+});
+
+test('empty strings: empty: true empties every row; empty: 1 too', () => {
+  for (const v of ['true', '1']) {
+    const d = generateWorld(scenario(withEmpty(`      description: { type: string, empty: ${v} }`, 7)));
+    assert.deepEqual(d.entities.notes.map((r) => r.description), Array(7).fill(''));
+  }
+});
+
+test('empty strings: deterministic, own stream, other fields and hashes untouched', () => {
+  const text = withEmpty('      title: string\n      description: { type: string, empty: 0.4 }');
+  const a = generateWorld(scenario(text));
+  const b = generateWorld(scenario(text));
+  assert.equal(a.hash, b.hash);
+  assert.equal(datasetJson(a), datasetJson(b));
+
+  // Same rows without `empty`: every other field keeps its value, and the non-empty descriptions too.
+  const plainText = withEmpty('      title: string\n      description: string');
+  const plain = generateWorld(scenario(plainText));
+  a.entities.notes.forEach((r, i) => {
+    const p = plain.entities.notes[i];
+    assert.equal(r.title, p.title);
+    if (r.description !== '') assert.equal(r.description, p.description);
+  });
+  for (const name of ['customers', 'orders', 'users']) assert.deepEqual(a.entities[name], plain.entities[name]);
+
+  // A scenario that does not use it keeps its normalized form (and its hash): `{ type: string }` = `string`.
+  assert.deepEqual(scenario(withEmpty('      title: string\n      description: { type: string }')), scenario(plainText));
+  assert.notEqual(scenarioHash(scenario(text)), scenarioHash(scenario(plainText)));
+
+  // Another seed picks other rows.
+  const other = generateWorld(scenario(text.replace('seed: 7712', 'seed: 1')));
+  assert.notDeepEqual(
+    a.entities.notes.map((r) => r.description === ''),
+    other.entities.notes.map((r) => r.description === ''),
+  );
+});
+
+test('empty strings: compatible with nulls (a row is null or empty, never both)', () => {
+  const text = withEmpty('      description: { type: string, empty: 0.5 }', 10).replace(
+    '    fields:\n      description',
+    '    nulls: { description: 3 }\n    fields:\n      description',
+  );
+  const rows = generateWorld(scenario(text)).entities.notes;
+  assert.equal(rows.filter((r) => r.description === null).length, 3);
+  assert.equal(rows.filter((r) => r.description === '').length, 5);
+  // The nulls land on the same rows as without `empty`.
+  const plainRows = generateWorld(scenario(text.replace('{ type: string, empty: 0.5 }', 'string'))).entities.notes;
+  assert.deepEqual(rows.map((r) => r.description === null), plainRows.map((r) => r.description === null));
+  // empty: true with nulls: every row that is not null is empty.
+  const all = generateWorld(scenario(text.replace('empty: 0.5', 'empty: true'))).entities.notes;
+  assert.equal(all.filter((r) => r.description === null).length, 3);
+  assert.equal(all.filter((r) => r.description === '').length, 7);
+});
+
+test('empty strings: conditional fields can match the empty value', () => {
+  const text = withEmpty('      description: { type: string, empty: 0.5 }\n      has_description: { default: [true], when: { description: "" }, value: [false] }', 20);
+  for (const r of generateWorld(scenario(text)).entities.notes) assert.equal(r.has_description, r.description !== '');
+});
+
+test('empty strings: preserved when the same conditional field has a matching override', () => {
+  // All rows match `when: { locked: true }` and assign "texto": `empty` still keeps its share.
+  const partial = withEmpty(
+    '      locked: [true]\n      note: { default: string, when: { locked: true }, value: "texto", empty: 0.4 }',
+    10,
+  );
+  const partialRows = generateWorld(scenario(partial)).entities.notes;
+  assert.equal(partialRows.filter((r) => r.note === '').length, 4);
+  assert.equal(partialRows.filter((r) => r.note === 'texto').length, 6);
+
+  // `empty: true` with an always-matching conditional leaves every row empty.
+  const all = withEmpty(
+    '      locked: [true]\n      note: { default: string, when: { locked: true }, value: "texto", empty: true }',
+    10,
+  );
+  assert.deepEqual(generateWorld(scenario(all)).entities.notes.map((r) => r.note), Array(10).fill(''));
+
+  // With `nulls` + `empty` + conditional on the same field, nulls and empty rows are both preserved.
+  const withNulls = withEmpty(
+    '      locked: [true]\n      note: { default: string, when: { locked: true }, value: "texto", empty: 0.5 }',
+    10,
+  ).replace('    fields:\n', '    nulls: { note: 3 }\n    fields:\n');
+  const mixedRows = generateWorld(scenario(withNulls)).entities.notes;
+  assert.equal(mixedRows.filter((r) => r.note === null).length, 3);
+  assert.equal(mixedRows.filter((r) => r.note === '').length, 5);
+  assert.equal(mixedRows.filter((r) => r.note === 'texto').length, 2);
+
+  // Downstream conditional fields observe the preserved "" rather than the skipped override.
+  const chained = withEmpty(
+    '      locked: [true]\n      note: { default: string, when: { locked: true }, value: "texto", empty: 0.4 }\n      is_empty_note: { default: [false], when: { note: "" }, value: [true] }',
+    10,
+  );
+  for (const r of generateWorld(scenario(chained)).entities.notes) {
+    assert.equal(r.is_empty_note, r.note === '');
+  }
+});
+
+test('empty strings: validation errors', () => {
+  const bad = (fieldsYaml) => {
+    try {
+      scenario(withEmpty(fieldsYaml, 5));
+    } catch (e) {
+      assert.ok(e instanceof AtrezzoError);
+      assert.equal(e.exitCode, 3);
+      return e.issues.join('\n');
+    }
+    assert.fail('expected validation error');
+  };
+  assert.match(bad('      count: { type: integer, empty: 0.2 }'), /notes\.fields\.count\.empty": only string fields can be empty \(this one is integer\)/);
+  assert.match(bad('      kind: { type: [a, b], empty: 0.2 }'), /notes\.fields\.kind\.empty": only string fields can be empty/);
+  assert.match(bad('      link: { type: url, empty: true }'), /notes\.fields\.link\.empty": only string fields can be empty \(this one is url\)/);
+  assert.match(bad('      description: { type: string, empty: 1.5 }'), /notes\.fields\.description\.empty": must be a number between 0 and 1 or true/);
+  assert.match(bad('      description: { type: string, empty: -0.1 }'), /notes\.fields\.description\.empty": must be a number between 0 and 1 or true/);
+  assert.match(bad('      description: { type: string, empty: false }'), /notes\.fields\.description\.empty": must be a number between 0 and 1 or true/);
+  assert.match(bad('      description: { type: string, empty: "0.4" }'), /notes\.fields\.description\.empty": must be a number between 0 and 1 or true/);
+  assert.match(bad('      description: { empty: 0.4 }'), /notes\.fields\.description\.type": required/);
+  assert.match(bad('      description: { type: string, empty: 0.4, nope: 1 }'), /notes\.fields\.description\.nope/);
+  assert.match(bad('      flag: boolean\n      label: { default: [a, b], when: { flag: true }, value: [a], empty: 0.3 }'), /notes\.fields\.label\.empty": only string fields can be empty/);
+});

@@ -179,6 +179,7 @@ function cmdWorld({ pos, flags }) {
     if (spec.distribution) extra.push(Object.entries(spec.distribution.counts).map(([k, v]) => `${k}=${v}`).join(' '));
     if (spec.refs.length) extra.push(`→ ${spec.refs.join(', ')}`);
     if (Object.keys(spec.nulls).length) extra.push(`nulls: ${Object.entries(spec.nulls).map(([k, v]) => `${k}=${v}`).join(' ')}`);
+    if (spec.empty) extra.push(`empty: ${Object.entries(spec.empty).map(([k, v]) => `${k}=${v}`).join(' ')}`);
     out(`  ${spec.name.padEnd(12)} ${String(spec.count).padStart(5)}  ${extra.join(' · ')}`);
   }
   out('Endpoints covered:');
