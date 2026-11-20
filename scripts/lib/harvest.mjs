@@ -210,6 +210,7 @@ export function mergeGapIntoScenario(doc, miss, { observedForGap = [], parsedTyp
   const existingEp = doc.endpoints.find((ep) => shapeKey(ep.path.replace(/\/+$/, '') || '/') === key);
 
   if (existingEp) {
+    if (!existingEp.entity) return { changed: false, notes };
     // The rows are widened to the requested id FIRST, and only then is the detail judged: an entity that
     // has no rows yet (or fewer than the id) is not a reason to drop the route. Only an id atrezzo cannot
     // number (not an integer, below 1, or beyond MAX_DETAIL_ID) is left out, and the report says why.

@@ -11,6 +11,7 @@ export const DEFAULT_CONFIG = {
   scenariosDir: 'atrezzo/scenarios',
   handlersDir: 'atrezzo/handlers',
   generatedDir: 'atrezzo/.generated',
+  fixturesDir: 'atrezzo/fixtures',
   // Config files from 0.1 have no "runtime": they got MSW handlers on every
   // `world`, so a missing field keeps meaning "msw". `init` always writes it.
   runtime: 'msw',
@@ -30,7 +31,7 @@ export function validateConfig(cfg) {
   const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
   if (!isObj(cfg)) return ['the root must be a JSON object'];
   if (cfg.version !== 1) issues.push('field "version": must be 1');
-  for (const k of ['scenariosDir', 'handlersDir', 'generatedDir']) {
+  for (const k of ['scenariosDir', 'handlersDir', 'generatedDir', 'fixturesDir']) {
     if (typeof cfg[k] !== 'string' || !cfg[k]) issues.push(`field "${k}": required, relative path`);
   }
   if (!isObj(cfg.mock)) issues.push('field "mock": required { baseUrl, port }');

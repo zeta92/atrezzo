@@ -119,6 +119,33 @@ export function emit({ dataset, config, dir = '.', requests = [] }) {
       notes.push(`${ep.path}: declared error ${ep.error.status} (one mapping${ep.detail ? ', list and detail' : ''})`);
       continue;
     }
+    if (ep.passthrough) {
+      const pt = dataset.passthrough?.[ep.path];
+      if (!pt) continue;
+      const base = slug(ep.path);
+      const hasBody = pt.hasBody ?? (pt.body !== null);
+      const ext = typeof pt.body === 'string' && !/\bjson\b|\+json/i.test(pt.contentType ?? '') ? 'txt' : 'json';
+      const bodyFile = p(dataset.scenario, base, `passthrough.${ext}`);
+      if (hasBody) {
+        const content = ext === 'json' ? json(pt.body) : pt.body;
+        files.push({ path: p(root, '__files', bodyFile), content });
+      }
+      const escaped = ep.path.split('/').map((seg) => (seg.startsWith(':') ? '[^/]+' : seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('/');
+      const mapping = {
+        name: `${ep.path} (passthrough ${ep.passthrough.fixture})`,
+        priority: 1,
+        request: { method: 'GET', urlPathPattern: `^${escaped}$` },
+        response: {
+          status: pt.status,
+          headers: { 'content-type': pt.contentType ?? 'application/json; charset=utf-8', 'x-atrezzo-scenario': dataset.scenario },
+          ...(hasBody ? { bodyFileName: bodyFile } : {}),
+        },
+      };
+      stubs += 1;
+      files.push({ path: p(root, 'mappings', `${base}.json`), content: json({ mappings: [mapping] }) });
+      notes.push(`${ep.path}: passthrough fixture "${ep.passthrough.fixture}" (status ${pt.status})`);
+      continue;
+    }
     if (ep.params) {
       // Pre-computing every parameter value × query combination is not a static stub set.
       notes.push(`${ep.path}: not pre-generated (path parameters need the projection; use atrezzo serve or the msw runtime)`);

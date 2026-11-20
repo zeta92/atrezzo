@@ -100,6 +100,20 @@ export function openapiDocument(dataset, config) {
   const paths = {};
   const errorSchema = { type: 'object', properties: { error: { type: 'string' } }, required: ['error'] };
   for (const ep of dataset.endpoints) {
+    if (ep.passthrough) {
+      const oasPath = ep.path.replace(/\/:([A-Za-z_]\w*)/g, '/{$1}');
+      const parameters = (ep.params ?? []).map((prm) => ({ name: prm.name, in: 'path', required: true, description: 'Passthrough path parameter.', schema: { type: 'string' } }));
+      const pt = dataset.passthrough?.[ep.path];
+      const hasBody = pt ? (pt.hasBody ?? (pt.body !== null)) : false;
+      const op = slug(ep.path).replace(/[.-]/g, '_');
+      const mime = (pt?.contentType ?? 'application/json').split(';')[0].trim() || 'application/json';
+      const resp = {
+        description: `Passthrough fixture "${ep.passthrough.fixture}"`,
+        ...(hasBody ? { content: { [mime]: { schema: {}, examples: { scenario: { summary: `Fixture ${ep.passthrough.fixture}`, value: pt.body } } } } } : {}),
+      };
+      paths[oasPath] = { get: { operationId: `list_${op}`, summary: `${ep.path} (atrezzo passthrough)`, parameters, responses: { [pt?.status ?? 200]: resp } } };
+      continue;
+    }
     const rows = dataset.entities[ep.entity];
     const parameters = [];
     // Path parameters: OpenAPI spells them {name}; the examples use the first row's values.
@@ -237,7 +251,7 @@ export function openapiDocument(dataset, config) {
 export function emit({ dataset, config }) {
   const file = p(config.generatedDir, `${dataset.scenario}.openapi.yaml`);
   const doc = openapiDocument(dataset, config);
-  const exampleKeys = Object.values(doc.paths).flatMap((x) => Object.keys(x.get.responses[200]?.content['application/json'].examples ?? {})).filter((k) => k !== 'scenario');
+  const exampleKeys = Object.values(doc.paths).flatMap((x) => Object.keys(x.get.responses[200]?.content?.['application/json']?.examples ?? {})).filter((k) => k !== 'scenario');
   return {
     files: [{ path: file, content: emitYaml(doc) }],
     start: `start the Prism CLI against ${file} on port ${config.mock.port}`,

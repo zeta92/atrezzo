@@ -519,8 +519,8 @@ export function createEngine(dataset) {
     };
     const readEp = (() => {
       const m = match(pathname);
-      if (m?.ep.entity === entity && !m.ep.pluck) return m.ep;
-      return routes.find((ep) => ep.entity === entity && !ep.pluck) ?? null;
+      if (m?.ep.entity === entity && !m.ep.pluck && !m.ep.passthrough) return m.ep;
+      return routes.find((ep) => ep.entity === entity && !ep.pluck && !ep.passthrough) ?? null;
     })();
     const formatWriteRow = (row) => (readEp ? shapeRow(row, readEp, []) : { ...row });
 
@@ -587,9 +587,9 @@ export function createEngine(dataset) {
   /**
    * @param {{ method?: string, pathname: string, query?: URLSearchParams | Record<string,string>,
    *   headers?: Headers | Record<string, string | string[]>, body?: unknown }} req
-   * @returns {{ status: number, headers: Record<string,string>, body: unknown, miss?: true } | null}
-   *   null = not ours (body null = no body: a count-only answer; miss = a `shape: object` endpoint
-   *   whose entity has no rows, which `serve` records as a gap)
+   * @returns {{ status: number, headers: Record<string,string>, body: unknown, hasBody?: boolean, miss?: true } | null}
+   *   null = not ours (body null without hasBody: true = no body: a count-only answer;
+   *   miss = a `shape: object` endpoint whose entity has no rows, which `serve` records as a gap)
    */
   function handle({ method = 'GET', pathname, query, headers, body }) {
     const upper = method.toUpperCase();
@@ -610,6 +610,19 @@ export function createEngine(dataset) {
     const { ep, id } = m;
     // `error:` answers the declared status and body on the list and the detail route, world untouched.
     if (ep.error) return json(ep.error.status, ep.error.body, { 'x-atrezzo-error': 'declared' });
+    // `passthrough:` answers the recorded fixture with its declared patch applied, leaving everything else untouched.
+    if (ep.passthrough) {
+      const pt = dataset.passthrough?.[ep.path];
+      if (!pt) return json(500, { error: `missing resolved passthrough fixture "${ep.passthrough.fixture}" for ${ep.path}` });
+      const ct = pt.contentType ?? 'application/json; charset=utf-8';
+      const hasBody = pt.hasBody ?? (pt.body !== null);
+      return {
+        status: pt.status,
+        headers: { 'content-type': ct, 'x-atrezzo-scenario': dataset.scenario },
+        body: hasBody ? pt.body : null,
+        hasBody,
+      };
+    }
     // A parameterised path (`/projects/:project_id/tasks`) only sees the rows its parameters name.
     const rows = byParams(workingEntities[ep.entity], ep, m.params);
     // PostgREST parameters; a declared filter of the same name keeps its meaning.
