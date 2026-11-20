@@ -607,6 +607,47 @@ export function createEngine(dataset) {
     return respond(singleTarget && deletedList.length === 1 ? deletedList[0] : deletedList);
   }
 
+  // PostgREST functions (`rpc:`): `/rpc/<fn>` and `/rest/v1/rpc/<fn>`, whatever prefix the client adds.
+  const rpcByFn = new Map((dataset.rpc ?? []).map((r) => [r.fn, r]));
+  function matchRpc(pathname) {
+    const m = /^(?:\/rest\/v1)?\/rpc\/([^/]+)$/.exec(pathname.replace(/\/+$/, ''));
+    if (!m) return null;
+    let fn = m[1];
+    try { fn = decodeURIComponent(fn); } catch { /* keep it raw */ }
+    return { fn, rule: rpcByFn.get(fn) ?? null };
+  }
+
+  /** A declared function answers its body; `match` arguments must arrive with exactly that value (else 400). */
+  function handleRpc({ fn, rule }, pathname, body) {
+    if (!rule) {
+      const declared = [...rpcByFn.keys()];
+      const res = json(404, {
+        code: 'PGRST202',
+        message: `Could not find the function ${fn} in scenario "${dataset.scenario}"`,
+        error: `POST ${pathname}: function "${fn}" is not declared under rpc: in scenario "${dataset.scenario}"${declared.length ? ` (declared: ${declared.join(', ')})` : ''}`,
+        atrezzo: { miss: true, gap: `POST ${pathname}`, rpc: declared },
+      });
+      res.miss = true;
+      return res;
+    }
+    if (rule.match) {
+      const args = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+      const same = (a, b) => JSON.stringify(canonicalValue(a)) === JSON.stringify(canonicalValue(b));
+      const wrong = Object.entries(rule.match).filter(([k, v]) => !Object.hasOwn(args, k) || !same(args[k], v));
+      if (wrong.length) {
+        const [k, v] = wrong[0];
+        return json(400, {
+          message: `rpc ${fn}: argument "${k}" must be ${JSON.stringify(v)} (got ${Object.hasOwn(args, k) ? JSON.stringify(args[k]) : 'nothing'})`,
+          error: `rpc ${fn}: the arguments do not match the scenario (${wrong.map(([a]) => a).join(', ')})`,
+          atrezzo: { rpc: fn, match: rule.match },
+        });
+      }
+    }
+    const status = rule.expect.status;
+    if (rule.body === undefined && (status === 204 || status === 205 || status === 304)) return json(status, null);
+    return { ...json(status, rule.body === undefined ? null : JSON.parse(JSON.stringify(rule.body))), hasBody: true };
+  }
+
   /**
    * @param {{ method?: string, pathname: string, query?: URLSearchParams | Record<string,string>,
    *   headers?: Headers | Record<string, string | string[]>, body?: unknown }} req
@@ -619,7 +660,10 @@ export function createEngine(dataset) {
     if (upper !== 'GET' && upper !== 'HEAD') {
       const wm = matchWrite(upper, pathname);
       if (wm) return handleWrite(wm, pathname, body);
+      const rpc = matchRpc(pathname);
+      if (rpc && upper === 'POST') return handleRpc(rpc, pathname, body);
       const allowed = allowedMethods(pathname);
+      if (rpc?.rule && !allowed.length) return json(405, { error: `${upper} ${pathname} is not in the contract (PostgREST functions answer POST)` }, { allow: 'POST' });
       if (!allowed.length) return null;
       return json(405, { error: `${upper} ${pathname} is not in the contract (allowed: ${allowed.join(', ')})` }, { allow: allowed.join(', ') });
     }
@@ -627,6 +671,7 @@ export function createEngine(dataset) {
     if (!m) {
       const allowed = allowedMethods(pathname);
       if (allowed.length) return json(405, { error: `${upper} ${pathname} is not in the contract (allowed: ${allowed.join(', ')})` }, { allow: allowed.join(', ') });
+      if (matchRpc(pathname)?.rule) return json(405, { error: `${upper} ${pathname} is not in the contract (PostgREST functions answer POST)` }, { allow: 'POST' });
       return null;
     }
     const params = query instanceof URLSearchParams ? query : new URLSearchParams(query ?? {});

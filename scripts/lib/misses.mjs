@@ -184,6 +184,12 @@ export function findInSpec(spec, method, path) {
   return best;
 }
 
+/** "fn" for a PostgREST function call (/rpc/fn, /rest/v1/rpc/fn), else null. */
+export function rpcFunction(path) {
+  const m = /^(?:\/rest\/v1)?\/rpc\/([^/]+)$/.exec(path);
+  return m ? m[1] : null;
+}
+
 /** Endpoint paths of scenarios on disk that would serve this gap (with list + detail, plus writes). */
 export function coveringScenarios(scenarios, path, method = 'GET') {
   // A `:name` segment of an endpoint path covers any segment of the gap (`:id` included).
@@ -195,6 +201,8 @@ export function coveringScenarios(scenarios, path, method = 'GET') {
   const out = [];
   for (const sc of scenarios) {
     if (isMutation(method)) {
+      const fn = method === 'POST' ? rpcFunction(path) : null;
+      if (fn && (sc.rpc ?? []).some((r) => r.fn === fn)) { out.push(sc.name); continue; }
       if ((sc.writes ?? []).some((w) => w.method === method && fits(w.path, parts))) out.push(sc.name);
       continue;
     }
@@ -211,6 +219,8 @@ export function coveringScenarios(scenarios, path, method = 'GET') {
 export function hintFor(miss, { spec = null, contract = null, scenarios = [] } = {}) {
   const covering = coveringScenarios(scenarios, miss.path, miss.method);
   if (covering.length) return `already declared by scenario ${covering.join(', ')} → atrezzo world + POST /__atrezzo/reload (or restart serve)`;
+  const fn = miss.method === 'POST' ? rpcFunction(miss.path) : null;
+  if (fn) return `PostgREST function: declare it under rpc: { ${fn}: { expect: { status: 200 }, body: … } } in the scenario`;
   if (isMutation(miss.method)) return 'mutation: declare it under writes: in the scenario, or use serve --on-miss stub (or leave it unresolved)';
   if (spec) {
     const hit = findInSpec(spec, miss.method, miss.path);

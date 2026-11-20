@@ -359,6 +359,7 @@ export function generateWorld(scenario) {
   if (scenario.auth) dataset.auth = scenario.auth;
   if (scenario.writes?.length) dataset.writes = scenario.writes;
   if (scenario.streams?.length) dataset.streams = scenario.streams;
+  if (scenario.rpc?.length) dataset.rpc = scenario.rpc;
   if (scenario._passthrough) dataset.passthrough = scenario._passthrough;
   return dataset;
 }

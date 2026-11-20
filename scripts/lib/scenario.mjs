@@ -1715,9 +1715,68 @@ function normalizeStreams(rawStreams, endpoints, issues) {
   return out;
 }
 
+// ---------- rpc ----------
+
+const RPC_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** Routes a PostgREST function answers on; the client adds the prefix, the scenario only names the function. */
+export const rpcPaths = (fn) => [`/rpc/${fn}`, `/rest/v1/rpc/${fn}`];
+
+/**
+ * `rpc: { <fn>: { expect: { status }, body, match } }` ⇒ [{ fn, expect: { status }, body?, match? }].
+ * `body` is answered verbatim (absent ⇒ JSON null, or no body on 204/205/304); `match` lists arguments
+ * the request body must carry with exactly that value.
+ */
+function normalizeRpc(rawRpc, writes, issues) {
+  if (rawRpc === undefined) return [];
+  if (!isObj(rawRpc) || !Object.keys(rawRpc).length) {
+    issues.add('rpc', 'must be a non-empty map "<function>": { expect, body, match }');
+    return [];
+  }
+  const out = [];
+  for (const [fn, rule] of Object.entries(rawRpc)) {
+    const f = `rpc[${fn}]`;
+    if (!RPC_NAME.test(fn)) {
+      issues.add(f, 'the function name is letters, digits and "_" (not starting with a digit), without "/rpc/" or a prefix');
+      continue;
+    }
+    const clash = (writes ?? []).find((w) => w.method === 'POST' && rpcPaths(fn).includes(w.path));
+    if (clash) issues.add(f, `conflicts with writes "POST ${clash.path}"; declare the function in one place`);
+    if (!isObj(rule)) {
+      issues.add(f, `must be a map { expect, body, match }; got ${typeName(rule)}`);
+      continue;
+    }
+    issues.unknownKeys(rule, ['expect', 'body', 'match'], f);
+    let status = 200;
+    if (rule.expect !== undefined) {
+      if (!isObj(rule.expect)) issues.add(`${f}.expect`, `must be a map { status }; got ${typeName(rule.expect)}`);
+      else {
+        issues.unknownKeys(rule.expect, ['status'], `${f}.expect`);
+        if (rule.expect.status !== undefined) {
+          if (!isInt(rule.expect.status) || rule.expect.status < 200 || rule.expect.status > 599) {
+            issues.add(`${f}.expect.status`, `must be an integer HTTP status between 200 and 599; got ${JSON.stringify(rule.expect.status)}`);
+          } else status = rule.expect.status;
+        }
+      }
+    }
+    const hasBody = rule.body !== undefined;
+    if (NO_BODY_STATUSES.has(status) && hasBody && rule.body !== null) issues.add(`${f}.body`, `status ${status} cannot have a response body`);
+    let match = null;
+    if (rule.match !== undefined) {
+      if (!isObj(rule.match) || !Object.keys(rule.match).length) issues.add(`${f}.match`, 'must be a non-empty map { <argument>: <value> }');
+      else match = rule.match;
+    }
+    if (clash) continue;
+    const norm = { fn, expect: { status } };
+    if (hasBody) norm.body = rule.body;
+    if (match) norm.match = match;
+    out.push(norm);
+  }
+  return out;
+}
+
 // ---------- scenario ----------
 
-const SCENARIO_KEYS = ['name', 'description', 'seed', 'now', 'auth', 'world', 'endpoints', 'writes', 'streams', 'entry', 'path', 'expect'];
+const SCENARIO_KEYS = ['name', 'description', 'seed', 'now', 'auth', 'world', 'endpoints', 'writes', 'rpc', 'streams', 'entry', 'path', 'expect'];
 
 export function normalizeScenario(doc, file = '<scenario>') {
   const issues = new Issues();
@@ -1737,6 +1796,7 @@ export function normalizeScenario(doc, file = '<scenario>') {
   const endpoints = normalizeEndpoints(doc.endpoints, world, auth, doc.auth !== undefined, issues);
   const writes = normalizeWrites(doc.writes, world, auth, doc.auth !== undefined, issues, endpoints);
   const streams = normalizeStreams(doc.streams, endpoints, issues);
+  const rpc = normalizeRpc(doc.rpc, writes, issues);
 
   let path = [];
   if (doc.path !== undefined) {
@@ -1766,6 +1826,7 @@ export function normalizeScenario(doc, file = '<scenario>') {
   if (auth) out.auth = auth; // only when declared: keeps scenario hashes stable
   if (writes.length) out.writes = writes; // same: absent unless declared
   if (streams.length) out.streams = streams; // same: absent unless declared
+  if (rpc.length) out.rpc = rpc; // same: absent unless declared
   return out;
 }
 

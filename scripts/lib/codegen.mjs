@@ -38,10 +38,10 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     '  return HttpResponse.json(res.body, { status: res.status, headers: res.headers });',
     '}',
   ];
-  if (dataset.writes?.length) {
+  if (dataset.writes?.length || dataset.rpc?.length) {
     lines.push(
       '',
-      '/** Applies a declared write against the in-memory world. */',
+      '/** Applies a declared write against the in-memory world, or answers a declared PostgREST function (rpc). */',
       'async function mutate({ request }) {',
       '  const url = new URL(request.url);',
       '  const text = await request.text();',
@@ -89,6 +89,11 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
       lines.push(`  http.${w.method.toLowerCase()}('*${w.path}', mutate),`);
     }
     lines.push("  http.post('*/__atrezzo/reset', () => { engine.reset(); return HttpResponse.json({ scenario: dataset.scenario, reset: true }, { status: 200 }); }),");
+  }
+  if (dataset.rpc?.length) {
+    // One handler for every function: it covers /rpc/<fn> and /rest/v1/rpc/<fn>; an undeclared one answers 404 (gap).
+    lines.push(`  // rpc → ${dataset.rpc.map((r) => `${r.fn} (${r.expect.status}${r.match ? `, match: ${Object.keys(r.match).join(', ')}` : ''})`).join(' · ')}`);
+    lines.push("  http.post('*/rpc/:fn', mutate),");
   }
   lines.push('];', '', 'export function reset() { engine.reset(); }', '', 'export { dataset };', '');
   return lines.join('\n');

@@ -84,6 +84,7 @@ function summary(state, available, generatedDir, misses, latency = 0) {
   if (Object.keys(passthrough).length) out.passthrough = passthrough; // only when declared
   if (d.writes?.length) out.writes = d.writes.map((w) => `${w.method} ${w.path}`); // only when declared
   if (d.streams?.length) out.streams = d.streams.map((s) => s.path); // only when declared
+  if (d.rpc?.length) out.rpc = d.rpc.map((r) => r.fn); // only when declared
   if (d.auth) out.auth = d.auth; // only when declared
   if (misses) out.misses = misses.summary();
   if (generatedDir) {
@@ -223,7 +224,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
    * The request is not in the contract: record it and answer 404 (log) or an empty 200 (stub).
    * `error`/`shape` override the message and the stub body (an empty `shape: object` singleton).
    */
-  const miss = (req, res, url, status = 404, extraHeaders = {}, { error = null, shape = null } = {}) => {
+  const miss = (req, res, url, status = 404, extraHeaders = {}, { error = null, shape = null, fields = {} } = {}) => {
     const stub = onMiss === 'stub';
     const entry = misses.record({ method: req.method, pathname: url.pathname, query: url.searchParams, headers: req.headers, status: stub ? 200 : status });
     const gap = missKey(req.method, url.pathname);
@@ -234,10 +235,12 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
     }
     const why = status === 405 ? ' (method not declared in scenario; add it under writes:)' : '';
     return send(res, status, {
+      ...fields,
       error: error ?? `${req.method} ${url.pathname} is not in the contract of scenario "${state.dataset.scenario}"${why}`,
       atrezzo: {
         miss: true, gap, times: entry.times, next: 'atrezzo misses', endpoints: state.dataset.endpoints.map((e) => e.path),
         ...(state.dataset.writes?.length ? { writes: state.dataset.writes.map((w) => `${w.method} ${w.path}`) } : {}),
+        ...(state.dataset.rpc?.length ? { rpc: state.dataset.rpc.map((r) => r.fn) } : {}),
       },
     }, { ...JSON_CT, ...extraHeaders });
   };
@@ -297,7 +300,11 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         const ms = latencyFor(url.pathname);
         if (ms > 0) await sleep(ms);
       }
-      if (r?.miss) return miss(req, res, url, 404, {}, { error: r.body.error, shape: 'detail' });
+      if (r?.miss) {
+        // An undeclared PostgREST function keeps PostgREST's code and message next to the gap.
+        const fields = r.body.code ? { code: r.body.code, message: r.body.message } : {};
+        return miss(req, res, url, 404, {}, { error: r.body.error, shape: 'detail', fields });
+      }
       if (r) {
         if (misses.resolve(req.method, url.pathname)) log(`gap ${missKey(req.method, url.pathname)} resolved`);
         log(`${req.method} ${url.pathname}${safeSearch(url.searchParams)} → ${r.status}`);

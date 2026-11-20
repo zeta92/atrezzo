@@ -61,6 +61,7 @@ expect:
 | `endpoints` | list | required, at least one |
 | `writes` | map | optional; `<METHOD> /path`: `{ expect, mutate }` for `POST`/`PUT`/`PATCH`/`DELETE` |
 | `streams` | map | optional; `/path`: `{ interval, events, loop }` for SSE (`text/event-stream`) in `serve` |
+| `rpc` | map | optional; `<function>`: `{ expect, body, match }` for PostgREST functions (`POST /rpc/<fn>`, `/rest/v1/rpc/<fn>`) |
 | `entry` | string | optional; with `path`, it must be its first element |
 | `path` | list of strings | optional; screens in order |
 | `expect` | list | optional |
@@ -568,7 +569,7 @@ Projection semantics (identical in `serve` and the MSW handlers, same `runtime.m
 3. `X-Total-Count` = total after filters, before pagination.
 4. `limit` above the total ⇒ everything; out-of-range `offset` ⇒ `[]`; non-integer values ⇒ 400.
 5. Undeclared parameters are ignored and listed in `X-Atrezzo-Ignored`.
-6. Undeclared writes (`POST`/`PUT`/`PATCH`/`DELETE` not listed under `writes:`) ⇒ 405 on endpoint routes (or 404 elsewhere).
+6. Undeclared writes (`POST`/`PUT`/`PATCH`/`DELETE` not listed under `writes:`) ⇒ 405 on endpoint routes (or 404 elsewhere). `POST /rpc/<fn>` and `/rest/v1/rpc/<fn>` are PostgREST functions, answered from `rpc:`.
 
 ### Writes (`writes`)
 
@@ -616,6 +617,31 @@ writes:
 - **Determinism**: no `Math.random()` or wall clock is used. Each entity assigns sequential integer `id`s independently (`maxId + 1`), mutated rows keep only declared entity schema fields in canonical schema order (formatted like reads when a GET endpoint exists, ignoring unknown request fields), stateless `echo: true` sorts payload keys deterministically, and `GET` projections preserve deterministic sort order across mutations.
 - **Session & reset**: `serve` and MSW handlers keep mutations in memory across subsequent reads in the same session (`embed` and `counts` indexes are invalidated automatically). `POST /__atrezzo/reset` (in both `serve` and MSW handlers, plus `reset()` exported from `<scenario>.handlers.mjs`) restores the world and ID counters to their initial seeded state.
 - **Validation (scenario error, exit 3)**: rejects empty `writes`, route keys without an explicit `POST`/`PUT`/`PATCH`/`DELETE` method, duplicate write routes, unknown `mutate.entity`, unknown fields in `set`/`where`, `id` in `set`, unbound `:param` segments, `set` on `delete`, `where` on `create`, and `echo: true`/`body` with `204`. Scenarios without `writes` keep their exact behaviour and hash.
+
+### PostgREST functions (`rpc`)
+
+When a screen calls a database function through PostgREST (`supabase.rpc('fn', args)` ⇒ `POST /rest/v1/rpc/fn`), declare a root `rpc` map with the function name and its answer:
+
+```yaml
+rpc:
+  is_feature_on:                       # any arguments, always true
+    expect: { status: 200 }
+    body: true
+  feature_settings:                    # only this argument set; anything else is 400
+    body: { mode: compact, limit: 5 }
+    match: { feature: beta, level: 2 }
+  touch_session:                       # no response body
+    expect: { status: 204 }
+```
+
+- **Keys**: the bare function name (letters, digits and `_`, not starting with a digit). The route is not part of the scenario: `serve` and the MSW handlers answer both `POST /rpc/<fn>` and `POST /rest/v1/rpc/<fn>`, whichever prefix the client adds. Other prefixes (`/api/rpc/<fn>`) are not PostgREST routes and are left alone.
+- **`expect`**: `{ status }` (optional, default `200`; integer `200..599`).
+- **`body`**: JSON value answered verbatim (`true`, a number, an object, a list, `null`). Absent ⇒ JSON `null`, or no body on `204`/`205`/`304`. The answer is static: it does not read or change the world.
+- **`match`** (optional): `{ <argument>: <value> }`. Without it the request body is ignored. With it, every listed argument must arrive in the JSON body with exactly that value (compared as JSON, so `"2"` is not `2`), otherwise `400` with `message` naming the first mismatched argument and `atrezzo: { rpc, match }`. Arguments the scenario does not list are ignored.
+- **Undeclared function**: `POST /rest/v1/rpc/<other>` answers `404` with `code: "PGRST202"` and the usual gap payload (`atrezzo.miss`, `atrezzo.gap`, plus the declared functions under `atrezzo.rpc`), and `serve` records it in `atrezzo misses` with the hint to declare it under `rpc:`. This holds even when the scenario has no `rpc` block. `serve --on-miss stub` answers `200 {}` instead, as for any gap.
+- **Methods**: functions answer `POST`. Another method on a declared function answers `405` with `Allow: POST`.
+- **MSW**: the generated handlers register one `http.post('*/rpc/:fn', …)` that runs the same engine, so the answers, the `400` and the `404` are identical to `serve`. `GET /__atrezzo/state` lists declared functions under `rpc`.
+- **Validation (scenario error, exit 3)**: rejects an empty `rpc`, invalid function names, unknown fields, a status outside `200..599`, `body` with `204`/`205`/`304`, an empty or non-map `match`, and a function also declared as a `POST /rpc/<fn>` or `POST /rest/v1/rpc/<fn>` write. Scenarios without `rpc` keep their exact behaviour and hash.
 
 ### Streams (`streams`)
 
