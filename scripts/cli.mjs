@@ -62,8 +62,10 @@ Commands:
       Infers a scenario from an OpenAPI spec (no argument: uses workspace.contract) and writes
       <scenariosDir>/<name>.yaml with a report: endpoints, envelopes, TODOs and ignored routes.
   verify <flow.yaml> [--url http://127.0.0.1:4010] [--driver http|playwright] [--header "Name: value"]… [--diagnose]
-         [--no-reset] [--json]
+         [--strict-console] [--no-reset] [--json]
       Runs the flow against the mock (or against the real app if the flow has no scenario) and compares.
+      --strict-console fails a step on browser console.error (playwright driver; otherwise shown as WARNING).
+      Uncaught page errors (pageerror) always fail the step with hypothesis page-error.
       --header adds a header to every request (repeatable; it wins over the flow's headers). Use it for a
       session: the flow keeps only values safe to commit, and atrezzo reads no environment variable.
         --header "Cookie: $SESSION"   your shell fills in the value (visible in ps while verify runs)
@@ -78,7 +80,7 @@ Commands:
 
 Exit codes: 0 OK · 1 assertion failed · 2 not verifiable (missing tool or mock) · 3 invalid input`;
 
-const BOOLEAN = new Set(['install', 'force', 'diagnose', 'no-reset', 'json', 'help', 'clear', 'write']);
+const BOOLEAN = new Set(['install', 'force', 'diagnose', 'strict-console', 'no-reset', 'json', 'help', 'clear', 'write']);
 const REPEATABLE = new Set(['header']);
 
 export function parseArgs(argv) {
@@ -266,7 +268,7 @@ async function cmdVerify({ pos, flags }) {
   const items = (flags.header ?? []).flatMap((h) => (h === '@-' ? headerLines(readFileSync(0, 'utf8')) : [h]));
   if (flags.header?.includes('@-') && !items.length) throw new AtrezzoError('--header @-: stdin had no "Name: value" line');
   const headers = parseHeaderArgs(items);
-  const result = await runVerify(flow, { url, driver, headers, diagnose: !!flags.diagnose, reset: !flags['no-reset'], cwd: cfg._dir });
+  const result = await runVerify(flow, { url, driver, headers, diagnose: !!flags.diagnose, strictConsole: !!flags['strict-console'], reset: !flags['no-reset'], cwd: cfg._dir });
   out(flags.json ? JSON.stringify(result, null, 2) : formatReport(result));
   return result.exitCode;
 }

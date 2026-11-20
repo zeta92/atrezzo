@@ -1,5 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { createServer } from 'node:http';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -189,7 +190,7 @@ test('declared redirect (redirects_to): OK when final URL matches and assertions
   const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', pageFactory: fp.factory });
   assert.equal(r.exitCode, 0, formatReport(r));
   assert.deepEqual(r.rows.map((x) => x.status), ['OK', 'OK']);
-  assert.deepEqual(r.steps, [{ screen: 'orders', visit: '/orders', redirect: { from: '/orders', to: '/login?next=%2Forders', declared: true } }]);
+  assert.deepEqual(r.steps, [{ screen: 'orders', visit: '/orders', redirect: { from: '/orders', to: '/login?next=%2Forders', declared: true }, console: [] }]);
 
   // Explicit query string in redirects_to must match
   const qDir = tmpProject({
@@ -324,7 +325,241 @@ test('CLI verify --driver playwright --json: declared redirect outputs redirect 
     const json = JSON.parse(res.stdout);
     assert.equal(json.exitCode, 0);
     assert.equal(json.rows[0].status, 'OK');
-    assert.deepEqual(json.steps, [{ screen: 'orders', visit: '/orders', redirect: { from: '/orders', to: '/login', declared: true } }]);
+    assert.deepEqual(json.steps, [{ screen: 'orders', visit: '/orders', redirect: { from: '/orders', to: '/login', declared: true }, console: [] }]);
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+  }
+});
+
+// ---------- browser console & pageerror capture ----------
+
+function fakeConsolePage({ countsByPath = {}, onVisit, onWaitFor, onCount } = {}) {
+  const emitter = new EventEmitter();
+  let current = '';
+  const emitConsole = (type, text) => emitter.emit('console', { type: () => type, text: () => text });
+  const emitPageError = (err) => emitter.emit('pageerror', err);
+  return {
+    factory: async () => ({
+      page: {
+        on: (ev, fn) => emitter.on(ev, fn),
+        off: (ev, fn) => emitter.off(ev, fn),
+        goto: async (u) => {
+          current = u;
+          const path = new URL(u).pathname;
+          await onVisit?.(path, { emitConsole, emitPageError });
+          return { status: () => 200 };
+        },
+        url: () => current,
+        waitForLoadState: async () => {},
+        waitForSelector: async (sel) => {
+          if (onWaitFor) await onWaitFor(sel);
+        },
+        locator: (sel) => ({
+          count: async () => {
+            const path = new URL(current).pathname;
+            await onCount?.(path, sel, { emitConsole, emitPageError });
+            return countsByPath[path]?.[sel] ?? 0;
+          },
+        }),
+      },
+      close: async () => {},
+    }),
+  };
+}
+
+test('playwright driver: uncaught pageerror marks step KO with page-error hypothesis and cannot be masked by matching assertions', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': `steps:
+  - screen: orders
+    visit: /orders
+    expect:
+      - selector: "[data-testid=toast-error]"
+        count: 1
+      - selector: "[data-testid=order-row]"
+        count: 0
+`,
+  });
+  const longMsg = `Invalid array length ${'X'.repeat(400)}`;
+  const fp = fakeConsolePage({
+    countsByPath: { '/orders': { '[data-testid=toast-error]': 1, '[data-testid=order-row]': 0 } },
+    onVisit: (_path, { emitPageError }) => {
+      emitPageError(new RangeError(longMsg));
+    },
+  });
+  const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', diagnose: true, pageFactory: fp.factory });
+  assert.equal(r.exitCode, 1);
+  assert.deepEqual(r.rows.map((x) => x.status), ['KO', 'KO']);
+  assert.match(r.rows[0].note, /uncaught page error: RangeError: Invalid array length/);
+  assert.equal(r.rows[1].note, 'same cause as #1');
+  assert.equal(r.rows[0].hypotheses.length, 1);
+  assert.equal(r.rows[0].hypotheses[0].type, 'page-error');
+  assert.equal(r.rows[0].hypotheses[0].confidence, 'high');
+  assert.ok(r.rows[0].hypotheses[0].evidence.includes('RangeError: Invalid array length'));
+  assert.ok(!r.rows[0].hypotheses[0].evidence.includes('X'.repeat(301)), 'message must be clipped to 300 chars');
+  assert.deepEqual(r.steps[0].console, [{ level: 'pageerror', text: `RangeError: ${longMsg}` }]);
+});
+
+test('playwright driver: pageerror during wait_for timeout surfaces page-error instead of navigation', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': 'steps:\n  - screen: orders\n    visit: /orders\n    wait_for: "#ready"\n    expect: [{ selector: "#ready", count: 1 }]\n',
+  });
+  const fp = fakeConsolePage({
+    onVisit: (_path, { emitPageError }) => emitPageError(new RangeError('Invalid array length')),
+    onWaitFor: () => { throw new Error('Timeout'); },
+  });
+  const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', diagnose: true, pageFactory: fp.factory });
+  assert.equal(r.exitCode, 1);
+  assert.equal(r.rows[0].status, 'KO');
+  assert.equal(r.rows[0].hypotheses[0].type, 'page-error');
+  assert.match(r.rows[0].hypotheses[0].evidence, /RangeError: Invalid array length/);
+});
+
+test('playwright driver: late pageerror during locator traversal still marks step KO', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': `steps:
+  - screen: orders
+    visit: /orders
+    expect:
+      - selector: "#first"
+        count: 1
+      - selector: "#second"
+        count: 1
+`,
+  });
+  const fp = fakeConsolePage({
+    countsByPath: { '/orders': { '#first': 1, '#second': 1 } },
+    onCount: (_path, sel, { emitPageError }) => {
+      if (sel === '#second') emitPageError(new Error('late crash'));
+    },
+  });
+  const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', diagnose: true, pageFactory: fp.factory });
+  assert.equal(r.exitCode, 1);
+  assert.deepEqual(r.rows.map((x) => x.status), ['KO', 'KO']);
+  assert.equal(r.rows[0].hypotheses[0].type, 'page-error');
+  assert.match(r.rows[0].hypotheses[0].evidence, /Error: late crash/);
+});
+
+test('playwright driver: console.error emits WARNING without breaking passing step unless --strict-console', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': 'steps:\n  - screen: orders\n    visit: /orders\n    expect: [{ selector: "#ok", count: 2 }]\n',
+  });
+  const fp = fakeConsolePage({
+    countsByPath: { '/orders': { '#ok': 2 } },
+    onVisit: (_path, { emitConsole }) => {
+      emitConsole('log', 'ignored debug log');
+      emitConsole('error', 'Failed to load optional badge');
+    },
+  });
+
+  const okRes = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', pageFactory: fp.factory });
+  assert.equal(okRes.exitCode, 0);
+  assert.equal(okRes.rows[0].status, 'OK');
+  assert.equal(okRes.warnings.length, 1);
+  assert.match(okRes.warnings[0], /console\.error: Failed to load optional badge/);
+  assert.match(formatReport(okRes), /WARNING: .*Failed to load optional badge/);
+  assert.deepEqual(okRes.steps[0].console, [{ level: 'error', text: 'Failed to load optional badge' }]);
+
+  const strictRes = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', diagnose: true, strictConsole: true, pageFactory: fp.factory });
+  assert.equal(strictRes.exitCode, 1);
+  assert.equal(strictRes.rows[0].status, 'KO');
+  assert.equal(strictRes.warnings.length, 0);
+  assert.match(strictRes.rows[0].note, /--strict-console.*Failed to load optional badge/);
+  assert.equal(strictRes.rows[0].hypotheses[0].type, 'console-error');
+  assert.deepEqual(strictRes.steps[0].console, [{ level: 'error', text: 'Failed to load optional badge' }]);
+});
+
+test('playwright driver: console listeners are isolated per step', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': `steps:
+  - screen: first
+    visit: /first
+    expect: [{ selector: "#a", count: 1 }]
+  - screen: second
+    visit: /second
+    expect: [{ selector: "#b", count: 1 }]
+`,
+  });
+  const fp = fakeConsolePage({
+    countsByPath: { '/first': { '#a': 1 }, '/second': { '#b': 1 } },
+    onVisit: (path, { emitConsole }) => {
+      if (path === '/first') emitConsole('error', 'only on first');
+    },
+  });
+  const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', pageFactory: fp.factory });
+  assert.equal(r.exitCode, 0);
+  assert.deepEqual(r.steps[0].console, [{ level: 'error', text: 'only on first' }]);
+  assert.deepEqual(r.steps[1].console, []);
+});
+
+test('CLI verify --driver playwright (real Chromium): page throwing uncaught exception is KO with page-error hypothesis and console JSON', { skip: skipReal, timeout: 60_000 }, async () => {
+  const app = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><html><body>
+      <div id="toast">Something went wrong</div>
+      <div id="rows"></div>
+      <script>
+        new Array(-1); // throws RangeError: Invalid array length
+      </script>
+    </body></html>`);
+  });
+  await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve));
+  const appUrl = `http://127.0.0.1:${app.address().port}`;
+  try {
+    const flowDir = tmpProject({
+      'f.yaml': `steps:
+  - screen: blank-crash
+    visit: /
+    expect:
+      - selector: "#toast"
+        count: 1
+      - selector: "#rows .row"
+        count: 0
+`,
+    });
+    const res = await cliAsync(['verify', join(flowDir, 'f.yaml'), '--url', appUrl, '--driver', 'playwright', '--diagnose', '--json'], ROOT);
+    assert.equal(res.code, 1, res.stderr + res.stdout);
+    const json = JSON.parse(res.stdout);
+    assert.equal(json.exitCode, 1);
+    assert.deepEqual(json.rows.map((r) => r.status), ['KO', 'KO']);
+    assert.equal(json.rows[0].hypotheses[0].type, 'page-error');
+    assert.match(json.rows[0].hypotheses[0].evidence, /RangeError: Invalid array length/);
+    assert.ok(json.steps[0].console.some((c) => c.level === 'pageerror' && /RangeError: Invalid array length/.test(c.text)));
+  } finally {
+    await new Promise((resolve) => app.close(resolve));
+  }
+});
+
+test('CLI verify --driver playwright (real Chromium): console.error only warns unless --strict-console is passed', { skip: skipReal, timeout: 60_000 }, async () => {
+  const app = createServer((req, res) => {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><html><body>
+      <div id="app"><span class="item">one</span><span class="item">two</span></div>
+      <script>
+        console.error('non-fatal console error');
+      </script>
+    </body></html>`);
+  });
+  await new Promise((resolve) => app.listen(0, '127.0.0.1', resolve));
+  const appUrl = `http://127.0.0.1:${app.address().port}`;
+  try {
+    const flowDir = tmpProject({
+      'f.yaml': 'steps:\n  - screen: app\n    visit: /\n    expect:\n      - selector: "#app .item"\n        count: 2\n',
+    });
+
+    const warnRes = await cliAsync(['verify', join(flowDir, 'f.yaml'), '--url', appUrl, '--driver', 'playwright'], ROOT);
+    assert.equal(warnRes.code, 0, warnRes.stderr + warnRes.stdout);
+    assert.match(warnRes.stdout, /WARNING: .*non-fatal console error/);
+    assert.match(warnRes.stdout, /GREEN/);
+
+    const jsonRes = await cliAsync(['verify', join(flowDir, 'f.yaml'), '--url', appUrl, '--driver', 'playwright', '--json'], ROOT);
+    assert.equal(jsonRes.code, 0, jsonRes.stderr + jsonRes.stdout);
+    const json = JSON.parse(jsonRes.stdout);
+    assert.deepEqual(json.steps[0].console, [{ level: 'error', text: 'non-fatal console error' }]);
+
+    const strictRes = await cliAsync(['verify', join(flowDir, 'f.yaml'), '--url', appUrl, '--driver', 'playwright', '--strict-console', '--diagnose'], ROOT);
+    assert.equal(strictRes.code, 1, strictRes.stderr + strictRes.stdout);
+    assert.match(strictRes.stdout, /RED/);
+    assert.match(strictRes.stdout, /console-error/);
   } finally {
     await new Promise((resolve) => app.close(resolve));
   }

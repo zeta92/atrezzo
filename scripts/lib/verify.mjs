@@ -195,14 +195,51 @@ function matchesRedirectTarget(got, expected) {
   return true;
 }
 
+const CONSOLE_CLIP = 300;
+const clip = (s, n = CONSOLE_CLIP) => (s.length > n ? s.slice(0, n) : s);
+
+function formatPageError(err) {
+  if (typeof err === 'string') return err;
+  if (err && typeof err === 'object') {
+    if (err.name && err.message && !String(err.message).startsWith(err.name)) return `${err.name}: ${err.message}`;
+    if (err.message) return String(err.message);
+  }
+  return String(err);
+}
+
+function attachConsoleListeners(page, headers) {
+  const entries = [];
+  const onPageError = (err) => {
+    entries.push({ level: 'pageerror', text: redact(formatPageError(err), headers) });
+  };
+  const onConsole = (msg) => {
+    const type = typeof msg?.type === 'function' ? msg.type() : msg?.type;
+    if (type !== 'error') return;
+    const text = typeof msg?.text === 'function' ? msg.text() : String(msg?.text ?? '');
+    entries.push({ level: 'error', text: redact(text, headers) });
+  };
+  page.on?.('pageerror', onPageError);
+  page.on?.('console', onConsole);
+  const detach = () => {
+    if (typeof page.off === 'function') {
+      page.off('pageerror', onPageError);
+      page.off('console', onConsole);
+    } else if (typeof page.removeListener === 'function') {
+      page.removeListener('pageerror', onPageError);
+      page.removeListener('console', onConsole);
+    }
+  };
+  return { entries, detach };
+}
+
 /**
- * Open a step's page. Returns { fail, redirect } where `fail` is null if the page
- * matches what was expected (or a declared redirect), or a sentence explaining why
- * the step can't be trusted (unexpected/wrong redirect, HTTP error, wait_for timeout).
+ * Open a step's page. Returns { fail, redirect, waitForTimeout } where `fail` is null
+ * if the page matches what was expected (or a declared redirect), or a sentence
+ * explaining why the step can't be trusted (unexpected/wrong redirect, HTTP error, wait_for timeout).
  */
 async function openStep(pw, url, step, headers, storageScript) {
-  const ok = (redirect = null) => ({ fail: null, redirect });
-  const ko = (fail, redirect = null) => ({ fail, redirect });
+  const ok = (redirect = null) => ({ fail: null, redirect, waitForTimeout: false });
+  const ko = (fail, redirect = null, waitForTimeout = false) => ({ fail, redirect, waitForTimeout });
   const target = joinUrl(url, step.visit);
   if (pw.context?.setExtraHTTPHeaders) await pw.context.setExtraHTTPHeaders(headers);
   else await pw.page.setExtraHTTPHeaders?.(headers);
@@ -243,7 +280,7 @@ async function openStep(pw, url, step, headers, storageScript) {
   if (status !== null && status >= 400) return ko(`${redirect?.to ?? step.visit} answered HTTP ${status}`, redirect);
   if (step.waitFor) {
     try { await pw.page.waitForSelector(step.waitFor, { state: 'attached', timeout: 10_000 }); } catch {
-      return ko(`wait_for "${step.waitFor}" did not appear within 10 s`, redirect);
+      return ko(`wait_for "${step.waitFor}" did not appear within 10 s`, redirect, true);
     }
   }
   return ok(redirect);
@@ -253,11 +290,11 @@ async function openStep(pw, url, step, headers, storageScript) {
 
 /**
  * @param {object} flow   result of loadFlow()
- * @param {{ url: string, driver?: 'http'|'playwright', diagnose?: boolean, reset?: boolean, headers?: Record<string, string>,
+ * @param {{ url: string, driver?: 'http'|'playwright', diagnose?: boolean, reset?: boolean, strictConsole?: boolean, headers?: Record<string, string>,
  *           fetchImpl?: typeof fetch, pageFactory?: (opts: {viewport: object|null}) => Promise<{page:any, context?:any, close:()=>Promise<void>}>, cwd?: string }} opts
  */
 export async function runVerify(flow, opts) {
-  const { url, driver = 'http', diagnose: wantDiag = false, fetchImpl = fetch, cwd = process.cwd() } = opts;
+  const { url, driver = 'http', diagnose: wantDiag = false, strictConsole = false, fetchImpl = fetch, cwd = process.cwd() } = opts;
   const reset = (opts.reset ?? true) && !!flow.scenario; // without a scenario there is no mock to reset
   const flowHeaders = flow.headers ?? {};
   const runHeaders = opts.headers ?? {}; // verify --header: on every request, over flow and step headers
@@ -299,65 +336,139 @@ export async function runVerify(flow, opts) {
           }
         }
       }
-      let stepFail = null;
-      let stepFailRow = null;
+      let nav = { fail: null, redirect: null, waitForTimeout: false };
+      let listeners = null;
       if (pw) {
         if (!step.visit) {
-          stepResults.push({ screen: step.screen });
+          stepResults.push({ screen: step.screen, console: [] });
           for (const e of step.expect) rows.push({ screen: step.screen, expect: e, status: 'N/V', obtained: null, note: 'the step has no "visit": playwright does not know which page to open' });
           continue;
         }
-        const storage = mergeStorage(flowStorage, step.storage);
-        const nav = await openStep(pw, url, step, headers, seeder.next(new URL(joinUrl(url, step.visit)).origin, storage));
-        stepFail = nav.fail;
-        stepResults.push({ screen: step.screen, visit: step.visit, ...(nav.redirect ? { redirect: nav.redirect } : {}) });
+        listeners = attachConsoleListeners(pw.page, headers);
       } else {
         stepResults.push({ screen: step.screen, ...(step.visit ? { visit: step.visit } : {}) });
       }
-      for (const e of step.expect) {
-        const row = { screen: step.screen, expect: e, status: 'N/V', obtained: null, note: '' };
-        const ctx = { driver };
-        if (e.data && responses[e.data.request]) {
-          const r = responses[e.data.request];
-          const matchedEp = matchScenarioEndpoint(flow.scenario, r.path);
-          const pick = e.data.pick ?? (matchedEp?.shape === 'envelope' ? (matchedEp.envelope?.items ?? matchedEp.pick) : undefined);
-          ctx.response = r;
-          ctx.items = r.status === 200 ? extractItems(r.body, pick) : [];
-          ctx.matched = ctx.items.filter((it) => whereMatch(it, e.data.where)).length;
-          if (wantDiag && r.status === 200) {
-            const full = await get(joinUrl(url, withoutPagination(r.path, matchedEp))).catch(() => null);
-            if (full?.status === 200) ctx.fullMatched = extractItems(full.body, pick).filter((it) => whereMatch(it, e.data.where)).length;
-          }
-        }
+      const stepRowStart = rows.length;
+      const stepCtxs = [];
+      let selectorFail = null;
+      let selectorFailRow = null;
+      try {
         if (pw) {
-          try { ctx.domCount = await pw.page.locator(e.selector).count(); } catch (err) {
-            stepFail ??= `invalid selector or closed page: ${err.message.split('\n')[0]}`;
-            ctx.domCount = 0;
-          }
-          row.obtained = ctx.domCount;
-        } else if (ctx.items) {
-          row.obtained = ctx.matched;
-        } else {
-          row.note = 'no "data": the http driver cannot count a selector; add data.request or use --driver playwright';
-          rows.push(row);
-          continue;
+          const storage = mergeStorage(flowStorage, step.storage);
+          nav = await openStep(pw, url, step, headers, seeder.next(new URL(joinUrl(url, step.visit)).origin, storage));
         }
-        ctx.obtained = row.obtained;
-        // A declared error is what the scenario asked for: counted as 0 rows, and said so on a KO.
-        if (ctx.response && declaredError(ctx.response) && !pw && !passes(e, row.obtained)) row.note = `${e.data.request} answered the error the scenario declares (${ctx.response.status}): 0 rows`;
-        // A step whose page is not the one requested is never green, even if the count happens to match.
-        row.status = !stepFail && passes(e, row.obtained) ? 'OK' : 'KO';
-        if (stepFail) {
-          // say it once per step; the other rows of the step point at it
-          if (stepFailRow === null) { stepFailRow = rows.length + 1; row.note = stepFail; } else row.note = `same cause as #${stepFailRow}`;
-          if (wantDiag && stepFailRow === rows.length + 1) {
-            const evidence = step.redirectsTo
-              ? `expected redirect to "${step.redirectsTo}" for step "${step.screen}", but landed elsewhere; the scenario and selectors are not the cause. Fix navigation/guard before looking at anything else.`
-              : `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.`;
-            row.hypotheses = [{ type: 'navigation', confidence: 'high', evidence }];
+        for (const e of step.expect) {
+          const row = { screen: step.screen, expect: e, status: 'N/V', obtained: null, note: '' };
+          const ctx = { driver };
+          if (e.data && responses[e.data.request]) {
+            const r = responses[e.data.request];
+            const matchedEp = matchScenarioEndpoint(flow.scenario, r.path);
+            const pick = e.data.pick ?? (matchedEp?.shape === 'envelope' ? (matchedEp.envelope?.items ?? matchedEp.pick) : undefined);
+            ctx.response = r;
+            ctx.items = r.status === 200 ? extractItems(r.body, pick) : [];
+            ctx.matched = ctx.items.filter((it) => whereMatch(it, e.data.where)).length;
+            if (wantDiag && r.status === 200) {
+              const full = await get(joinUrl(url, withoutPagination(r.path, matchedEp))).catch(() => null);
+              if (full?.status === 200) ctx.fullMatched = extractItems(full.body, pick).filter((it) => whereMatch(it, e.data.where)).length;
+            }
           }
-        } else if (row.status === 'KO' && wantDiag) row.hypotheses = diagnose(row, ctx);
-        rows.push(row);
+          if (pw) {
+            try { ctx.domCount = await pw.page.locator(e.selector).count(); } catch (err) {
+              selectorFail ??= `invalid selector or closed page: ${err.message.split('\n')[0]}`;
+              ctx.domCount = 0;
+            }
+            row.obtained = ctx.domCount;
+          } else if (ctx.items) {
+            row.obtained = ctx.matched;
+          } else {
+            row.note = 'no "data": the http driver cannot count a selector; add data.request or use --driver playwright';
+            rows.push(row);
+            stepCtxs.push(null);
+            continue;
+          }
+          ctx.obtained = row.obtained;
+          // A declared error is what the scenario asked for: counted as 0 rows, and said so on a KO.
+          if (ctx.response && declaredError(ctx.response) && !pw && !passes(e, row.obtained)) row.note = `${e.data.request} answered the error the scenario declares (${ctx.response.status}): 0 rows`;
+          row.status = !nav.fail && !selectorFail && passes(e, row.obtained) ? 'OK' : 'KO';
+          if (selectorFail && !nav.fail) {
+            if (selectorFailRow === null) { selectorFailRow = rows.length + 1; row.note = selectorFail; } else row.note = `same cause as #${selectorFailRow}`;
+            if (wantDiag && selectorFailRow === rows.length + 1) {
+              row.hypotheses = [{ type: 'navigation', confidence: 'high', evidence: `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.` }];
+            }
+          }
+          rows.push(row);
+          stepCtxs.push(ctx);
+        }
+      } finally {
+        listeners?.detach();
+      }
+      if (pw) {
+        const consoleList = listeners.entries;
+        const pageErrors = consoleList.filter((c) => c.level === 'pageerror').map((c) => c.text);
+        const consoleErrors = consoleList.filter((c) => c.level === 'error').map((c) => c.text);
+        if (!strictConsole && consoleErrors.length) {
+          const counts = new Map();
+          for (const msg of consoleErrors) counts.set(msg, (counts.get(msg) ?? 0) + 1);
+          for (const [msg, n] of counts) {
+            warnings.push(`step "${step.screen}" console.error${n > 1 ? ` (×${n})` : ''}: ${clip(msg)}`);
+          }
+        }
+        stepResults.push({ screen: step.screen, visit: step.visit, ...(nav.redirect ? { redirect: nav.redirect } : {}), console: consoleList });
+
+        // If wait_for timed out because an uncaught pageerror crashed the screen, surface page-error instead of navigation.
+        const effectiveNavFail = nav.fail && !(nav.waitForTimeout && pageErrors.length) ? nav.fail : null;
+        const hasStepBlocker = Boolean(pageErrors.length || effectiveNavFail || (strictConsole && consoleErrors.length));
+        if (hasStepBlocker) {
+          if (rows.length === stepRowStart) {
+            rows.push({ screen: step.screen, expect: { selector: '(page)', count: 0 }, status: 'KO', obtained: null, note: '' });
+          }
+          const stepRows = rows.slice(stepRowStart);
+          const firstRow = stepRows[0];
+          const firstRowNum = stepRowStart + 1;
+          for (const r of stepRows) { r.status = 'KO'; delete r.hypotheses; }
+          for (let i = 1; i < stepRows.length; i++) stepRows[i].note = `same cause as #${firstRowNum}`;
+
+          const navEvidence = step.redirectsTo
+            ? `expected redirect to "${step.redirectsTo}" for step "${step.screen}", but landed elsewhere; the scenario and selectors are not the cause. Fix navigation/guard before looking at anything else.`
+            : `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.`;
+
+          if (pageErrors.length) {
+            const errNote = `uncaught page error${pageErrors.length > 1 ? ` (${pageErrors.length})` : ''}: ${clip(pageErrors[0])}`;
+            firstRow.note = effectiveNavFail ? `${effectiveNavFail}; ${errNote}` : errNote;
+            if (wantDiag) {
+              const hyps = [];
+              if (effectiveNavFail) hyps.push({ type: 'navigation', confidence: 'high', evidence: navEvidence });
+              for (const msg of new Set(pageErrors)) {
+                hyps.push({ type: 'page-error', confidence: 'high', evidence: `uncaught page error on "${step.screen}": ${clip(msg)}` });
+              }
+              firstRow.hypotheses = hyps;
+            }
+          } else if (effectiveNavFail) {
+            firstRow.note = effectiveNavFail;
+            if (wantDiag) firstRow.hypotheses = [{ type: 'navigation', confidence: 'high', evidence: navEvidence }];
+          } else {
+            firstRow.note = `console.error (--strict-console)${consoleErrors.length > 1 ? ` (${consoleErrors.length})` : ''}: ${clip(consoleErrors[0])}`;
+            if (wantDiag) {
+              firstRow.hypotheses = [...new Set(consoleErrors)].map((msg) => ({
+                type: 'console-error',
+                confidence: 'high',
+                evidence: `console.error on "${step.screen}" with --strict-console: ${clip(msg)}`,
+              }));
+            }
+          }
+        } else if (wantDiag) {
+          for (let i = 0; i < stepCtxs.length; i++) {
+            const row = rows[stepRowStart + i];
+            if (row.status === 'KO' && !row.hypotheses && !row.note.startsWith('same cause as #') && stepCtxs[i]) {
+              row.hypotheses = diagnose(row, stepCtxs[i]);
+            }
+          }
+        }
+      } else if (wantDiag) {
+        for (let i = 0; i < stepCtxs.length; i++) {
+          const row = rows[stepRowStart + i];
+          if (row.status === 'KO' && stepCtxs[i]) row.hypotheses = diagnose(row, stepCtxs[i]);
+        }
       }
     }
   } finally {

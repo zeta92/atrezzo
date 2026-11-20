@@ -247,7 +247,7 @@ node scripts/cli.mjs world <scenario.yaml> [--out dir]
 node scripts/cli.mjs serve [--scenario demo] [--port 4010] [--static dir] [--runtime builtin] [--on-miss log|stub] [--latency ms]
 node scripts/cli.mjs misses [--json] [--clear]
 node scripts/cli.mjs harvest <url> --scenario <file> [--storage <file.json|@->] [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
-node scripts/cli.mjs verify <flow.yaml> [--url …] [--driver http|playwright] [--header "Name: value"|@-]… [--diagnose] [--no-reset] [--json]
+node scripts/cli.mjs verify <flow.yaml> [--url …] [--driver http|playwright] [--header "Name: value"|@-]… [--diagnose] [--strict-console] [--no-reset] [--json]
 node scripts/cli.mjs doctor
 ```
 
@@ -300,6 +300,10 @@ the two folders removes everything it wrote.
 
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
+
+### 0.18.0
+
+**Browser console and uncaught exception capture in `verify` (`pageerror`, `console.error`, `--strict-console`).** Under `--driver playwright`, `verify` now collects `pageerror` (uncaught exceptions and unhandled rejections) and `console.error` throughout each step's load and assertion checks. An uncaught `pageerror` always marks the step `KO`—even if selector counts match (so a blank-screen crash like `RangeError: Invalid array length` or an error toast never passes as `OK`)—and under `--diagnose` emits a `page-error` hypothesis with the message clipped to 300 characters. `console.error` entries are reported as `WARNING` lines without breaking passing steps unless `--strict-console` is passed (which marks the step `KO` with a `console-error` hypothesis). With `--json`, each Playwright step includes `console: [{ level, text }]`. Documented in `references/scenario.md` and `skills/verify/SKILL.md`, covered in `tests/verify.test.mjs`.
 
 ### 0.17.0
 
