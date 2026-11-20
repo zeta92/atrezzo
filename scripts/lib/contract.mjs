@@ -176,6 +176,27 @@ function headerValue(headers, name) {
 
 const wantsCount = (headers) => (headerValue(headers, 'prefer') ?? '').split(',').some((p) => /^count=(exact|planned|estimated)$/.test(p.trim()));
 
+function setEnvelopeKey(obj, keyPath, value) {
+  const parts = keyPath.split('.');
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const k = parts[i];
+    if (!cur[k] || typeof cur[k] !== 'object' || Array.isArray(cur[k])) cur[k] = {};
+    cur = cur[k];
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+function formatEnvelope(ep, page, total, limit, offset, pageNum) {
+  if (!ep.envelope) return { [ep.pick ?? 'data']: page, total, limit, offset };
+  const body = {};
+  setEnvelopeKey(body, ep.envelope.items, page);
+  if (ep.envelope.total !== undefined) setEnvelopeKey(body, ep.envelope.total, total);
+  if (ep.envelope.page !== undefined) setEnvelopeKey(body, ep.envelope.page, pageNum);
+  if (ep.envelope.per_page !== undefined) setEnvelopeKey(body, ep.envelope.per_page, limit);
+  return body;
+}
+
 export function createEngine(dataset) {
   const routes = dataset.endpoints.map((ep) => ({ ...ep }));
   const authUser = dataset.auth?.user ?? null;
@@ -460,6 +481,7 @@ export function createEngine(dataset) {
 
     let limit = null;
     let offset = 0;
+    let pageNum = 1;
     if (ep.pagination) {
       const l = parseNonNegInt(params.get(ep.pagination.limit), ep.pagination.limit);
       const pageParam = ep.pagination.page;
@@ -469,6 +491,7 @@ export function createEngine(dataset) {
       limit = l.value ?? ep.pagination.defaultLimit;
       if (limit !== null && ep.pagination.maxLimit !== null) limit = Math.min(limit, ep.pagination.maxLimit);
       offset = pageParam ? ((o.value ?? 1) - 1) * (limit ?? 0) : (o.value ?? 0);
+      pageNum = pageParam ? (o.value ?? 1) : (limit !== null && limit > 0 ? Math.floor(offset / limit) + 1 : 1);
       result = result.slice(offset, limit === null ? undefined : offset + limit);
     }
     const page = result.map((r) => answerRow(r, ep, counts));
@@ -486,7 +509,7 @@ export function createEngine(dataset) {
       }
       return json(200, page[0], out);
     }
-    if (ep.shape === 'envelope') return json(200, { [ep.pick ?? 'data']: page, total, limit, offset }, out);
+    if (ep.shape === 'envelope') return json(200, formatEnvelope(ep, page, total, limit, offset, pageNum), out);
     return json(200, page, out);
   }
 

@@ -136,9 +136,35 @@ export function openapiDocument(dataset, config) {
     }
     const item = itemSchema(ep, dataset, names);
     const list = { type: 'array', items: item };
-    const schema = ep.shape === 'envelope'
-      ? { type: 'object', properties: { [ep.pick ?? 'data']: list, total: { type: 'integer' }, limit: { type: ['integer', 'null'] }, offset: { type: 'integer' } }, required: [ep.pick ?? 'data', 'total', 'limit', 'offset'] }
-      : ep.shape === 'object' ? item : list;
+    let schema;
+    if (ep.shape === 'envelope') {
+      if (ep.envelope) {
+        schema = { type: 'object', properties: {}, required: [] };
+        const addProp = (keyPath, leaf) => {
+          const parts = keyPath.split('.');
+          let cur = schema;
+          for (let i = 0; i < parts.length - 1; i++) {
+            const k = parts[i];
+            if (!cur.properties[k]) {
+              cur.properties[k] = { type: 'object', properties: {}, required: [] };
+              cur.required.push(k);
+            }
+            cur = cur.properties[k];
+          }
+          const last = parts[parts.length - 1];
+          cur.properties[last] = leaf;
+          cur.required.push(last);
+        };
+        addProp(ep.envelope.items, list);
+        if (ep.envelope.total !== undefined) addProp(ep.envelope.total, { type: 'integer' });
+        if (ep.envelope.page !== undefined) addProp(ep.envelope.page, { type: 'integer' });
+        if (ep.envelope.per_page !== undefined) addProp(ep.envelope.per_page, { type: ['integer', 'null'] });
+      } else {
+        schema = { type: 'object', properties: { [ep.pick ?? 'data']: list, total: { type: 'integer' }, limit: { type: ['integer', 'null'] }, offset: { type: 'integer' } }, required: [ep.pick ?? 'data', 'total', 'limit', 'offset'] };
+      }
+    } else {
+      schema = ep.shape === 'object' ? item : list;
+    }
     const def = engine.handle({ pathname: concrete, query: {} });
     // An empty `shape: object` singleton answers 404: it has no 200 example to give.
     const examples = def.status === 200 ? { scenario: { summary: `Projection of scenario ${dataset.scenario} without a query`, value: def.body } } : {};

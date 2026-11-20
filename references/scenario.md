@@ -182,10 +182,39 @@ Generator guarantees:
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields for query filters, `{ <field>: "$user.<field>" }` for seeded-user filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
+`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields for query filters, `{ <field>: "$user.<field>" }` for seeded-user filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `shape` (`array` default, `envelope`, `object`), `envelope` (custom response keys `{ items, total, page, per_page }` when `shape: envelope`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
 
 - Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
-- `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` uses `data`). A single key, no nested paths.
+- `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` or `envelope` uses `data`). A single key, no nested paths.
+
+#### Custom envelopes (`envelope`)
+
+When an endpoint uses `shape: envelope`, `envelope` lets you name the keys of the response JSON instead of using the default `{ data, total, limit, offset }` shape:
+
+```yaml
+endpoints:
+  - path: /api/articles
+    entity: articles
+    pagination: { param_limit: limit, param_offset: offset, default_limit: 10 }
+    shape: envelope
+    envelope: { items: articles, total: articlesCount }       # → { "articles": […], "articlesCount": 40 }
+  - path: /api/paged-articles
+    entity: articles
+    pagination: { param_page: page, param_limit: per_page, default_limit: 10 }
+    shape: envelope
+    envelope: { items: articles, total: articlesCount, page: page, per_page: per_page }
+  - path: /api/meta-articles
+    entity: articles
+    pagination: { param_page: page, param_limit: per_page, default_limit: 10 }
+    shape: envelope
+    envelope: { items: data, total: meta.total, page: meta.page }  # → { "data": […], "meta": { "total": 40, "page": 1 } }
+```
+
+- **Configurable keys**: `items` (list of rows; defaults to `"data"` if omitted), `total` (filtered total before pagination), and optionally `page` (1-based current page number, computed from `param_page` or `Math.floor(offset / limit) + 1`, defaulting to `1`) and `per_page` (effective page size, or `null` when unpaginated/no limit). Only the keys declared in `envelope` (plus `items`) are emitted: omitting `page` and `per_page` leaves them out of the JSON body.
+- **Dot-paths**: a key value such as `meta.total` places the value inside nested objects (`{ meta: { total: … } }`).
+- **Default unchanged**: omitting `envelope` keeps `{ [pick ?? "data"], total, limit, offset }` and preserves scenario hashes.
+- **Validation (scenario error)**: `shape` must be `"envelope"`, `envelope` cannot be combined with `pick`, and every key name must be non-empty (no whitespace, empty segments, duplicates, or nested path conflicts).
+- **`verify` and `serve`**: `serve` returns the configured envelope directly, and `verify` automatically reads `envelope.items` from the scenario when `data.pick` is omitted on a flow assertion.
 
 #### Dynamic sorting (`sorts`)
 

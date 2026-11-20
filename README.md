@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.16.0
+
+**Configurable pagination envelope keys per endpoint (`envelope`).** Endpoints with `shape: envelope` can declare `envelope: { items: articles, total: articlesCount }` (and optionally `page`, `per_page`, including dot-paths like `meta.total`) so APIs returning custom envelope structures such as `{ articles, articlesCount }` or `{ data, meta: { total } }` project exact keys without leaving client reads `undefined`. Without `envelope`, the default `{ data, total, limit, offset }` (or `pick`) envelope and scenario hashes stay unchanged. Validation rejects non-`envelope` shapes, `pick` combinations, empty/invalid keys, duplicates, and nested path conflicts (exit 3); `serve`, `verify`, and Prism OpenAPI output honour the declared keys. Documented in `references/scenario.md`, covered in `tests/contract.test.mjs`.
+
 ### 0.15.0
 
 **Declared redirects on flow steps (`redirects_to` and `allow_redirect`).** A flow step can declare `redirects_to: /login` (or `allow_redirect: true`) when an auth guard or route redirect is expected under `--driver playwright`. `verify` treats a matching redirect as the expected outcome—running `wait_for` and the step's `expect` assertions against the destination screen and reporting OK when the final URL matches—while a missing or wrong destination is KO, and steps without the field keep the existing unexpected-redirect warning and KO behaviour. With `--json`, redirected steps include `redirect: { from, to, declared }`. Documented in `references/scenario.md`, covered in `tests/verify.test.mjs`.

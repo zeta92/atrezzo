@@ -61,9 +61,38 @@ function header(h, name) {
 /** The mock answered the `error:` the scenario declares for the endpoint (a legitimate answer, not a failure of the mock). */
 const declaredError = (r) => header(r?.headers, 'x-atrezzo-error') === 'declared';
 
-function withoutPagination(path) {
+function fitEndpoint(segs, parts) {
+  if (segs.length !== parts.length) return -1;
+  let params = 0;
+  for (let i = 0; i < segs.length; i++) {
+    if (segs[i].startsWith(':')) { if (!parts[i]) return -1; params++; }
+    else if (segs[i] !== parts[i]) return -1;
+  }
+  return params;
+}
+
+function matchScenarioEndpoint(scenario, reqPath) {
+  if (!scenario?.endpoints?.length) return null;
+  const pathname = new URL(reqPath, 'http://x').pathname.replace(/\/+$/, '') || '/';
+  const parts = pathname.split('/');
+  let best = null;
+  let bestParams = Infinity;
+  for (const ep of scenario.endpoints) {
+    const p = fitEndpoint(ep.path.split('/'), parts);
+    if (p >= 0 && p < bestParams) { best = ep; bestParams = p; }
+  }
+  return best;
+}
+
+function withoutPagination(path, ep) {
   const u = new URL(path, 'http://x');
-  for (const k of ['limit', 'offset', 'page', 'per_page', 'pageSize', 'skip', 'take']) u.searchParams.delete(k);
+  const keys = new Set(['limit', 'offset', 'page', 'per_page', 'pageSize', 'skip', 'take']);
+  if (ep?.pagination) {
+    keys.add(ep.pagination.limit);
+    if (ep.pagination.page) keys.add(ep.pagination.page);
+    if (ep.pagination.offset) keys.add(ep.pagination.offset);
+  }
+  for (const k of keys) u.searchParams.delete(k);
   return u.pathname + (u.search || '');
 }
 
@@ -290,12 +319,14 @@ export async function runVerify(flow, opts) {
         const ctx = { driver };
         if (e.data && responses[e.data.request]) {
           const r = responses[e.data.request];
+          const matchedEp = matchScenarioEndpoint(flow.scenario, r.path);
+          const pick = e.data.pick ?? (matchedEp?.shape === 'envelope' ? (matchedEp.envelope?.items ?? matchedEp.pick) : undefined);
           ctx.response = r;
-          ctx.items = r.status === 200 ? extractItems(r.body, e.data.pick) : [];
+          ctx.items = r.status === 200 ? extractItems(r.body, pick) : [];
           ctx.matched = ctx.items.filter((it) => whereMatch(it, e.data.where)).length;
           if (wantDiag && r.status === 200) {
-            const full = await get(joinUrl(url, withoutPagination(r.path))).catch(() => null);
-            if (full?.status === 200) ctx.fullMatched = extractItems(full.body, e.data.pick).filter((it) => whereMatch(it, e.data.where)).length;
+            const full = await get(joinUrl(url, withoutPagination(r.path, matchedEp))).catch(() => null);
+            if (full?.status === 200) ctx.fullMatched = extractItems(full.body, pick).filter((it) => whereMatch(it, e.data.where)).length;
           }
         }
         if (pw) {
