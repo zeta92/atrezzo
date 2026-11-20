@@ -2,7 +2,7 @@
 
 **atrezzo** is a Claude Code plugin and CLI for API mocks built from a seeded application state, with a verification loop against the screen.
 
-Status: 0.11.x · used internally in production; API may change until 1.0 · License: [MIT](LICENSE)
+Status: 0.21.0 · used internally in production; API may change until 1.0 · License: [MIT](LICENSE)
 
 Requires Node 22 or newer (no runtime dependencies). Install as a Claude Code plugin:
 
@@ -335,7 +335,9 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
-### 0.11.x
+### 0.11 → 0.21
+
+The capabilities below shipped across the releases from 0.11 to 0.21.
 
 - **PostgREST functions (`rpc`)**: root `rpc: { <fn>: { expect: { status }, body, match } }` makes `serve` and the generated MSW handlers answer `POST /rpc/<fn>` and `POST /rest/v1/rpc/<fn>` (the prefix comes from the client, not the scenario) with the declared `body`. The request body is ignored unless `match: { <argument>: <value> }` is declared; then any other value answers `400`. An undeclared function answers `404` (`code: PGRST202`) and is recorded in `atrezzo misses` with a hint to declare it under `rpc:`. Scenarios without `rpc` keep their hash.
 - **Empty strings (`empty`)**: a `string` field in `world.<entity>.fields` can declare `{ type: string, empty: 0.4 }` (share of rows with `""`) or `empty: true` (every row), so an empty-text branch can be asserted without rewriting `fields`. Own stream (`empty:<entity>.<field>`): other fields keep their values and scenarios without it keep their hash. With `nulls:` on the same field a row is null or empty, never both. `empty` on a non-string field or outside `0..1` is a scenario error.
@@ -462,7 +464,7 @@ scripts/lib/                 world, scenario, contract (engine), codegen, serve,
 scripts/lib/runtimes/        builtin, msw, supabase, prism, wiremock
 references/                  scenario.md (scenario spec) · assumptions.md (client assumptions) · runtimes.md (adapters, monorepo)
 examples/tienda/             runnable end-to-end example
-tests/                       node --test tests/  (306 tests)
+tests/                       node --test tests/  (339 tests)
 ```
 
 </details>
