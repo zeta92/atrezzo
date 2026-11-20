@@ -50,6 +50,7 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     else if (ep.pick) notes.push(`envelope: ${ep.pick}`);
     if (ep.include.length) notes.push(`includes: ${ep.include.join(', ')}`);
     if (ep.embed?.length) notes.push(`embeds: ${embedLabel(ep.embed)}`);
+    if (ep.counts?.length) notes.push(`counts: ${ep.counts.map((c) => `${c.field}=${c.entity}.${c.on}`).join(', ')}`);
     if (ep.pluck) notes.push(`pluck: ${ep.pluck}`);
     if (ep.error) notes.push(`error: ${ep.error.status}`);
     if (ep.params) notes.push(`params: ${ep.params.map((x) => `:${x.name}→${x.field ?? 'any'}`).join(', ')}`);

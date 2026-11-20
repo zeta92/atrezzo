@@ -71,7 +71,7 @@ function itemSchema(ep, dataset, names) {
   // `pluck`: each item is the field's value as a string (null when the world has nulls in it).
   if (ep.pluck) return columnInfo(dataset.entities[ep.entity], ep.pluck).nullable ? { type: ['string', 'null'] } : { type: 'string' };
   const ref = { $ref: `#/components/schemas/${names[ep.entity]}` };
-  if (!ep.include.length && !ep.embed?.length) return ref;
+  if (!ep.include.length && !ep.embed?.length && !ep.counts?.length) return ref;
   const meta = dataset.schema[ep.entity];
   const properties = {};
   const required = [];
@@ -79,6 +79,10 @@ function itemSchema(ep, dataset, names) {
     const child = typeof e === 'string' ? e : e.entity;
     properties[child] = { type: 'array', items: embedSchema(e, names) };
     required.push(child);
+  }
+  for (const c of ep.counts ?? []) {
+    properties[c.field] = { type: 'integer' };
+    if (!required.includes(c.field)) required.push(c.field);
   }
   for (const [fk, target] of Object.entries(meta.refs)) {
     if (!ep.include.includes(target)) continue;

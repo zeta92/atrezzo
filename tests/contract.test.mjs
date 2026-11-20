@@ -1202,3 +1202,286 @@ steps:
     await mock.close();
   }
 });
+
+// ---------- Child counts (`counts: { <name>: { entity, on } }`) ----------
+
+const COUNTS_SCENARIO = `name: kanban-counts
+seed: 5150
+now: 2025-03-01T09:00:00Z
+world:
+  boards: 2
+  buckets:
+    total: 5
+    ref: boards
+    counts:
+      notes: { entity: notes, on: bucket_id }
+    fields:
+      title: string
+      archived: boolean
+  tasks:
+    total: 18
+    ref: buckets
+    nulls: { bucket_id: 3 }
+    fields:
+      title: string
+  notes:
+    total: 7
+    ref: buckets
+    fields:
+      body: string
+endpoints:
+  - path: /api/buckets
+    entity: buckets
+    filters: [id, board_id, archived]
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: id
+    counts:
+      tasks: { entity: tasks, on: bucket_id }
+      count: { entity: tasks, on: bucket_id }
+  - path: /api/boards/:board_id/buckets
+    entity: buckets
+    filters: [archived]
+    counts:
+      tasks_total: { entity: tasks, on: bucket_id }
+  - path: /api/buckets-envelope
+    entity: buckets
+    pagination: { param_limit: limit, param_offset: offset, default_limit: 2 }
+    shape: envelope
+    counts:
+      tasks: { entity: tasks, on: bucket_id }
+  - path: /api/first-bucket
+    entity: buckets
+    filters: [archived]
+    sort: id
+    shape: object
+    counts:
+      count: { entity: tasks, on: bucket_id }
+  - path: /api/buckets-entity-only
+    entity: buckets
+`;
+
+const countsNorm = normalizeScenario(parseYaml(COUNTS_SCENARIO, 'counts.yaml'), 'counts.yaml');
+const countsDataset = generateWorld(countsNorm);
+const countsEngine = createEngine(countsDataset);
+const getCounts = (path) => {
+  const u = new URL(path, 'http://x');
+  return countsEngine.handle({ method: 'GET', pathname: u.pathname, query: u.searchParams });
+};
+
+test('counts: endpoint and entity counts expose numeric tasks_count / declared names matching world rows', () => {
+  const expectedTasks = (bucketId) => countsDataset.entities.tasks.filter((t) => t.bucket_id === bucketId).length;
+  const expectedNotes = (bucketId) => countsDataset.entities.notes.filter((n) => n.bucket_id === bucketId).length;
+
+  const r = getCounts('/api/buckets');
+  assert.equal(r.status, 200);
+  assert.equal(r.body.length, 5);
+  for (const row of r.body) {
+    assert.equal(typeof row.tasks_count, 'number');
+    assert.equal(typeof row.count, 'number');
+    assert.equal(typeof row.notes_count, 'number');
+    assert.equal(row.tasks_count, expectedTasks(row.id));
+    assert.equal(row.count, expectedTasks(row.id));
+    assert.equal(row.notes_count, expectedNotes(row.id));
+  }
+  // Null bucket_id tasks (3 of 18) are excluded; remaining 15 sum across the 5 buckets
+  assert.equal(r.body.reduce((s, row) => s + row.tasks_count, 0), 15);
+  assert.equal(r.body.reduce((s, row) => s + row.notes_count, 0), 7);
+
+  // Entity-only endpoint inherits world.buckets.counts without endpoint-level counts
+  const entOnly = getCounts('/api/buckets-entity-only');
+  assert.equal(entOnly.status, 200);
+  for (const row of entOnly.body) {
+    assert.equal(row.notes_count, expectedNotes(row.id));
+    assert.equal(row.tasks_count, undefined);
+  }
+
+  // Deterministic across runs and never mutates dataset.entities; scenarios without counts keep their hash
+  const again = createEngine(generateWorld(normalizeScenario(parseYaml(COUNTS_SCENARIO, 'counts.yaml'), 'counts.yaml')));
+  assert.deepEqual(again.handle({ pathname: '/api/buckets', query: new URLSearchParams() }).body, r.body);
+  assert.ok(countsDataset.entities.buckets.every((b) => !('tasks_count' in b) && !('count' in b) && !('notes_count' in b)));
+
+  const shortNorm = normalizeScenario(parseYaml(SCENARIO, 's.yaml'), 's.yaml');
+  assert.equal(shortNorm.endpoints[0].counts, undefined);
+  assert.equal(shortNorm.world[0].counts, undefined);
+  assert.equal(scenarioHash(shortNorm), dataset.hash);
+});
+
+test('counts: respects endpoint filters and pagination without filtering or limiting counted world rows', () => {
+  const expectedTasks = (bucketId) => countsDataset.entities.tasks.filter((t) => t.bucket_id === bucketId).length;
+  const expectedNotes = (bucketId) => countsDataset.entities.notes.filter((n) => n.bucket_id === bucketId).length;
+
+  // Pagination limit=2 still counts all world tasks for each returned bucket
+  const limited = getCounts('/api/buckets?limit=2&offset=1');
+  assert.equal(limited.status, 200);
+  assert.equal(limited.body.length, 2);
+  assert.deepEqual(limited.body.map((b) => b.id), [2, 3]);
+  for (const row of limited.body) {
+    assert.equal(row.tasks_count, expectedTasks(row.id));
+    assert.equal(row.count, expectedTasks(row.id));
+  }
+
+  // Query filter on parent rows respects filter and keeps world counts
+  const activeBuckets = countsDataset.entities.buckets.filter((b) => b.archived === false);
+  assert.ok(activeBuckets.length > 0 && activeBuckets.length < 5);
+  const filtered = getCounts('/api/buckets?archived=false');
+  assert.equal(filtered.status, 200);
+  assert.deepEqual(filtered.body.map((b) => b.id), activeBuckets.map((b) => b.id));
+  for (const row of filtered.body) {
+    assert.equal(row.tasks_count, expectedTasks(row.id));
+    assert.equal(row.notes_count, expectedNotes(row.id));
+  }
+
+  // Path parameter route (/api/boards/1/buckets) + custom name tasks_total
+  const board1Buckets = countsDataset.entities.buckets.filter((b) => b.board_id === 1);
+  const byParam = getCounts('/api/boards/1/buckets');
+  assert.equal(byParam.status, 200);
+  assert.deepEqual(byParam.body.map((b) => b.id), board1Buckets.map((b) => b.id));
+  for (const row of byParam.body) {
+    assert.equal(row.tasks_total, expectedTasks(row.id));
+    assert.equal(row.notes_count, expectedNotes(row.id));
+  }
+
+  // Detail route, envelope shape, and object shape all include the counts
+  const detail = getCounts('/api/buckets/3');
+  assert.equal(detail.status, 200);
+  assert.equal(detail.body.tasks_count, expectedTasks(3));
+  assert.equal(detail.body.count, expectedTasks(3));
+
+  const env = getCounts('/api/buckets-envelope?limit=2&offset=0');
+  assert.equal(env.status, 200);
+  assert.equal(env.body.total, 5);
+  assert.equal(env.body.data.length, 2);
+  for (const row of env.body.data) assert.equal(row.tasks_count, expectedTasks(row.id));
+
+  const single = getCounts('/api/first-bucket?archived=false');
+  assert.equal(single.status, 200);
+  assert.equal(single.body.id, activeBuckets[0].id);
+  assert.equal(single.body.count, expectedTasks(activeBuckets[0].id));
+
+  // Prism OpenAPI schema declares count fields as required integers
+  const oas = openapiDocument(countsDataset, { mock: { baseUrl: 'http://127.0.0.1:4010' } });
+  const bucketSchema = oas.paths['/api/buckets'].get.responses[200].content['application/json'].schema.items;
+  const extra = bucketSchema.allOf[1];
+  assert.deepEqual(extra.properties.tasks_count, { type: 'integer' });
+  assert.deepEqual(extra.properties.count, { type: 'integer' });
+  assert.deepEqual(extra.properties.notes_count, { type: 'integer' });
+  assert.ok(extra.required.includes('tasks_count') && extra.required.includes('count') && extra.required.includes('notes_count'));
+});
+
+test('counts: empty child world or parent rows with zero children yield 0', () => {
+  const emptyChildrenYaml = `name: empty-child-counts
+seed: 12
+world:
+  buckets: 3
+  tasks:
+    total: 0
+    ref: buckets
+endpoints:
+  - path: /api/buckets
+    entity: buckets
+    counts:
+      tasks: { entity: tasks, on: bucket_id }
+      count: { entity: tasks, on: bucket_id }
+`;
+  const dsEmptyChild = generateWorld(normalizeScenario(parseYaml(emptyChildrenYaml, 'ec.yaml'), 'ec.yaml'));
+  const engEmptyChild = createEngine(dsEmptyChild);
+  const res = engEmptyChild.handle({ method: 'GET', pathname: '/api/buckets' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.length, 3);
+  for (const row of res.body) {
+    assert.strictEqual(row.tasks_count, 0);
+    assert.strictEqual(row.count, 0);
+  }
+
+  // Fewer children than parents (or all FKs null) also yields 0 for uncovered parents
+  const partialYaml = `name: partial-counts
+seed: 12
+world:
+  buckets: 4
+  tasks:
+    total: 2
+    ref: buckets
+    nulls: { bucket_id: 2 }
+endpoints:
+  - path: /api/buckets
+    entity: buckets
+    counts:
+      tasks: { entity: tasks, on: bucket_id }
+`;
+  const dsPartial = generateWorld(normalizeScenario(parseYaml(partialYaml, 'p.yaml'), 'p.yaml'));
+  const engPartial = createEngine(dsPartial);
+  const partialRes = engPartial.handle({ method: 'GET', pathname: '/api/buckets' });
+  assert.equal(partialRes.status, 200);
+  assert.deepEqual(partialRes.body.map((b) => b.tasks_count), [0, 0, 0, 0]);
+
+  // Empty parent and empty child world
+  const emptyBothYaml = `name: empty-both
+seed: 12
+world:
+  buckets: 0
+  tasks: { total: 0, ref: buckets }
+endpoints:
+  - path: /api/buckets
+    entity: buckets
+    counts:
+      tasks: { entity: tasks, on: bucket_id }
+`;
+  const dsBoth = generateWorld(normalizeScenario(parseYaml(emptyBothYaml, 'eb.yaml'), 'eb.yaml'));
+  const bothRes = createEngine(dsBoth).handle({ method: 'GET', pathname: '/api/buckets' });
+  assert.equal(bothRes.status, 200);
+  assert.deepEqual(bothRes.body, []);
+});
+
+test('counts: validation rejects undeclared entity, nonexistent or non-FK field, wrong target FK, and duplicates', () => {
+  const parseErr = (yaml) => {
+    try {
+      normalizeScenario(parseYaml(yaml, 'bad-counts.yaml'), 'bad-counts.yaml');
+    } catch (e) {
+      assert.ok(e instanceof AtrezzoError);
+      assert.equal(e.exitCode, 3);
+      return e.message;
+    }
+    assert.fail(`expected scenario validation error for:\n${yaml}`);
+  };
+
+  const base = (epExtra, worldExtra = '') => `name: bad-counts
+seed: 1
+world:
+  boards: 2
+  buckets: 3
+  tasks:
+    total: 5
+    ref: [buckets, boards]
+    fields: { title: string }
+${worldExtra}endpoints:
+  - path: /api/buckets
+    entity: buckets
+${epExtra}`;
+
+  assert.match(parseErr(base('    counts: { tasks: { entity: ghosts, on: bucket_id } }\n')), /counts\.tasks\.entity": "ghosts" is not declared in world/);
+  assert.match(parseErr(base('    counts: { tasks: { entity: tasks, on: missing_id } }\n')), /counts\.tasks\.on": field "missing_id" does not exist in "tasks"/);
+  assert.match(parseErr(base('    counts: { tasks: { entity: tasks, on: title } }\n')), /counts\.tasks\.on": "title" is not a foreign key of "tasks"/);
+  assert.match(parseErr(base('    counts: { tasks: { entity: tasks, on: board_id } }\n')), /counts\.tasks\.on": "board_id" is a foreign key to "boards", not "buckets"/);
+  assert.match(parseErr(base('    counts: { tasks: { entity: tasks } }\n')), /counts\.tasks\.on": required; foreign key field on "tasks" pointing to "buckets"/);
+  assert.match(parseErr(base('    counts: { tasks: { on: bucket_id } }\n')), /counts\.tasks\.entity": required; a declared world entity/);
+  assert.match(parseErr(base('    counts: { tasks: { entity: tasks, on: bucket_id, extra: 1 } }\n')), /counts\.tasks\.extra": unknown field/);
+  assert.match(parseErr(base('    counts: {}\n')), /endpoints\[0\]\.counts": must be a non-empty map/);
+  assert.match(parseErr(base('    counts: { tasks: { entity: tasks, on: bucket_id }, tasks_count: { entity: tasks, on: bucket_id } }\n')), /duplicate output field "tasks_count"/);
+  assert.match(parseErr(base('    pluck: name\n    counts: { tasks: { entity: tasks, on: bucket_id } }\n')), /pluck": incompatible with counts/);
+
+  // Entity-level validation rejects nonexistent FK too
+  assert.match(parseErr(`name: bad-ent-counts
+seed: 1
+world:
+  buckets:
+    total: 3
+    counts:
+      tasks: { entity: tasks, on: missing_fk }
+  tasks:
+    total: 5
+    ref: buckets
+endpoints:
+  - path: /api/buckets
+    entity: buckets
+`), /world\.buckets\.counts\.tasks\.on": field "missing_fk" does not exist in "tasks"/);
+});

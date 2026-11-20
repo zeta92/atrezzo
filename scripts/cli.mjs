@@ -187,6 +187,7 @@ function cmdWorld({ pos, flags }) {
     else if (ep.pick) bits.push(`envelope: ${ep.pick}`);
     if (ep.params) bits.push(`params: ${ep.params.map((x) => `:${x.name}→${x.field ?? 'any'}`).join(',')}`);
     if (ep.embed) bits.push(`embed: ${embedLabel(ep.embed)}`);
+    if (ep.counts?.length) bits.push(`counts: ${ep.counts.map((c) => `${c.field}=${c.entity}.${c.on}`).join(',')}`);
     if (ep.pluck) bits.push(`pluck: ${ep.pluck}`);
     if (ep.error) bits.push(`error: ${ep.error.status}`);
     out(`  GET ${ep.path}${ep.detail ? ` (+ ${ep.path}/:id)` : ''}  ${bits.join(' · ')}`);
