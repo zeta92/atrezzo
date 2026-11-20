@@ -266,7 +266,7 @@ endpoints:
 
 - **Current user row**: the projection engine exposes the row as `currentUser` (`null` when `auth` is omitted). Any endpoint filter `{ <field>: "$user.<userField>" }` (or `$user.<userField>` inside a world-resolved filter's `where`) compares `<field>` against `currentUser[userField]` without requiring a query parameter.
 - **No query parameter**: like world-resolved filters, `$user.<field>` filters do not expose a query parameter (sending `?author_id=1` is ignored and listed in `X-Atrezzo-Ignored`). If `currentUser[userField]` is `null`, no rows match.
-- **Validation (scenario error)**: `auth.user.entity` must be declared in `world`, and `auth.user.id` must be an integer `>= 1` within `1..total` of that entity. Using `$user.<field>` without `auth` or naming a field missing from `auth.user.entity` is also a scenario error.
+- **Validation (scenario error)**: `auth.user.entity` must be declared in `world`, and `auth.user.id` must be an integer `>= 1` within `1..total` of that entity. Using `$user.<field>` without `auth`, naming a field missing from `auth.user.entity`, or referencing a user field whose type is incompatible with the filtered field is also a scenario error.
 - **Without `auth`**: behaviour and scenario hashes are completely unchanged.
 
 #### Paths with parameters (`/projects/:project_id/views/:view_id/tasks`)

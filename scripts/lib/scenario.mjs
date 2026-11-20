@@ -266,6 +266,55 @@ function canFieldBeNull(field, spec, byName) {
   return false;
 }
 
+const STRING_LIKE_TYPES = new Set(['string', 'date', 'email', 'uuid', 'url']);
+
+function typesFromEntry(entry) {
+  if (typeof entry === 'string') return [entry];
+  const types = new Set();
+  for (const x of entry) {
+    if (x === null) continue;
+    if (Number.isInteger(x)) types.add('integer');
+    else if (typeof x === 'number' && Number.isFinite(x)) types.add('number');
+    else if (typeof x === 'string') types.add('string');
+    else if (typeof x === 'boolean') types.add('boolean');
+  }
+  return [...types];
+}
+
+function fieldValueTypes(field, spec) {
+  if (field === 'id' || fkTargetEntity(spec, field)) return ['integer'];
+  if (spec.distribution && field === spec.distribution.field) return ['string'];
+  const amountField = templateFor(spec.name).amountField || 'amount';
+  if (spec.amount && field === 'currency') return ['string'];
+  if (spec.amount && field === amountField) return ['number'];
+  if (spec.pools && Object.hasOwn(spec.pools, field)) return typesFromEntry(spec.pools[field]);
+  if (spec.fields && Object.hasOwn(spec.fields, field)) {
+    const entry = spec.fields[field];
+    if (isObj(entry)) return [...new Set([...typesFromEntry(entry.default), ...typesFromEntry(entry.value)])];
+    return typesFromEntry(entry);
+  }
+  if (spec.name === 'products' && field === 'stock') return ['integer'];
+  if ((spec.name === 'users' || spec.name === 'customers') && field === 'email') return ['email'];
+  if (spec.name !== 'products' && field === 'created_at') return ['date'];
+  return ['string'];
+}
+
+function isSingleTypeCompatible(srcType, dstType) {
+  if (srcType === dstType) return true;
+  if (srcType === 'integer' && dstType === 'number') return true;
+  if (STRING_LIKE_TYPES.has(srcType) && STRING_LIKE_TYPES.has(dstType)) {
+    return srcType === 'string' || dstType === 'string';
+  }
+  return false;
+}
+
+function areFieldsCompatible(srcField, srcSpec, dstField, dstSpec) {
+  const srcTypes = fieldValueTypes(srcField, srcSpec);
+  const dstTypes = fieldValueTypes(dstField, dstSpec);
+  return srcTypes.length > 0 && dstTypes.length > 0
+    && srcTypes.every((st) => dstTypes.some((dt) => isSingleTypeCompatible(st, dt)));
+}
+
 function isWhereValueCompatible(v, field, spec, byName) {
   if (v === null) return canFieldBeNull(field, spec, byName);
   if (field === 'id' || fkTargetEntity(spec, field)) return Number.isInteger(v);
@@ -325,7 +374,10 @@ function describeTargetField(condField, spec, byName) {
     const def = isObj(entry) ? entry.default : entry;
     return Array.isArray(def) ? `enum ${JSON.stringify(def)}` : def;
   }
-  return spec.name === 'products' && condField === 'stock' ? 'integer' : 'string';
+  if (spec.name === 'products' && condField === 'stock') return 'integer';
+  if ((spec.name === 'users' || spec.name === 'customers') && condField === 'email') return 'email';
+  if (spec.name !== 'products' && condField === 'created_at') return 'date';
+  return 'string';
 }
 
 function validateConditionals(spec, f, byName, issues) {
@@ -678,7 +730,7 @@ function parseSorts(raw, fields, filters, pagination, f, issues) {
 
 const USER_TOKEN_RE = /^\$user\.([A-Za-z_][A-Za-z0-9_]*)$/;
 
-function parseUserToken(val, ff, byName, auth, authDeclared, issues) {
+function parseUserToken(val, ff, byName, auth, authDeclared, issues, targetField = null, targetSpec = null) {
   const m = USER_TOKEN_RE.exec(val);
   if (!m) {
     issues.add(ff, `invalid user token ${JSON.stringify(val)}; expected "$user.<field>"`);
@@ -694,6 +746,10 @@ function parseUserToken(val, ff, byName, auth, authDeclared, issues) {
   const userField = m[1];
   if (!userFields.includes(userField)) {
     issues.add(ff, `field "${userField}" does not exist in auth user entity "${auth.user.entity}" (fields: ${userFields.join(', ')})`);
+    return null;
+  }
+  if (targetField && targetSpec && !areFieldsCompatible(userField, userSpec, targetField, targetSpec)) {
+    issues.add(ff, `${JSON.stringify(val)} (${auth.user.entity}.${userField}: ${describeTargetField(userField, userSpec, byName)}) is incompatible with field "${targetField}" in "${targetSpec.name}" (${describeTargetField(targetField, targetSpec, byName)})`);
     return null;
   }
   return userField;
@@ -743,7 +799,7 @@ function parseWorldFilter(field, raw, spec, fkTarget, byName, auth, authDeclared
           let typeOk = true;
           for (const v of candidates) {
             if (typeof v === 'string' && v.startsWith('$')) {
-              if (!parseUserToken(v, wff, byName, auth, authDeclared, issues)) {
+              if (!parseUserToken(v, wff, byName, auth, authDeclared, issues, wk, fromSpec)) {
                 typeOk = false;
                 whereOk = false;
               }
@@ -810,7 +866,7 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
           } else if (typeof v === 'string' && v.startsWith('$')) {
             const fieldOk = fields.includes(k);
             if (!fieldOk) issues.add(ff, `field "${k}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
-            const userField = parseUserToken(v, ff, byName, auth, authDeclared, issues);
+            const userField = parseUserToken(v, ff, byName, auth, authDeclared, issues, fieldOk ? k : null, fieldOk ? spec : null);
             if (fieldOk && userField) userFilters.push({ field: k, userField });
           } else if (v !== k) issues.add(ff, `a query filter filters the field of its own name: write "${k}: ${k}" (or use the list form, or { from, where }, or "$user.<field>")`);
           else if (!fields.includes(k)) issues.add(ff, `field "${k}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
