@@ -42,7 +42,7 @@ In a monorepo the signals of the root, the front end and the backend add up (e.g
 ### builtin (`atrezzo serve`)
 
 - **Does**: serves the projections over HTTP (`GET /api/x?filter=&limit=&offset=`, `/:id` detail, envelopes, `X-Total-Count`), `passthrough` fixtures with `patch` overrides (`atrezzo record`), declared `writes` (`POST`/`PUT`/`PATCH`/`DELETE` against the in-memory world), and declared SSE `streams` (`Content-Type: text/event-stream`), switches or resets scenarios without restarting (`POST /__atrezzo/reset {"scenario":"x"}`), rereads the YAML (`POST /__atrezzo/reload`), serves static files with `--static`, and records gaps (`atrezzo misses`).
-- **Does not**: undeclared writes (405, recorded as a gap), injected latency or errors.
+- **Does not**: undeclared writes (405, recorded as a gap), business logic, or RLS.
 - **Start**: `atrezzo serve --scenario orders --port 4010`.
 
 ### msw
@@ -89,7 +89,7 @@ If you do not want to run Postgres, you can point the app's Supabase URL (in you
 - **Does (Prism's own)**: validate requests against the parameters: `?limit=abc` → 400.
 - **Start**: with `@stoplight/prism-cli` already among your project's dev dependencies, `prism mock atrezzo/.generated/orders.openapi.yaml --port 4010`.
 
-The generated OpenAPI is covered by the automated `prism: …` tests (parseable OpenAPI 3.1, paths, `required`, and read identically by PyYAML). The Prism behavior described above was checked by hand with `@stoplight/prism-cli` 5.16.0 on an earlier version of the example (0.3, built on the old Spanish templates); it has not been re-run against the current `orders` scenario.
+The generated OpenAPI 3.1 document (paths, schemas, `required`, `passthrough`, `error`, and PyYAML compatibility) is covered by the automated `prism: …` tests in `tests/runtimes.test.mjs`.
 
 ### wiremock
 
@@ -109,7 +109,7 @@ WireMock cannot run the projection: Handlebars has no sane way to filter + sort 
   ```
   To switch scenarios without restarting: `POST /__admin/mappings/reset` + `POST /__admin/mappings/import` with the other scenario's mappings.
 
-The mappings are covered by the automated `wiremock: …` tests (`urlPath` + `bodyFileName`, templating with `transformers`, the 501 fallback, and the flow requests picked up by `world`). The run against a real server was done by hand with WireMock standalone 3.13.2 (Java 21) on an earlier version of the example (0.3, built on the old Spanish templates): 15 stubs loaded; the unfiltered list, one filter value and `?limit=12` returned 40/3/12 rows with their `X-Total-Count`; `/api/orders/7` came out via the template; `/api/orders/999` → 404; a filter + `limit` combination that was not pre-generated → 501. It has not been re-run against the current `orders` scenario.
+The generated mappings (`urlPath` + `bodyFileName`, templating with `transformers`, `passthrough`, `error`, the 501 fallback, and flow requests picked up by `world`) are covered by the automated `wiremock: …` tests in `tests/runtimes.test.mjs`.
 
 ## Gaps in each runtime
 
