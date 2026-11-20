@@ -1282,22 +1282,41 @@ function writeParamField(name, path, spec) {
 
 /**
  * The contract endpoint a mutate-less write targets, or null: `POST <list>`, `PUT|PATCH|DELETE <list>/:param`
- * (the detail route) and `PUT|PATCH` on a `shape: object` endpoint. Paths compare segment by segment, a
- * parameter matching any parameter. Endpoints without an entity, with `pluck`, `error` or `passthrough` never count.
+ * (the detail route) and `PUT|PATCH` on a `shape: object` endpoint. Precedence mirrors `match()`: list
+ * routes first, then `<list>/:param` detail routes (in each phase, the fewest parameters wins; ties in
+ * declaration order). Matching requires identical parameter positions so a literal write does not drop an
+ * endpoint's bound parameter, and never infers from endpoints without an entity or with `pluck`, `error` or
+ * `passthrough`.
  */
 function writeTargetEndpoint(method, path, endpoints) {
   const segs = path.split('/');
+  const fits = (a, b) => a.length === b.length && a.every((s, i) => s === b[i] || s.startsWith(':'));
   const same = (a, b) => a.length === b.length && a.every((s, i) => s === b[i] || (s.startsWith(':') && b[i].startsWith(':')));
-  for (const ep of endpoints) {
-    if (!ep.entity || ep.pluck || ep.error || ep.passthrough) continue;
-    const epSegs = ep.path.split('/');
-    if (same(epSegs, segs)) {
-      if (method === 'POST' && ep.shape !== 'object') return ep;
-      if ((method === 'PUT' || method === 'PATCH') && ep.shape === 'object') return ep;
-    } else if (ep.detail && method !== 'POST' && segs.at(-1).startsWith(':') && same(epSegs, segs.slice(0, -1))) {
-      return ep;
+  const eligible = (ep) => Boolean(ep.entity && !ep.pluck && !ep.error && !ep.passthrough);
+  const pickMostSpecific = (candidates, targetSegs) => {
+    let best = null;
+    for (const ep of candidates) {
+      const epSegs = ep.path.split('/');
+      if (!fits(epSegs, targetSegs)) continue;
+      const count = epSegs.reduce((n, s) => n + (s.startsWith(':') ? 1 : 0), 0);
+      if (!best || count < best.count) best = { ep, epSegs, count };
     }
+    return best;
+  };
+
+  const listMatch = pickMostSpecific(endpoints, segs);
+  if (listMatch) {
+    const { ep, epSegs } = listMatch;
+    if (!eligible(ep) || !same(epSegs, segs)) return null;
+    if (method === 'POST' && ep.shape !== 'object') return ep;
+    if ((method === 'PUT' || method === 'PATCH') && ep.shape === 'object') return ep;
+    return null;
   }
+
+  if (method === 'POST' || segs.length < 2 || !segs.at(-1).startsWith(':')) return null;
+  const parentSegs = segs.slice(0, -1);
+  const detailMatch = pickMostSpecific(endpoints.filter((ep) => ep.detail), parentSegs);
+  if (detailMatch && eligible(detailMatch.ep) && same(detailMatch.epSegs, parentSegs)) return detailMatch.ep;
   return null;
 }
 
