@@ -210,7 +210,7 @@ The scenario does not depend on where it is served. `world` always writes the wo
 
 | adapter | picked when the repo has | does | does not |
 |---|---|---|---|
-| `builtin` | nothing more specific; any backend or language | real HTTP via `atrezzo serve`: filters, pagination, envelopes, detail routes, declared `writes`, scenario reset, hot reload, gap log | undeclared writes (405), injected latency or errors |
+| `builtin` | nothing more specific; any backend or language | real HTTP via `atrezzo serve`: filters, pagination, envelopes, detail routes, declared `writes`, SSE `streams`, scenario reset, hot reload, gap log | undeclared writes (405), injected latency or errors |
 | `msw` | `msw` in dependencies | handlers that run the same engine as `serve`, in the browser or in Node tests | install msw or register the worker for you; record gaps |
 | `supabase` | `supabase/config.toml`, `@supabase/supabase-js`, `supabase/` | `schema.sql`, `seed.sql` with the world's ids, and an idempotent `reset.sh` that refuses a non-local database | simulate RLS or auth; filtering and pagination are PostgREST's, not atrezzo's |
 | `prism` | `@stoplight/prism-cli` (a spec alone is not enough) | an OpenAPI 3.1 file whose examples come from the world | filter or paginate: any query gets the default example |
@@ -300,6 +300,10 @@ the two folders removes everything it wrote.
 
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
+
+### 0.21.0
+
+**Server-Sent Events streams (`streams`).** A scenario can now declare a root `streams:` map keyed by `"/path"` with `{ interval, events, loop }` so screens that subscribe to live updates after initial REST loads (prices, markets, status feeds) can be simulated in `atrezzo serve`. `serve` responds with `Content-Type: text/event-stream`, emits each declared event serialized as `data: <json>\n\n` at the configured `interval` in order, repeats from the start when `loop: true` or closes after the last event when `loop: false`, lists declared stream paths in `GET /__atrezzo/state`, and closes active streams and timers cleanly on client disconnect, `POST /__atrezzo/reset`, `POST /__atrezzo/reload`, or server shutdown. Validation rejects empty `streams`, invalid/duplicate paths, `interval <= 0` (or non-integer), empty `events`, and non-boolean `loop` with exit `3`; scenarios without `streams` keep their exact behaviour and hash. Documented in `references/scenario.md` and `references/runtimes.md`, covered in `tests/scenario.test.mjs` and `tests/serve.test.mjs`.
 
 ### 0.20.0
 

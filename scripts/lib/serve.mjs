@@ -81,6 +81,7 @@ function summary(state, available, generatedDir, misses, latency = 0) {
   const errors = errorSummary(d.endpoints);
   if (Object.keys(errors).length) out.errors = errors; // only when declared
   if (d.writes?.length) out.writes = d.writes.map((w) => `${w.method} ${w.path}`); // only when declared
+  if (d.streams?.length) out.streams = d.streams.map((s) => s.path); // only when declared
   if (d.auth) out.auth = d.auth; // only when declared
   if (misses) out.misses = misses.summary();
   if (generatedDir) {
@@ -135,6 +136,79 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
   };
 
   const JSON_CT = { 'content-type': 'application/json; charset=utf-8' };
+  const activeStreams = new Set();
+  const closeAllStreams = () => {
+    for (const close of [...activeStreams]) close();
+  };
+  const matchStream = (pathname) => {
+    const clean = pathname.replace(/\/+$/, '') || '/';
+    return (state.dataset.streams ?? []).find((s) => s.path === clean) ?? null;
+  };
+  const serveStream = (req, res, stream) => {
+    if (misses.resolve('GET', stream.path)) log(`gap ${missKey('GET', stream.path)} resolved`);
+    log(`${req.method} ${stream.path} → 200 text/event-stream (${stream.events.length} events, ${stream.interval} ms${stream.loop ? ', loop' : ''})`);
+    if (req.method === 'HEAD') {
+      return send(res, 200, null, { 'content-type': 'text/event-stream', 'x-atrezzo-scenario': state.dataset.scenario });
+    }
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache, no-transform',
+      'connection': 'keep-alive',
+      'access-control-allow-origin': '*',
+      'access-control-expose-headers': 'x-total-count, content-range, x-atrezzo-scenario, x-atrezzo-ignored, x-atrezzo-stub, x-atrezzo-error',
+      'x-atrezzo-scenario': state.dataset.scenario,
+    });
+    res.flushHeaders?.();
+
+    let idx = 0;
+    let timer = null;
+    let closed = false;
+
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      activeStreams.delete(closeStream);
+      req.off('close', cleanup);
+      res.off('close', cleanup);
+      res.off('error', cleanup);
+    };
+
+    const closeStream = () => {
+      if (closed) return;
+      cleanup();
+      if (!res.writableEnded && !res.destroyed) res.end();
+    };
+
+    activeStreams.add(closeStream);
+    req.on('close', cleanup);
+    res.on('close', cleanup);
+    res.on('error', cleanup);
+
+    const scheduleNext = () => {
+      if (closed) return;
+      timer = setTimeout(() => {
+        timer = null;
+        if (closed || res.writableEnded || res.destroyed) { cleanup(); return; }
+        const ev = stream.events[idx];
+        res.write(`data: ${JSON.stringify(ev)}\n\n`);
+        idx++;
+        if (idx >= stream.events.length) {
+          if (!stream.loop) {
+            closeStream();
+            return;
+          }
+          idx = 0;
+        }
+        scheduleNext();
+      }, stream.interval);
+    };
+
+    scheduleNext();
+  };
 
   /**
    * The request is not in the contract: record it and answer 404 (log) or an empty 200 (stub).
@@ -178,7 +252,9 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
       }
       if (url.pathname === '/__atrezzo/reload') {
         if (req.method !== 'POST') return send(res, 405, { error: 'use POST' }, { ...JSON_CT, allow: 'POST' });
-        state = buildState(pick(state.dataset.scenario));
+        const nextState = buildState(pick(state.dataset.scenario));
+        closeAllStreams();
+        state = nextState;
         log(`reload → ${state.dataset.scenario} (hash ${state.dataset.hash})`);
         return send(res, 200, summary(state, available, generatedDir, misses, latency), JSON_CT);
       }
@@ -186,15 +262,24 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         if (req.method !== 'POST') return send(res, 405, { error: 'use POST' }, { allow: 'POST' });
         const body = await readBody(req);
         const name = body.scenario ?? url.searchParams.get('scenario') ?? state.dataset.scenario;
-        state = buildState(pick(name));
+        const nextState = buildState(pick(name));
+        closeAllStreams();
+        state = nextState;
         log(`reset → ${state.dataset.scenario}`);
         return send(res, 200, summary(state, available, generatedDir, misses, latency), JSON_CT);
       }
       if (url.pathname.startsWith('/__atrezzo/')) return send(res, 404, { error: `unknown control route ${url.pathname} (available: state, reset, reload, misses)` }, JSON_CT);
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        const stream = matchStream(url.pathname);
+        if (stream) return serveStream(req, res, stream);
+      }
       const body = isMutation(req.method) ? await readBody(req) : undefined;
       const r = state.engine.handle({ method: req.method, pathname: url.pathname, query: url.searchParams, headers: req.headers, body });
       // A matched route with an undeclared method is a gap too (405).
       if (r && r.status === 405) return miss(req, res, url, 405, { allow: r.headers?.allow ?? 'GET' });
+      if (!r && matchStream(url.pathname) && req.method !== 'GET' && req.method !== 'HEAD') {
+        return miss(req, res, url, 405, { allow: 'GET' });
+      }
       // Only contract answers wait: static files, control routes and gaps answer immediately.
       if (r) {
         const ms = latencyFor(url.pathname);
@@ -215,7 +300,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         // SPA fallback: a browser navigating to a client-side route (/copilot) gets the app shell.
         // API calls (JSON Accept), unknown API paths and missing assets still fall through to the 404s below.
         const shell = join(root, 'index.html');
-        if (wantsHtml(req, url.pathname) && !ASSET.test(url.pathname) && !underApiPrefix(state.dataset.endpoints, url.pathname) && existsSync(shell)) {
+        if (wantsHtml(req, url.pathname) && !ASSET.test(url.pathname) && !underApiPrefix([...state.dataset.endpoints, ...(state.dataset.streams ?? [])], url.pathname) && existsSync(shell)) {
           log(`${req.method} ${url.pathname} → 200 index.html (SPA fallback)`);
           return send(res, 200, readFileSync(shell), { 'content-type': MIME['.html'] });
         }
@@ -241,6 +326,9 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         server.listen(port, host, () => { server.off('error', ko); ok(server.address()); });
       });
     },
-    close() { return new Promise((ok) => { server.closeAllConnections?.(); server.close(() => ok()); }); },
+    close() {
+      closeAllStreams();
+      return new Promise((ok) => { server.closeAllConnections?.(); server.close(() => ok()); });
+    },
   };
 }

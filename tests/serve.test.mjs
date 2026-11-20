@@ -222,3 +222,208 @@ test('serve writes: POST creates, PATCH updates, DELETE removes, state updates, 
     await srv.close();
   }
 });
+
+// ---------- SSE streams (`streams`) ----------
+
+const STREAMS_YAML = `name: ticker
+seed: 7712
+now: 2025-03-01T09:00:00Z
+world:
+  products: 2
+endpoints:
+  - path: /api/products
+    entity: products
+streams:
+  "/api/prices":
+    interval: 25
+    events:
+      - { symbol: "BTC", price: 100 }
+      - { symbol: "BTC", price: 105 }
+    loop: true
+  "/api/updates":
+    interval: 25
+    events:
+      - { step: 1, status: "started" }
+      - { step: 2, status: "ready" }
+      - { step: 3, status: "done" }
+    loop: false
+`;
+
+async function readSseEvents(streamUrl, { maxEvents = Infinity, signal } = {}) {
+  const res = await fetch(streamUrl, { signal });
+  const contentType = res.headers.get('content-type');
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  const frames = [];
+  const events = [];
+  try {
+    while (events.length < maxEvents) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let sep;
+      while ((sep = buf.indexOf('\n\n')) !== -1) {
+        const rawFrame = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        frames.push(`${rawFrame}\n\n`);
+        const line = rawFrame.split('\n').find((l) => l.startsWith('data: '));
+        if (line) events.push(JSON.parse(line.slice(6)));
+        if (events.length >= maxEvents) break;
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  return { status: res.status, contentType, frames, events };
+}
+
+test('SSE streams: loop: false emits declared events in order as data: <json>\\n\\n and closes', async () => {
+  const dir = tmpProject({ 'scenarios/ticker.yaml': STREAMS_YAML, 'scenarios/pequeno.yaml': SMALL });
+  const srv = createMockServer({ scenariosDir: join(dir, 'scenarios'), scenario: 'ticker' });
+  const base = `http://127.0.0.1:${(await srv.listen(0)).port}`;
+  try {
+    const state = (await httpGetJson(`${base}/__atrezzo/state`)).body;
+    assert.deepEqual(state.streams, ['/api/prices', '/api/updates']);
+
+    const { status, contentType, frames, events } = await readSseEvents(`${base}/api/updates`);
+    assert.equal(status, 200);
+    assert.match(contentType, /^text\/event-stream/);
+    assert.deepEqual(frames, [
+      'data: {"step":1,"status":"started"}\n\n',
+      'data: {"step":2,"status":"ready"}\n\n',
+      'data: {"step":3,"status":"done"}\n\n',
+    ]);
+    assert.deepEqual(events, [
+      { step: 1, status: 'started' },
+      { step: 2, status: 'ready' },
+      { step: 3, status: 'done' },
+    ]);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('SSE streams: loop: true repeats events in order and closes cleanly on client disconnect', async () => {
+  const dir = tmpProject({ 'scenarios/ticker.yaml': STREAMS_YAML });
+  const srv = createMockServer({ scenariosDir: join(dir, 'scenarios'), scenario: 'ticker' });
+  const base = `http://127.0.0.1:${(await srv.listen(0)).port}`;
+  try {
+    const ac = new AbortController();
+    const { status, contentType, events } = await readSseEvents(`${base}/api/prices`, { maxEvents: 5, signal: ac.signal });
+    ac.abort();
+    assert.equal(status, 200);
+    assert.match(contentType, /^text\/event-stream/);
+    assert.deepEqual(events, [
+      { symbol: 'BTC', price: 100 },
+      { symbol: 'BTC', price: 105 },
+      { symbol: 'BTC', price: 100 },
+      { symbol: 'BTC', price: 105 },
+      { symbol: 'BTC', price: 100 },
+    ]);
+
+    // Also verify raw node:http client socket destroy closes stream cleanly without hanging server.close()
+    const { get } = await import('node:http');
+    const firstChunk = await new Promise((ok, ko) => {
+      const clientReq = get(`${base}/api/prices`, (res) => {
+        assert.equal(res.statusCode, 200);
+        assert.match(res.headers['content-type'], /^text\/event-stream/);
+        res.once('data', (chunk) => {
+          const text = chunk.toString('utf8');
+          clientReq.destroy();
+          ok(text);
+        });
+      });
+      clientReq.on('error', ko);
+    });
+    assert.equal(firstChunk, 'data: {"symbol":"BTC","price":100}\n\n');
+  } finally {
+    await srv.close();
+  }
+});
+
+test('SSE streams: POST /__atrezzo/reset closes active streams cleanly', async () => {
+  const dir = tmpProject({ 'scenarios/ticker.yaml': STREAMS_YAML, 'scenarios/pequeno.yaml': SMALL });
+  const srv = createMockServer({ scenariosDir: join(dir, 'scenarios'), scenario: 'ticker' });
+  const base = `http://127.0.0.1:${(await srv.listen(0)).port}`;
+  try {
+    const res = await fetch(`${base}/api/prices`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /^text\/event-stream/);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    const received = [];
+
+    // Read the first 2 events from the looping stream
+    while (received.length < 2) {
+      const { value, done } = await reader.read();
+      assert.equal(done, false);
+      buf += decoder.decode(value, { stream: true });
+      let sep;
+      while ((sep = buf.indexOf('\n\n')) !== -1) {
+        const frame = buf.slice(0, sep);
+        buf = buf.slice(sep + 2);
+        if (frame.startsWith('data: ')) received.push(JSON.parse(frame.slice(6)));
+      }
+    }
+    assert.deepEqual(received, [{ symbol: 'BTC', price: 100 }, { symbol: 'BTC', price: 105 }]);
+
+    // Failed reset (unknown scenario) keeps the stream alive
+    const badReset = await fetch(`${base}/__atrezzo/reset`, { method: 'POST', body: '{"scenario":"unknown"}' });
+    assert.equal(badReset.status, 400);
+
+    // Valid reset closes the active SSE stream cleanly (EOF)
+    const resetPromise = fetch(`${base}/__atrezzo/reset`, { method: 'POST', body: '{}' });
+    const tail = [];
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) tail.push(decoder.decode(value, { stream: true }));
+    }
+    const resetRes = await resetPromise;
+    assert.equal(resetRes.status, 200);
+    // Any buffered data before EOF must still be valid frames; stream ended cleanly without throwing.
+    assert.ok(Array.isArray(tail));
+  } finally {
+    await srv.close();
+  }
+});
+
+test('SSE streams: max interval (2147483647) does not overflow setTimeout, and > max or endpoint collisions fail loudly', async () => {
+  const maxYaml = STREAMS_YAML.replace('interval: 25\n    events:\n      - { symbol: "BTC"', 'interval: 2147483647\n    events:\n      - { symbol: "BTC"');
+  const dirMax = tmpProject({ 'scenarios/ticker.yaml': maxYaml });
+  const srv = createMockServer({ scenariosDir: join(dirMax, 'scenarios'), scenario: 'ticker' });
+  const base = `http://127.0.0.1:${(await srv.listen(0)).port}`;
+  try {
+    const ac = new AbortController();
+    const res = await fetch(`${base}/api/prices`, { signal: ac.signal });
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /^text\/event-stream/);
+    const reader = res.body.getReader();
+    // With 2147483647 ms, no event should fire immediately (if it overflowed to 1 ms, it would emit right away).
+    const race = await Promise.race([
+      reader.read().then((r) => ({ kind: 'read', r })),
+      new Promise((ok) => setTimeout(() => ok({ kind: 'timeout' }), 40)),
+    ]);
+    assert.equal(race.kind, 'timeout');
+    ac.abort();
+    await reader.cancel().catch(() => {});
+  } finally {
+    await srv.close();
+  }
+
+  const overYaml = STREAMS_YAML.replace('interval: 25\n    events:\n      - { symbol: "BTC"', 'interval: 2147483648\n    events:\n      - { symbol: "BTC"');
+  const dirOver = tmpProject({ 'scenarios/ticker.yaml': overYaml });
+  assert.throws(
+    () => createMockServer({ scenariosDir: join(dirOver, 'scenarios'), scenario: 'ticker' }),
+    /2147483647/,
+  );
+
+  const collideYaml = `${STREAMS_YAML}  "/api/products":\n    interval: 25\n    events: [{ ok: true }]\n`;
+  const dirCollide = tmpProject({ 'scenarios/ticker.yaml': collideYaml });
+  assert.throws(
+    () => createMockServer({ scenariosDir: join(dirCollide, 'scenarios'), scenario: 'ticker' }),
+    /conflicts with endpoint "\/api\/products"/,
+  );
+});

@@ -59,6 +59,7 @@ expect:
 | `world` | map | required, at least one entity |
 | `endpoints` | list | required, at least one |
 | `writes` | map | optional; `<METHOD> /path`: `{ expect, mutate }` for `POST`/`PUT`/`PATCH`/`DELETE` |
+| `streams` | map | optional; `/path`: `{ interval, events, loop }` for SSE (`text/event-stream`) in `serve` |
 | `entry` | string | optional; with `path`, it must be its first element |
 | `path` | list of strings | optional; screens in order |
 | `expect` | list | optional |
@@ -512,6 +513,27 @@ writes:
 - **Determinism**: no `Math.random()` or wall clock is used. Each entity assigns sequential integer `id`s independently (`maxId + 1`), mutated rows keep only declared entity schema fields in canonical schema order (formatted like reads when a GET endpoint exists, ignoring unknown request fields), stateless `echo: true` sorts payload keys deterministically, and `GET` projections preserve deterministic sort order across mutations.
 - **Session & reset**: `serve` and MSW handlers keep mutations in memory across subsequent reads in the same session (`embed` and `counts` indexes are invalidated automatically). `POST /__atrezzo/reset` (in both `serve` and MSW handlers, plus `reset()` exported from `<scenario>.handlers.mjs`) restores the world and ID counters to their initial seeded state.
 - **Validation (scenario error, exit 3)**: rejects empty `writes`, route keys without an explicit `POST`/`PUT`/`PATCH`/`DELETE` method, duplicate write routes, unknown `mutate.entity`, unknown fields in `set`/`where`, `id` in `set`, unbound `:param` segments, `set` on `delete`, `where` on `create`, and `echo: true`/`body` with `204`. Scenarios without `writes` keep their exact behaviour and hash.
+
+### Streams (`streams`)
+
+When a screen connects to a Server-Sent Events (SSE) feed after loading REST data (live prices, market ticks, status updates), declare a root `streams` map in the scenario:
+
+```yaml
+streams:
+  "/api/prices":
+    interval: 1000
+    events:
+      - { symbol: "BTC", price: 62100 }
+      - { symbol: "BTC", price: 62250 }
+    loop: true
+```
+
+- **Route keys**: paths starting with `/` (no whitespace, query or fragment; trailing slashes normalized). Must not collide with any `endpoints` route (including `/:id` detail routes unless `detail: false` is set on the endpoint).
+- **`interval`** (required): integer between `1` and `2147483647` (milliseconds, Node.js `setTimeout` limit) between emitted events.
+- **`events`** (required): non-empty list of JSON values. Each event is serialized as `data: <json>\n\n`.
+- **`loop`** (optional, default `false`): when `true`, cycles back to the first event after the last; when `false`, closes the HTTP stream cleanly after emitting all declared events once.
+- **Runtime & lifecycle**: `atrezzo serve` answers `200` with `Content-Type: text/event-stream`, flushes headers immediately, emits each event in order at `interval`, and closes active streams cleanly (clearing timers and ending the response) on client disconnect, `POST /__atrezzo/reset`, `POST /__atrezzo/reload`, or server shutdown. `GET /__atrezzo/state` lists declared streams under `streams`.
+- **Validation (scenario error, exit 3)**: rejects empty `streams`, invalid or duplicate paths, paths colliding with `endpoints` (list, parameterized, or `/:id` detail routes), `interval <= 0`, `interval > 2147483647`, non-integer `interval`, empty or missing `events`, non-boolean `loop`, and unknown fields. Scenarios without `streams` keep their exact behaviour and hash.
 
 ### Counted relations (PostgREST `select` and `head=true`)
 

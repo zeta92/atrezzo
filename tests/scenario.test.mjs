@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseYaml, YamlError } from '../scripts/lib/yaml.mjs';
-import { normalizeScenario } from '../scripts/lib/scenario.mjs';
+import { normalizeScenario, MAX_STREAM_INTERVAL } from '../scripts/lib/scenario.mjs';
 import { scenarioHash } from '../scripts/lib/world.mjs';
 import { AtrezzoError } from '../scripts/lib/errors.mjs';
 import { SCENARIO, tmpProject, cli } from './helpers.mjs';
@@ -135,4 +135,64 @@ test('sorts validation: invalid fields, types, duplicates and parameter collisio
   assert.match(errorOf(() => norm(inject('sorts: { by: status, fields: [id] }'))).message, /sorts\.by": parameter "status" conflicts with a declared filter/);
   assert.match(errorOf(() => norm(inject('sorts: { by: limit, fields: [id] }'))).message, /sorts\.by": parameter "limit" conflicts with a pagination parameter/);
   assert.match(errorOf(() => norm(inject('sort: []'))).message, /endpoints\[0\]\.sort": must be a field name or a non-empty list/);
+});
+
+test('streams: valid configuration normalizes and scenarios without streams keep their hash', () => {
+  const base = norm(SCENARIO);
+  assert.equal(base.streams, undefined);
+  const withStreams = norm(`${SCENARIO}streams:\n  "/api/prices":\n    interval: 1000\n    events:\n      - { symbol: BTC, price: 100 }\n      - { symbol: BTC, price: 105 }\n    loop: true\n  "/api/alerts":\n    interval: 250\n    events: [{ ok: true }]\n`);
+  assert.deepEqual(withStreams.streams, [
+    { path: '/api/prices', interval: 1000, events: [{ symbol: 'BTC', price: 100 }, { symbol: 'BTC', price: 105 }], loop: true },
+    { path: '/api/alerts', interval: 250, events: [{ ok: true }], loop: false },
+  ]);
+  assert.notEqual(scenarioHash(withStreams), scenarioHash(base));
+});
+
+test('streams validation: interval > 0, at least one event, valid path and loop', () => {
+  const withStreams = (block) => `${SCENARIO}streams:\n${block}`;
+  assert.match(errorOf(() => norm(`${SCENARIO}streams: []`)).message, /field "streams": must be a non-empty map/);
+  assert.match(errorOf(() => norm(`${SCENARIO}streams: {}`)).message, /field "streams": must be a non-empty map/);
+  assert.match(errorOf(() => norm(withStreams('  "api/prices": { interval: 100, events: [{ a: 1 }] }'))).message, /streams\[api\/prices\]": path "api\/prices" must start with "\/"/);
+  assert.match(errorOf(() => norm(withStreams('  "/api/prices?x=1": { interval: 100, events: [{ a: 1 }] }'))).message, /must not contain whitespace, query or fragment/);
+  assert.match(errorOf(() => norm(withStreams('  "/api/prices": { interval: 100, events: [{ a: 1 }] }\n  "/api/prices/": { interval: 100, events: [{ a: 2 }] }'))).message, /duplicate stream path "\/api\/prices"/);
+  assert.match(errorOf(() => norm(withStreams('  "/api/prices": { events: [{ a: 1 }] }'))).message, /streams\[\/api\/prices\]\.interval": required; integer > 0/);
+  assert.match(errorOf(() => norm(withStreams('  "/api/prices": { interval: 0, events: [{ a: 1 }] }'))).message, /streams\[\/api\/prices\]\.interval": must be an integer > 0/);
+  assert.match(errorOf(() => norm(withStreams('  "/api/prices": { interval: -50, events: [{ a: 1 }] }'))).message, /streams\[\/api\/prices\]\.interval": must be an integer > 0/);
+  assert.match(errorOf(() => norm(withStreams('  "/api/prices": { interval: 1.5, events: [{ a: 1 }] }'))).message, /streams\[\/api\/prices\]\.interval": must be an integer > 0/);
+  assert.match(errorOf(() => norm(withStreams('  "/api/prices": { interval: 100 }'))).message, /streams\[\/api\/prices\]\.events": required; must be a non-empty list/);
+  assert.match(errorOf(() => norm(withStreams('  "/api/prices": { interval: 100, events: [] }'))).message, /streams\[\/api\/prices\]\.events": required; must be a non-empty list/);
+  assert.match(errorOf(() => norm(withStreams('  "/api/prices": { interval: 100, events: [{ a: 1 }], loop: "yes" }'))).message, /streams\[\/api\/prices\]\.loop": must be true or false/);
+  assert.match(errorOf(() => norm(withStreams('  "/api/prices": { interval: 100, events: [{ a: 1 }], extra: 1 }'))).message, /streams\[\/api\/prices\]\.extra": unknown field/);
+});
+
+test('streams validation: interval boundary (2^31 - 1 accepted, above rejected)', () => {
+  assert.equal(MAX_STREAM_INTERVAL, 2147483647);
+  const atLimit = norm(`${SCENARIO}streams:\n  "/api/prices": { interval: ${MAX_STREAM_INTERVAL}, events: [{ a: 1 }] }\n`);
+  assert.equal(atLimit.streams[0].interval, 2147483647);
+
+  const aboveLimit = errorOf(() => norm(`${SCENARIO}streams:\n  "/api/prices": { interval: ${MAX_STREAM_INTERVAL + 1}, events: [{ a: 1 }] }\n`));
+  assert.ok(aboveLimit instanceof AtrezzoError);
+  assert.equal(aboveLimit.exitCode, 3);
+  assert.match(aboveLimit.message, /streams\[\/api\/prices\]\.interval": must be an integer > 0 and <= 2147483647/);
+});
+
+test('streams validation: collisions with endpoints (exact, parameterized, and detail routes) are rejected', () => {
+  const exact = errorOf(() => norm(`${SCENARIO}streams:\n  "/api/orders": { interval: 100, events: [{ a: 1 }] }\n`));
+  assert.ok(exact instanceof AtrezzoError);
+  assert.equal(exact.exitCode, 3);
+  assert.match(exact.message, /streams\[\/api\/orders\]": conflicts with endpoint "\/api\/orders"/);
+
+  const trailing = errorOf(() => norm(`${SCENARIO}streams:\n  "/api/orders/": { interval: 100, events: [{ a: 1 }] }\n`));
+  assert.match(trailing.message, /streams\[\/api\/orders\/\]": conflicts with endpoint "\/api\/orders"/);
+
+  const detailCollision = errorOf(() => norm(`${SCENARIO}streams:\n  "/api/orders/live": { interval: 100, events: [{ a: 1 }] }\n`));
+  assert.match(detailCollision.message, /streams\[\/api\/orders\/live\]": conflicts with detail route "\/api\/orders\/:id"/);
+
+  // When detail: false is explicitly set, a sub-path stream does not collide with the list endpoint.
+  const noDetail = norm(SCENARIO.replace('    entity: customers\n', '    entity: customers\n    detail: false\n') + 'streams:\n  "/api/customers/live": { interval: 100, events: [{ a: 1 }] }\n');
+  assert.equal(noDetail.streams[0].path, '/api/customers/live');
+
+  // Parameterized endpoint colliding with a concrete stream path.
+  const paramEp = `${SCENARIO.replace('  - path: /api/customers\n    entity: customers\n', '  - path: /api/customers/:id/events\n    entity: orders\n    filters:\n      ":id": customer_id\n')}streams:\n  "/api/customers/1/events": { interval: 100, events: [{ a: 1 }] }\n`;
+  assert.match(errorOf(() => norm(paramEp)).message, /streams\[\/api\/customers\/1\/events\]": conflicts with endpoint "\/api\/customers\/:id\/events"/);
 });
