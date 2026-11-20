@@ -1469,6 +1469,95 @@ ${epExtra}`;
   assert.match(parseErr(base('    counts: { tasks: { entity: tasks, on: bucket_id }, tasks_count: { entity: tasks, on: bucket_id } }\n')), /duplicate output field "tasks_count"/);
   assert.match(parseErr(base('    pluck: name\n    counts: { tasks: { entity: tasks, on: bucket_id } }\n')), /pluck": incompatible with counts/);
 
+  // Count field colliding with existing parent field (endpoint or entity level)
+  assert.match(parseErr(base('    counts: { name: { entity: tasks, on: bucket_id } }\n')), /counts\.name": "name" is already a field of "buckets"/);
+  assert.match(parseErr(`name: bad-field-collision
+seed: 1
+world:
+  buckets:
+    total: 3
+    fields: { title: string, count: integer, tasks_count: integer }
+  tasks:
+    total: 5
+    ref: buckets
+endpoints:
+  - path: /api/buckets
+    entity: buckets
+    counts:
+      count: { entity: tasks, on: bucket_id }
+`), /counts\.count": "count" is already a field of "buckets"/);
+  assert.match(parseErr(`name: bad-ent-field-collision
+seed: 1
+world:
+  buckets:
+    total: 3
+    fields: { title: string, tasks_count: integer }
+    counts:
+      tasks: { entity: tasks, on: bucket_id }
+  tasks:
+    total: 5
+    ref: buckets
+endpoints:
+  - path: /api/buckets
+    entity: buckets
+`), /world\.buckets\.counts\.tasks": "tasks_count" is already a field of "buckets"/);
+
+  // Count field colliding with embed or include on the same endpoint
+  assert.match(parseErr(`name: bad-embed-count-collision
+seed: 1
+world:
+  buckets:
+    total: 3
+    fields: { title: string }
+  tasks:
+    total: 5
+    ref: buckets
+  notes:
+    total: 4
+    ref: buckets
+endpoints:
+  - path: /api/buckets
+    entity: buckets
+    embed: [tasks]
+    counts:
+      tasks: { entity: notes, on: bucket_id }
+`), /count field "tasks" conflicts with embedded "tasks"/);
+  assert.match(parseErr(`name: bad-include-count-collision
+seed: 1
+world:
+  boards: 2
+  buckets:
+    total: 3
+    ref: boards
+    fields: { title: string }
+  tasks:
+    total: 5
+    ref: buckets
+endpoints:
+  - path: /api/buckets
+    entity: buckets
+    include: [boards]
+    counts:
+      board: { entity: tasks, on: bucket_id }
+`), /count field "board" conflicts with included "board"/);
+
+  // Inherited world.<entity>.counts combined with pluck on an endpoint
+  assert.match(parseErr(`name: bad-ent-counts-pluck
+seed: 1
+world:
+  buckets:
+    total: 3
+    counts:
+      tasks: { entity: tasks, on: bucket_id }
+  tasks:
+    total: 5
+    ref: buckets
+endpoints:
+  - path: /api/bucket-ids
+    entity: buckets
+    pluck: id
+`), /endpoints\[0\]\.pluck": incompatible with counts/);
+
   // Entity-level validation rejects nonexistent FK too
   assert.match(parseErr(`name: bad-ent-counts
 seed: 1

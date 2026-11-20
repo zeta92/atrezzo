@@ -793,6 +793,7 @@ function parseCounts(raw, parentSpec, f, byName, issues) {
     issues.add(f, 'must be a non-empty map <name>: { entity: <entity>, on: <fk> }');
     return [];
   }
+  const parentFields = entityFields(parentSpec);
   const out = [];
   const seenFields = new Map();
   for (const [key, val] of Object.entries(raw)) {
@@ -837,6 +838,10 @@ function parseCounts(raw, parentSpec, f, byName, issues) {
       const field = key === targetEntity ? `${key}_count` : key;
       if (field === 'id') {
         issues.add(ff, 'count field cannot be named "id"');
+        continue;
+      }
+      if (parentFields.includes(field)) {
+        issues.add(ff, `"${field}" is already a field of "${parentSpec.name}"; the count would overwrite it`);
         continue;
       }
       if (seenFields.has(field)) {
@@ -1050,6 +1055,13 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
         else include.push(inc);
       });
     }
+    const embedNames = new Set(embed.map((e) => (typeof e === 'string' ? e : e.entity)));
+    const includeNames = new Set(include.map((inc) => templateFor(inc).singular));
+    for (const c of epRowCounts) {
+      const cf = epCounts.some((ec) => ec.field === c.field) ? `${f}.counts` : f;
+      if (embedNames.has(c.field)) issues.add(cf, `count field "${c.field}" conflicts with embedded "${c.field}"`);
+      else if (includeNames.has(c.field)) issues.add(cf, `count field "${c.field}" conflicts with included "${c.field}"`);
+    }
     let shape = ep.shape ?? 'array';
     if (!SHAPES.includes(shape)) issues.add(`${f}.shape`, `must be ${SHAPES.map((s) => `"${s}"`).join(', ')}; got ${JSON.stringify(shape)}`);
     let pick = null;
@@ -1076,7 +1088,7 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
       if (typeof ep.pluck !== 'string' || !ep.pluck) issues.add(`${f}.pluck`, `must be a field name of "${spec.name}" (fields: ${fields.join(', ')})`);
       else if (!fields.includes(ep.pluck)) issues.add(`${f}.pluck`, `field "${ep.pluck}" does not exist in "${spec.name}" (fields: ${fields.join(', ')}); pluck answers that field of each row, as a string`);
       else pluck = ep.pluck;
-      if (include.length || embed.length || ep.counts !== undefined) {
+      if (include.length || embed.length || ep.counts !== undefined || epRowCounts.length) {
         const what = include.length ? 'include' : embed.length ? 'embed' : 'counts';
         issues.add(`${f}.pluck`, `incompatible with ${what}: a plucked response is a list of values, not rows`);
       }
