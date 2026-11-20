@@ -41,13 +41,13 @@ In a monorepo the signals of the root, the front end and the backend add up (e.g
 
 ### builtin (`atrezzo serve`)
 
-- **Does**: serves the projections over HTTP (`GET /api/x?filter=&limit=&offset=`, `/:id` detail, envelopes, `X-Total-Count`), `passthrough` fixtures with `patch` overrides (`atrezzo record`), declared `writes` (`POST`/`PUT`/`PATCH`/`DELETE` against the in-memory world), and declared SSE `streams` (`Content-Type: text/event-stream`), switches or resets scenarios without restarting (`POST /__atrezzo/reset {"scenario":"x"}`), rereads the YAML (`POST /__atrezzo/reload`), serves static files with `--static`, and records gaps (`atrezzo misses`).
+- **Does**: serves the projections over HTTP (`GET /api/x?filter=&limit=&offset=`, `/:id` detail, envelopes, `X-Total-Count`), `passthrough` fixtures with `patch` overrides (`atrezzo record`), declared `writes` (`POST`/`PUT`/`PATCH`/`DELETE` against the in-memory world), declared PostgREST functions (`rpc:` on `POST /rpc/<fn>` and `/rest/v1/rpc/<fn>`), and declared SSE `streams` (`Content-Type: text/event-stream`), switches or resets scenarios without restarting (`POST /__atrezzo/reset {"scenario":"x"}`), rereads the YAML (`POST /__atrezzo/reload`), serves static files with `--static`, and records gaps (`atrezzo misses`).
 - **Does not**: undeclared writes (405, recorded as a gap), business logic, or RLS.
 - **Start**: `atrezzo serve --scenario orders --port 4010`.
 
 ### msw
 
-- **Does**: `world` writes `<scenario>.handlers.mjs`, which imports the JSON and `runtime.mjs` and projects with the same engine as `serve`. With `workspace.front`, the handlers go to `<front>/src/mocks/atrezzo/` with relative imports to `atrezzo/.generated/`; otherwise to `.generated/`.
+- **Does**: `world` writes `<scenario>.handlers.mjs`, which imports the JSON and `runtime.mjs` and projects with the same engine as `serve` (declared `writes` and `rpc` functions included: one `http.post('*/rpc/:fn')` handler covers `/rpc/<fn>` and `/rest/v1/rpc/<fn>`). With `workspace.front`, the handlers go to `<front>/src/mocks/atrezzo/` with relative imports to `atrezzo/.generated/`; otherwise to `.generated/`.
 - **Does not**: install msw (use `init --install`, which announces it) or register the worker for you.
 - **Start**:
   ```js

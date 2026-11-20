@@ -64,7 +64,7 @@ CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (`atrezzo` below). Scenario fo
 
 6. **Check that the gap is gone.** `atrezzo verify <flow.yaml>` (if the flow covers that screen) or reload the screen. Then `atrezzo misses`: the line must say **resolved** (it is marked automatically when the mock serves the route). If it still says "unresolved", the app requests something else (different prefix, trailing slash, another method): compare `example` in `misses --json` with the scenario `path`.
 
-7. **Mutations (POST/PUT/PATCH/DELETE).** If a screen depends on a submit, declare the route under `writes:` in the scenario (`"POST /api/orders": { expect: { status: 201, echo: true }, mutate: { entity: orders, set: { status: "nuevo" } } }`) so `serve` and MSW handlers mutate the in-memory world and `POST /__atrezzo/reset` restores it. Otherwise use `atrezzo serve --on-miss stub` (200 `{}` so the screen does not crash; nothing is persisted) or leave it unresolved and note it.
+7. **Mutations (POST/PUT/PATCH/DELETE).** If a screen depends on a submit, declare the route under `writes:` in the scenario (`"POST /api/orders": { expect: { status: 201, echo: true }, mutate: { entity: orders, set: { status: "nuevo" } } }`) so `serve` and MSW handlers mutate the in-memory world and `POST /__atrezzo/reset` restores it. A `POST /rpc/<fn>` or `/rest/v1/rpc/<fn>` gap is a PostgREST function (`supabase.rpc('<fn>', args)`): declare it under `rpc:` instead (`rpc: { <fn>: { body: <what the code expects> } }`, plus `match: { <arg>: <value> }` when the screen depends on the argument). Otherwise use `atrezzo serve --on-miss stub` (200 `{}` so the screen does not crash; nothing is persisted) or leave it unresolved and note it.
 
 ## Report
 

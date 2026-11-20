@@ -38,10 +38,10 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     '  return HttpResponse.json(res.body, { status: res.status, headers: res.headers });',
     '}',
   ];
-  if (dataset.writes?.length) {
+  if (dataset.writes?.length || dataset.rpc?.length) {
     lines.push(
       '',
-      '/** Applies a declared write against the in-memory world. */',
+      '/** Applies a declared write against the in-memory world, or answers a declared PostgREST function (rpc). */',
       'async function mutate({ request }) {',
       '  const url = new URL(request.url);',
       '  const text = await request.text();',
@@ -79,6 +79,12 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     lines.push(`  http.get('*${ep.path}', project),`);
     // MSW and the engine share the ":name" syntax; the detail segment must not reuse a parameter's name.
     if (ep.detail) lines.push(`  http.get('*${ep.path}/:${ep.params?.some((x) => x.name === 'id') ? 'row_id' : 'id'}', project),`);
+  }
+  if (dataset.rpc?.length) {
+    // One handler for every function: it covers /rpc/<fn> and /rest/v1/rpc/<fn>; an undeclared one answers 404 (gap).
+    // Registered before writes so declared RPCs keep precedence even if a synthetic dataset has an overlapping write.
+    lines.push(`  // rpc → ${dataset.rpc.map((r) => `${r.fn} (${r.expect.status}${r.match ? `, match: ${Object.keys(r.match).join(', ')}` : ''})`).join(' · ')}`);
+    lines.push("  http.post('*/rpc/:fn', mutate),");
   }
   if (dataset.writes?.length) {
     const orderedWrites = [...dataset.writes].sort((a, b) => (a.params?.length ?? 0) - (b.params?.length ?? 0));

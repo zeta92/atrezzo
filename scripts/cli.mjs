@@ -216,6 +216,9 @@ function cmdWorld({ pos, flags }) {
     }
     out(`  ${w.method} ${w.path}  ${bits.join(' · ')}`);
   }
+  for (const r of scenario.rpc ?? []) {
+    out(`  RPC ${r.fn}  → ${r.expect.status}${r.match ? ` · match: ${Object.keys(r.match).join(',')}` : ''}  (POST /rpc/${r.fn} · /rest/v1/rpc/${r.fn})`);
+  }
   for (const s of scenario.streams ?? []) {
     out(`  SSE ${s.path}  (interval: ${s.interval} ms · ${s.events.length} ${s.events.length === 1 ? 'event' : 'events'}${s.loop ? ' · loop' : ''})`);
   }
@@ -274,6 +277,9 @@ async function cmdServe({ flags }) {
     const notes = [`→ ${w.expect.status}`];
     if (w.mutate) notes.push(`${w.mutate.action} ${w.mutate.entity}${w.inferred ? `, inferred from GET ${w.inferred}` : ''}`);
     out(`  ${w.method} ${w.path}  (${notes.join(' · ')})`);
+  }
+  for (const r of d.rpc ?? []) {
+    out(`  RPC ${r.fn}  (→ ${r.expect.status}${r.match ? ` · match: ${Object.keys(r.match).join(', ')}` : ''} · POST /rpc/${r.fn} and /rest/v1/rpc/${r.fn})`);
   }
   for (const s of d.streams ?? []) {
     out(`  SSE ${s.path}  (interval ${s.interval} ms · ${s.events.length} ${s.events.length === 1 ? 'event' : 'events'}${s.loop ? ' · loop' : ''})`);
