@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.15.0
+
+**Declared redirects on flow steps (`redirects_to` and `allow_redirect`).** A flow step can declare `redirects_to: /login` (or `allow_redirect: true`) when an auth guard or route redirect is expected under `--driver playwright`. `verify` treats a matching redirect as the expected outcome—running `wait_for` and the step's `expect` assertions against the destination screen and reporting OK when the final URL matches—while a missing or wrong destination is KO, and steps without the field keep the existing unexpected-redirect warning and KO behaviour. With `--json`, redirected steps include `redirect: { from, to, declared }`. Documented in `references/scenario.md`, covered in `tests/verify.test.mjs`.
+
 ### 0.14.0
 
 **Seeded current user (`auth` and `$user.<field>` filters).** A scenario can declare `auth: { user: { entity: authors, id: 1 } }` at the root to designate a seeded row from `world` as the current session user. The projection engine exposes that row as `currentUser` and resolves `$user.<field>` tokens in endpoint `filters` (such as `filters: { id: "$user.id" }` on `/api/user` or `/api/me` with `shape: object`, or `filters: { author_id: "$user.id" }` on collection endpoints, as well as inside `{ from, where }` world filters) without exposing a client-overridable query parameter. Validation rejects undeclared entities, nonexistent `id`s, and invalid `$user.<field>` references with a scenario error (exit 3); scenarios without `auth` keep their exact behaviour and hash. Documented in `references/scenario.md`, covered in `tests/contract.test.mjs`.

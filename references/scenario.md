@@ -538,6 +538,7 @@ storage:                              # optional, playwright only: seeded before
 steps:
   - screen: order-list
     visit: /orders                    # route for playwright
+    redirects_to: /login              # optional: expect a redirect to /login (or allow_redirect: true)
     headers: { Accept-Language: en-GB }  # optional; merged with the flow headers
     storage: { local: { theme: dark } }  # optional; merged with the flow storage, the step wins
     wait_for: "[data-testid=ready]"   # optional; waits for the element to exist (not to be visible)
@@ -577,6 +578,15 @@ If the flow declares no `scenario`, `verify` does not `reset` or compare hashes:
 ### Navigation with playwright: never green by accident
 
 After opening `visit`, if the final URL is another route (e.g. a redirect to `/login` for lack of a session), the response is HTTP ≥ 400, or `wait_for` does not appear within 10 s, **every assertion of the step is KO** even if the count matches (a `count: 0` on the login screen is not an OK). The report says where it redirected and, with `--diagnose`, adds the `navigation` hypothesis.
+
+#### Expected redirects (`redirects_to` and `allow_redirect`)
+
+When a flow step intentionally verifies an auth guard or a route redirect, declare it on the step:
+
+- `redirects_to: /login` (a path starting with `/` or an `http(s)://` URL): `verify` expects `visit` to land on that route. `wait_for` and `expect` are evaluated against the destination screen, and the step is OK if the final URL matches and the assertions pass. When `redirects_to` omits query parameters (`/login`), extra query parameters such as `/login?next=%2Forders` still match; if `redirects_to` specifies query parameters, they must match as well. Staying on `visit` or redirecting elsewhere is KO.
+- `allow_redirect: true`: allows any redirect (as well as staying on `visit`) and evaluates `wait_for` and `expect` on whichever screen the browser lands on. Mutually exclusive with `redirects_to`.
+- Without either field, behaviour is unchanged: any redirect is KO with the unexpected-redirect notice.
+- With `--json`, each step in `steps` that redirected includes `redirect: { from, to, declared }`, where `declared` is `true` for a matching declared redirect and `false` otherwise.
 
 ## Supported YAML subset
 
