@@ -271,7 +271,7 @@ async function cmdServe({ flags }) {
   }
   for (const w of d.writes ?? []) {
     const notes = [`→ ${w.expect.status}`];
-    if (w.mutate) notes.push(`${w.mutate.action} ${w.mutate.entity}`);
+    if (w.mutate) notes.push(`${w.mutate.action} ${w.mutate.entity}${w.inferred ? `, inferred from GET ${w.inferred}` : ''}`);
     out(`  ${w.method} ${w.path}  (${notes.join(' · ')})`);
   }
   for (const s of d.streams ?? []) {

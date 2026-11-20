@@ -1866,3 +1866,73 @@ ${writesBlock}`;
     (e) => e instanceof AtrezzoError && /requires a top-level "auth: \{ user: \{ entity, id \} \}"/.test(e.message),
   );
 });
+
+test('writes: no mutate on a contract endpoint route ⇒ entity inferred; elsewhere or with mutate: false ⇒ stateless', () => {
+  const norm = (writesBlock, endpointsExtra = '') => normalizeScenario(parseYaml(`name: infer
+seed: 1
+world:
+  boards: 2
+  cards:
+    total: 4
+    ref: boards
+    fields: { title: string }
+  profile:
+    total: 1
+    fields: { title: string }
+endpoints:
+  - path: /api/cards
+    entity: cards
+  - path: /api/boards/:board_id/cards
+    entity: cards
+  - path: /api/profile
+    entity: profile
+    shape: object
+${endpointsExtra}writes:
+${writesBlock}`, 'i.yaml'), 'i.yaml').writes;
+
+  const w = norm(`  "POST /api/cards": { expect: { status: 201 } }
+  "PATCH /api/cards/:id": { expect: { status: 200 } }
+  "DELETE /api/cards/:id": { expect: { status: 204 } }
+  "POST /api/boards/:board_id/cards": { expect: { status: 201 } }
+  "PATCH /api/profile": { expect: { status: 200 } }
+  "POST /api/login": { expect: { status: 200 } }
+  "POST /api/cards/:id/archive": { expect: { status: 200 } }
+  "DELETE /api/cards": { expect: { status: 204 } }
+  "PUT /api/cards/:id": { expect: { status: 200 }, mutate: false }
+`);
+  const by = Object.fromEntries(w.map((x) => [`${x.method} ${x.path}`, x]));
+  assert.deepEqual(by['POST /api/cards'].mutate, { entity: 'cards', action: 'create' });
+  assert.equal(by['POST /api/cards'].inferred, '/api/cards');
+  assert.deepEqual(by['PATCH /api/cards/:id'].mutate, { entity: 'cards', action: 'update' });
+  assert.deepEqual(by['PATCH /api/cards/:id'].params, [{ name: 'id', field: 'id' }]);
+  assert.deepEqual(by['DELETE /api/cards/:id'].mutate, { entity: 'cards', action: 'delete' });
+  assert.deepEqual(by['POST /api/boards/:board_id/cards'].params, [{ name: 'board_id', field: 'board_id' }]);
+  assert.equal(by['POST /api/boards/:board_id/cards'].inferred, '/api/boards/:board_id/cards');
+  assert.deepEqual(by['PATCH /api/profile'].mutate, { entity: 'profile', action: 'update' });
+  for (const k of ['POST /api/login', 'POST /api/cards/:id/archive', 'DELETE /api/cards', 'PUT /api/cards/:id']) {
+    assert.equal(by[k].mutate, undefined, k);
+    assert.equal(by[k].inferred, undefined, k);
+  }
+  assert.deepEqual(by['PUT /api/cards/:id'].params, [{ name: 'id', field: null }]);
+
+  // the engine applies the inferred delete
+  const ds = generateWorld(normalizeScenario(parseYaml(`name: d
+seed: 1
+world:
+  cards: 3
+endpoints:
+  - path: /api/cards
+    entity: cards
+writes:
+  "DELETE /api/cards/:id": { expect: { status: 204 } }
+`, 'd.yaml'), 'd.yaml'));
+  const engine = createEngine(ds);
+  assert.equal(engine.handle({ method: 'DELETE', pathname: '/api/cards/2' }).status, 204);
+  assert.equal(engine.handle({ pathname: '/api/cards/2' }).status, 404);
+  assert.equal(engine.handle({ pathname: '/api/cards' }).body.length, 2);
+
+  assert.throws(
+    () => norm('  "POST /api/cards": { mutate: true }\n'),
+    (e) => e instanceof AtrezzoError && /must be a map \{ entity, action, set, where \} or false/.test(e.message),
+  );
+});

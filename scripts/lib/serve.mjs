@@ -235,7 +235,10 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
     const why = status === 405 ? ' (method not declared in scenario; add it under writes:)' : '';
     return send(res, status, {
       error: error ?? `${req.method} ${url.pathname} is not in the contract of scenario "${state.dataset.scenario}"${why}`,
-      atrezzo: { miss: true, gap, times: entry.times, next: 'atrezzo misses', endpoints: state.dataset.endpoints.map((e) => e.path) },
+      atrezzo: {
+        miss: true, gap, times: entry.times, next: 'atrezzo misses', endpoints: state.dataset.endpoints.map((e) => e.path),
+        ...(state.dataset.writes?.length ? { writes: state.dataset.writes.map((w) => `${w.method} ${w.path}`) } : {}),
+      },
     }, { ...JSON_CT, ...extraHeaders });
   };
 
