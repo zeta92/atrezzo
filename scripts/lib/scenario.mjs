@@ -266,6 +266,55 @@ function canFieldBeNull(field, spec, byName) {
   return false;
 }
 
+const STRING_LIKE_TYPES = new Set(['string', 'date', 'email', 'uuid', 'url']);
+
+function typesFromEntry(entry) {
+  if (typeof entry === 'string') return [entry];
+  const types = new Set();
+  for (const x of entry) {
+    if (x === null) continue;
+    if (Number.isInteger(x)) types.add('integer');
+    else if (typeof x === 'number' && Number.isFinite(x)) types.add('number');
+    else if (typeof x === 'string') types.add('string');
+    else if (typeof x === 'boolean') types.add('boolean');
+  }
+  return [...types];
+}
+
+function fieldValueTypes(field, spec) {
+  if (field === 'id' || fkTargetEntity(spec, field)) return ['integer'];
+  if (spec.distribution && field === spec.distribution.field) return ['string'];
+  const amountField = templateFor(spec.name).amountField || 'amount';
+  if (spec.amount && field === 'currency') return ['string'];
+  if (spec.amount && field === amountField) return ['number'];
+  if (spec.pools && Object.hasOwn(spec.pools, field)) return typesFromEntry(spec.pools[field]);
+  if (spec.fields && Object.hasOwn(spec.fields, field)) {
+    const entry = spec.fields[field];
+    if (isObj(entry)) return [...new Set([...typesFromEntry(entry.default), ...typesFromEntry(entry.value)])];
+    return typesFromEntry(entry);
+  }
+  if (spec.name === 'products' && field === 'stock') return ['integer'];
+  if ((spec.name === 'users' || spec.name === 'customers') && field === 'email') return ['email'];
+  if (spec.name !== 'products' && field === 'created_at') return ['date'];
+  return ['string'];
+}
+
+function isSingleTypeCompatible(srcType, dstType) {
+  if (srcType === dstType) return true;
+  if (srcType === 'integer' && dstType === 'number') return true;
+  if (STRING_LIKE_TYPES.has(srcType) && STRING_LIKE_TYPES.has(dstType)) {
+    return srcType === 'string' || dstType === 'string';
+  }
+  return false;
+}
+
+function areFieldsCompatible(srcField, srcSpec, dstField, dstSpec) {
+  const srcTypes = fieldValueTypes(srcField, srcSpec);
+  const dstTypes = fieldValueTypes(dstField, dstSpec);
+  return srcTypes.length > 0 && dstTypes.length > 0
+    && srcTypes.every((st) => dstTypes.some((dt) => isSingleTypeCompatible(st, dt)));
+}
+
 function isWhereValueCompatible(v, field, spec, byName) {
   if (v === null) return canFieldBeNull(field, spec, byName);
   if (field === 'id' || fkTargetEntity(spec, field)) return Number.isInteger(v);
@@ -325,7 +374,10 @@ function describeTargetField(condField, spec, byName) {
     const def = isObj(entry) ? entry.default : entry;
     return Array.isArray(def) ? `enum ${JSON.stringify(def)}` : def;
   }
-  return spec.name === 'products' && condField === 'stock' ? 'integer' : 'string';
+  if (spec.name === 'products' && condField === 'stock') return 'integer';
+  if ((spec.name === 'users' || spec.name === 'customers') && condField === 'email') return 'email';
+  if (spec.name !== 'products' && condField === 'created_at') return 'date';
+  return 'string';
 }
 
 function validateConditionals(spec, f, byName, issues) {
@@ -676,7 +728,34 @@ function parseSorts(raw, fields, filters, pagination, f, issues) {
   return { by, order, fields: sortFields };
 }
 
-function parseWorldFilter(field, raw, spec, fkTarget, byName, ff, issues) {
+const USER_TOKEN_RE = /^\$user\.([A-Za-z_][A-Za-z0-9_]*)$/;
+
+function parseUserToken(val, ff, byName, auth, authDeclared, issues, targetField = null, targetSpec = null) {
+  const m = USER_TOKEN_RE.exec(val);
+  if (!m) {
+    issues.add(ff, `invalid user token ${JSON.stringify(val)}; expected "$user.<field>"`);
+    return null;
+  }
+  if (!authDeclared) {
+    issues.add(ff, `${JSON.stringify(val)} requires a top-level "auth: { user: { entity, id } }" block in the scenario`);
+    return null;
+  }
+  if (!auth) return null; // `auth` itself had validation errors; avoid duplicate noise
+  const userSpec = byName[auth.user.entity];
+  const userFields = entityFields(userSpec);
+  const userField = m[1];
+  if (!userFields.includes(userField)) {
+    issues.add(ff, `field "${userField}" does not exist in auth user entity "${auth.user.entity}" (fields: ${userFields.join(', ')})`);
+    return null;
+  }
+  if (targetField && targetSpec && !areFieldsCompatible(userField, userSpec, targetField, targetSpec)) {
+    issues.add(ff, `${JSON.stringify(val)} (${auth.user.entity}.${userField}: ${describeTargetField(userField, userSpec, byName)}) is incompatible with field "${targetField}" in "${targetSpec.name}" (${describeTargetField(targetField, targetSpec, byName)})`);
+    return null;
+  }
+  return userField;
+}
+
+function parseWorldFilter(field, raw, spec, fkTarget, byName, auth, authDeclared, ff, issues) {
   issues.unknownKeys(raw, ['from', 'where'], ff);
   const from = raw.from;
   let fromSpec = null;
@@ -719,7 +798,12 @@ function parseWorldFilter(field, raw, spec, fkTarget, byName, ff, issues) {
           const candidates = Array.isArray(val) ? val : [val];
           let typeOk = true;
           for (const v of candidates) {
-            if (!isWhereValueCompatible(v, wk, fromSpec, byName)) {
+            if (typeof v === 'string' && v.startsWith('$')) {
+              if (!parseUserToken(v, wff, byName, auth, authDeclared, issues, wk, fromSpec)) {
+                typeOk = false;
+                whereOk = false;
+              }
+            } else if (!isWhereValueCompatible(v, wk, fromSpec, byName)) {
               issues.add(wff, `value ${JSON.stringify(v)} is incompatible with field "${wk}" in "${from}" (${describeTargetField(wk, fromSpec, byName)})`);
               typeOk = false;
               whereOk = false;
@@ -737,7 +821,7 @@ function parseWorldFilter(field, raw, spec, fkTarget, byName, ff, issues) {
   return fkOk && where ? { field, from, where } : null;
 }
 
-function normalizeEndpoints(endpoints, world, issues) {
+function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
   if (!Array.isArray(endpoints) || !endpoints.length) { issues.add('endpoints', 'required; a list with at least one endpoint'); return []; }
   const byName = Object.fromEntries(world.map((s) => [s.name, s]));
   const seen = new Set();
@@ -761,6 +845,7 @@ function normalizeEndpoints(endpoints, world, issues) {
     const fkTarget = Object.fromEntries(spec.refs.map((r) => [templateFor(r).fk, r]));
     const filters = [];
     const worldFilters = [];
+    const userFilters = [];
     const bound = {}; // ":param" -> field | null, from the map form of `filters`
     if (ep.filters !== undefined) {
       if (Array.isArray(ep.filters)) {
@@ -776,13 +861,18 @@ function normalizeEndpoints(endpoints, world, issues) {
             else if (v !== null && !fields.includes(v)) issues.add(ff, `field ${JSON.stringify(v)} does not exist in "${spec.name}" (fields: ${fields.join(', ')}); null accepts any value without filtering`);
             else bound[k.slice(1)] = v;
           } else if (isObj(v)) {
-            const wf = parseWorldFilter(k, v, spec, fkTarget, byName, ff, issues);
+            const wf = parseWorldFilter(k, v, spec, fkTarget, byName, auth, authDeclared, ff, issues);
             if (wf) worldFilters.push(wf);
-          } else if (v !== k) issues.add(ff, `a query filter filters the field of its own name: write "${k}: ${k}" (or use the list form, or { from, where })`);
+          } else if (typeof v === 'string' && v.startsWith('$')) {
+            const fieldOk = fields.includes(k);
+            if (!fieldOk) issues.add(ff, `field "${k}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
+            const userField = parseUserToken(v, ff, byName, auth, authDeclared, issues, fieldOk ? k : null, fieldOk ? spec : null);
+            if (fieldOk && userField) userFilters.push({ field: k, userField });
+          } else if (v !== k) issues.add(ff, `a query filter filters the field of its own name: write "${k}: ${k}" (or use the list form, or { from, where }, or "$user.<field>")`);
           else if (!fields.includes(k)) issues.add(ff, `field "${k}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
           else filters.push(k);
         }
-      } else issues.add(`${f}.filters`, 'must be a list of fields, or a map { field: field, field: { from, where }, ":param": field }');
+      } else issues.add(`${f}.filters`, 'must be a list of fields, or a map { field: field, field: "$user.<field>", field: { from, where }, ":param": field }');
     }
     const params = [];
     for (const name of names) {
@@ -872,6 +962,7 @@ function normalizeEndpoints(endpoints, world, issues) {
     };
     if (sorts) norm.sorts = sorts; // only when declared: keeps scenario hashes stable
     if (worldFilters.length) norm.worldFilters = worldFilters; // same: absent unless declared
+    if (userFilters.length) norm.userFilters = userFilters; // same: absent unless declared
     if (pick) norm.pick = pick; // only when declared: keeps 0.1 scenario hashes stable
     if (latency !== null) norm.latency = latency; // same: absent unless declared
     if (params.length) norm.params = params; // same
@@ -883,9 +974,53 @@ function normalizeEndpoints(endpoints, world, issues) {
   return out;
 }
 
+// ---------- auth ----------
+
+function normalizeAuth(raw, world, issues) {
+  if (raw === undefined) return null;
+  if (!isObj(raw)) {
+    issues.add('auth', `must be a map { user: { entity, id } }; got ${typeName(raw)}`);
+    return null;
+  }
+  issues.unknownKeys(raw, ['user'], 'auth');
+  if (raw.user === undefined) {
+    issues.add('auth.user', 'required; must be a map { entity, id }');
+    return null;
+  }
+  if (!isObj(raw.user)) {
+    issues.add('auth.user', `must be a map { entity, id }; got ${typeName(raw.user)}`);
+    return null;
+  }
+  issues.unknownKeys(raw.user, ['entity', 'id'], 'auth.user');
+  const byName = Object.fromEntries(world.map((s) => [s.name, s]));
+  const { entity, id } = raw.user;
+  let entityOk = false;
+  if (typeof entity !== 'string' || !entity) {
+    issues.add('auth.user.entity', `required; a declared world entity (declared: ${Object.keys(byName).join(', ') || 'none'})`);
+  } else if (!Object.hasOwn(byName, entity)) {
+    issues.add('auth.user.entity', `"${entity}" is not declared in world (declared: ${Object.keys(byName).join(', ') || 'none'})`);
+  } else {
+    entityOk = true;
+  }
+  let idOk = false;
+  if (!isInt(id) || id < 1) {
+    issues.add('auth.user.id', `required; integer >= 1 (got ${JSON.stringify(id)})`);
+  } else if (entityOk) {
+    const spec = byName[entity];
+    if (spec.count === 0) {
+      issues.add('auth.user.id', `entity "${entity}" has 0 rows in world; id ${id} does not exist`);
+    } else if (id > spec.count) {
+      issues.add('auth.user.id', `id ${id} does not exist in "${entity}" (valid ids: 1..${spec.count})`);
+    } else {
+      idOk = true;
+    }
+  }
+  return entityOk && idOk ? { user: { entity, id } } : null;
+}
+
 // ---------- scenario ----------
 
-const SCENARIO_KEYS = ['name', 'description', 'seed', 'now', 'world', 'endpoints', 'entry', 'path', 'expect'];
+const SCENARIO_KEYS = ['name', 'description', 'seed', 'now', 'auth', 'world', 'endpoints', 'entry', 'path', 'expect'];
 
 export function normalizeScenario(doc, file = '<scenario>') {
   const issues = new Issues();
@@ -900,7 +1035,8 @@ export function normalizeScenario(doc, file = '<scenario>') {
     else now = new Date(ms).toISOString();
   }
   const world = normalizeWorld(doc.world, issues);
-  const endpoints = normalizeEndpoints(doc.endpoints, world, issues);
+  const auth = normalizeAuth(doc.auth, world, issues);
+  const endpoints = normalizeEndpoints(doc.endpoints, world, auth, doc.auth !== undefined, issues);
 
   let path = [];
   if (doc.path !== undefined) {
@@ -926,7 +1062,9 @@ export function normalizeScenario(doc, file = '<scenario>') {
     });
   }
   if (issues.list.length) throw new AtrezzoError(`${file}: invalid scenario`, { issues: issues.list });
-  return { name: doc.name, description: doc.description ?? null, seed: doc.seed, now, world, endpoints, entry, path, expect };
+  const out = { name: doc.name, description: doc.description ?? null, seed: doc.seed, now, world, endpoints, entry, path, expect };
+  if (auth) out.auth = auth; // only when declared: keeps scenario hashes stable
+  return out;
 }
 
 export function loadScenario(file) {

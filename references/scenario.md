@@ -55,6 +55,7 @@ expect:
 | `name` | string | required, `^[a-z0-9][a-z0-9-]*$` |
 | `seed` | integer | required, >= 0 |
 | `now` | ISO date | optional; every date is computed from here |
+| `auth` | map | optional; `{ user: { entity, id } }` seeds the current user for `$user.<field>` filters |
 | `world` | map | required, at least one entity |
 | `endpoints` | list | required, at least one |
 | `entry` | string | optional; with `path`, it must be its first element |
@@ -181,7 +182,7 @@ Generator guarantees:
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields for query filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
+`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields for query filters, `{ <field>: "$user.<field>" }` for seeded-user filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `shape` (`array` default, `envelope`, `object`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
 
 - Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
 - `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` uses `data`). A single key, no nested paths.
@@ -238,6 +239,35 @@ endpoints:
 - **Combines naturally**: runs together with path parameters, normal query filters (`?status=live`), `sort`/`sorts`, `pagination` (`X-Total-Count` counts the resolved + filtered rows before pagination), `shape: object`, and `head=true`.
 - **Short form unchanged**: `filters: [status, source_id]` and `filters: { status: status, ":pid": project_id }` keep their exact behaviour and scenario hashes.
 - **Validation (scenario error)**: `from` must be a declared entity in `world`; the filter key must be a foreign key of the endpoint's entity pointing to `from` (via `ref:`); `where` must be a non-empty map whose keys are existing fields of `from` with scalar or non-empty scalar-list values compatible with each field's type.
+
+#### Seeded user (`auth` and `$user.<field>`)
+
+When a screen boots by reading `/api/user` or `/api/me` (or lists the logged-in user's own items) without sending a query parameter, declare a root `auth` block pointing to one row in `world`:
+
+```yaml
+auth:
+  user:
+    entity: authors
+    id: 2
+world:
+  authors: 4
+  articles: { total: 20, ref: authors, fields: { title: string, status: [draft, published] } }
+endpoints:
+  - path: /api/user
+    entity: authors
+    shape: object
+    filters: { id: "$user.id" }          # answers authors row #2 instead of row #1
+  - path: /api/my-articles
+    entity: articles
+    filters:
+      author_id: "$user.id"              # only rows where author_id == currentUser.id
+      status: status                     # normal query filter: ?status=published
+```
+
+- **Current user row**: the projection engine exposes the row as `currentUser` (`null` when `auth` is omitted). Any endpoint filter `{ <field>: "$user.<userField>" }` (or `$user.<userField>` inside a world-resolved filter's `where`) compares `<field>` against `currentUser[userField]` without requiring a query parameter.
+- **No query parameter**: like world-resolved filters, `$user.<field>` filters do not expose a query parameter (sending `?author_id=1` is ignored and listed in `X-Atrezzo-Ignored`). If `currentUser[userField]` is `null`, no rows match.
+- **Validation (scenario error)**: `auth.user.entity` must be declared in `world`, and `auth.user.id` must be an integer `>= 1` within `1..total` of that entity. Using `$user.<field>` without `auth`, naming a field missing from `auth.user.entity`, or referencing a user field whose type is incompatible with the filtered field is also a scenario error.
+- **Without `auth`**: behaviour and scenario hashes are completely unchanged.
 
 #### Paths with parameters (`/projects/:project_id/views/:view_id/tasks`)
 
@@ -369,7 +399,7 @@ endpoints:
 - The entity has rows but **no row matches** the filters (`?id=99`) ⇒ a plain `404 { "error": "no users matches id=99 …" }`, like the detail route; that is not a gap.
 - No `X-Total-Count`; undeclared parameters still show up in `X-Atrezzo-Ignored`. `include` and `child(count)` embeds work as on a list row.
 - The detail route keeps today's behaviour: `GET /api/v2/user/3` answers row 3 (or 404), whatever the shape. `pagination` and `pick` are rejected with `shape: object`.
-- No authentication semantics: the mock does not read `Authorization`. The current user is whichever row the filters and `sort` pick.
+- No `Authorization` header semantics: the mock does not read `Authorization`. Use `auth: { user: { entity, id } }` with `filters: { id: "$user.id" }` to bind `/api/user` or `/api/me` to a specific seeded user; without `auth` (or `$user.id`), the current user is whichever row the query filters and `sort` pick.
 
 #### Latency (`latency:` and `serve --latency`)
 

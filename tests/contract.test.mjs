@@ -595,3 +595,368 @@ endpoints:
   assert.equal(adminRes.status, 200);
   assert.ok(adminRes.body.length > 0 && adminRes.body.every((it) => it.user_id === 1));
 });
+
+// ---------- Seeded auth user (`auth: { user: { entity, id } }`, `$user.<field>`) ----------
+
+const AUTH_SCENARIO = `name: auth-user
+seed: 9191
+now: 2025-03-01T09:00:00Z
+auth:
+  user:
+    entity: authors
+    id: 2
+world:
+  groups:
+    total: 3
+    fields: { name: string, owner_id: integer }
+  authors:
+    total: 4
+    ref: groups
+    fields: { name: string, handle: string }
+  articles:
+    total: 24
+    ref: [authors, groups]
+    fields:
+      title: string
+      status: [draft, published]
+endpoints:
+  - path: /api/user
+    entity: authors
+    shape: object
+    filters: { id: "$user.id" }
+  - path: /api/me
+    entity: authors
+    shape: object
+    filters: { id: "$user.id" }
+    sort: id
+  - path: /api/my-articles
+    entity: articles
+    filters:
+      author_id: "$user.id"
+      status: status
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: id
+  - path: /api/group-articles
+    entity: articles
+    filters:
+      group_id: "$user.group_id"
+  - path: /api/owned-group-articles
+    entity: articles
+    filters:
+      group_id: { from: groups, where: { id: "$user.group_id" } }
+`;
+
+const authNorm = normalizeScenario(parseYaml(AUTH_SCENARIO, 'auth.yaml'), 'auth.yaml');
+const authDataset = generateWorld(authNorm);
+const authEngine = createEngine(authDataset);
+const getAuth = (path, headers) => {
+  const u = new URL(path, 'http://x');
+  return authEngine.handle({ method: 'GET', pathname: u.pathname, query: u.searchParams, headers });
+};
+
+test('auth: engine exposes seeded user row and /api/user & /api/me return it instead of the first row', () => {
+  const expectedUser = authDataset.entities.authors.find((a) => a.id === 2);
+  assert.ok(expectedUser);
+  assert.deepEqual(authEngine.currentUser, expectedUser);
+
+  for (const path of ['/api/user', '/api/me']) {
+    const res = getAuth(path);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, expectedUser);
+    assert.notEqual(res.body.id, authDataset.entities.authors[0].id);
+  }
+
+  // Without auth, behaviour and hash remain unchanged and currentUser is null
+  assert.equal(engine.currentUser, null);
+  const shortNorm = normalizeScenario(parseYaml(SCENARIO, 's.yaml'), 's.yaml');
+  assert.equal(shortNorm.auth, undefined);
+  assert.equal(scenarioHash(shortNorm), dataset.hash);
+});
+
+test('auth: $user.<field> filter returns only rows matching the seeded user and combines with query filters and pagination', () => {
+  const userArticles = authDataset.entities.articles.filter((a) => a.author_id === 2);
+  assert.ok(userArticles.length > 0 && userArticles.length < authDataset.entities.articles.length);
+
+  const res = getAuth('/api/my-articles');
+  assert.equal(res.status, 200);
+  assert.deepEqual(ids(res), userArticles.map((a) => a.id));
+  assert.equal(res.headers['x-total-count'], String(userArticles.length));
+  assert.ok(res.body.every((a) => a.author_id === 2));
+
+  // Query parameter of the same name cannot override the $user filter and is reported as ignored
+  const override = getAuth('/api/my-articles?author_id=1');
+  assert.equal(override.status, 200);
+  assert.deepEqual(ids(override), userArticles.map((a) => a.id));
+  assert.equal(override.headers['x-atrezzo-ignored'], 'author_id');
+
+  // Combines with query filters, pagination, and count-only requests
+  const published = userArticles.filter((a) => a.status === 'published');
+  const pubRes = getAuth('/api/my-articles?status=published&limit=2&offset=1');
+  assert.equal(pubRes.status, 200);
+  assert.equal(pubRes.headers['x-total-count'], String(published.length));
+  assert.deepEqual(ids(pubRes), published.slice(1, 3).map((a) => a.id));
+
+  const head = getAuth('/api/my-articles?head=true');
+  assert.equal(head.status, 200);
+  assert.equal(head.headers['x-total-count'], String(userArticles.length));
+  const headMethod = authEngine.handle({ method: 'HEAD', pathname: '/api/my-articles', headers: { prefer: 'count=exact' } });
+  assert.equal(headMethod.status, 200);
+  assert.equal(headMethod.headers['content-range'], `0-${userArticles.length - 1}/${userArticles.length}`);
+
+  // Non-id $user.<field> and $user.<field> inside { from, where }
+  const userGroup = authEngine.currentUser.group_id;
+  const groupExpected = authDataset.entities.articles.filter((a) => a.group_id === userGroup);
+  assert.ok(groupExpected.length > 0);
+  assert.deepEqual(ids(getAuth('/api/group-articles')), groupExpected.map((a) => a.id));
+  assert.deepEqual(ids(getAuth('/api/owned-group-articles')), groupExpected.map((a) => a.id));
+});
+
+test('auth: validation rejects nonexistent id, undeclared entity, malformed auth, and invalid $user references', () => {
+  const parseErr = (yaml) => {
+    try {
+      normalizeScenario(parseYaml(yaml, 'bad-auth.yaml'), 'bad-auth.yaml');
+    } catch (e) {
+      assert.ok(e instanceof AtrezzoError);
+      assert.equal(e.exitCode, 3);
+      return e.message;
+    }
+    assert.fail('expected scenario validation error');
+  };
+
+  assert.match(parseErr(`name: bad
+seed: 1
+auth: { user: { entity: authors, id: 99 } }
+world:
+  authors: 4
+endpoints:
+  - path: /api/user
+    entity: authors
+`), /auth\.user\.id": id 99 does not exist in "authors" \(valid ids: 1\.\.4\)/);
+
+  assert.match(parseErr(`name: bad
+seed: 1
+auth: { user: { entity: authors, id: 0 } }
+world:
+  authors: 4
+endpoints:
+  - path: /api/user
+    entity: authors
+`), /auth\.user\.id": required; integer >= 1/);
+
+  assert.match(parseErr(`name: bad
+seed: 1
+auth: { user: { entity: authors, id: 1 } }
+world:
+  authors: 0
+endpoints:
+  - path: /api/authors
+    entity: authors
+`), /auth\.user\.id": entity "authors" has 0 rows in world; id 1 does not exist/);
+
+  assert.match(parseErr(`name: bad
+seed: 1
+auth: { user: { entity: ghosts, id: 1 } }
+world:
+  authors: 2
+endpoints:
+  - path: /api/authors
+    entity: authors
+`), /auth\.user\.entity": "ghosts" is not declared in world/);
+
+  assert.match(parseErr(`name: bad
+seed: 1
+auth: {}
+world:
+  authors: 2
+endpoints:
+  - path: /api/authors
+    entity: authors
+`), /auth\.user": required; must be a map \{ entity, id \}/);
+
+  assert.match(parseErr(`name: bad
+seed: 1
+auth: { user: { entity: authors, id: 1 }, extra: true }
+world:
+  authors: 2
+endpoints:
+  - path: /api/authors
+    entity: authors
+`), /auth\.extra": unknown field/);
+
+  assert.match(parseErr(`name: bad
+seed: 1
+world:
+  authors: 2
+  articles: { total: 4, ref: authors }
+endpoints:
+  - path: /api/articles
+    entity: articles
+    filters: { author_id: "$user.id" }
+`), /filters\.author_id": "\$user\.id" requires a top-level "auth: \{ user: \{ entity, id \} \}"/);
+
+  assert.match(parseErr(`name: bad
+seed: 1
+auth: { user: { entity: authors, id: 1 } }
+world:
+  authors: 2
+  articles: { total: 4, ref: authors }
+endpoints:
+  - path: /api/articles
+    entity: articles
+    filters: { author_id: "$user.missing_col" }
+`), /filters\.author_id": field "missing_col" does not exist in auth user entity "authors"/);
+
+  assert.match(parseErr(`name: bad
+seed: 1
+auth: { user: { entity: authors, id: 1 } }
+world:
+  authors: 2
+  articles: { total: 4, ref: authors }
+endpoints:
+  - path: /api/articles
+    entity: articles
+    filters: { author_id: "$user" }
+`), /filters\.author_id": invalid user token "\$user"; expected "\$user\.<field>"/);
+
+  assert.match(parseErr(`name: bad
+seed: 1
+auth: { user: { entity: authors, id: 1 } }
+world:
+  authors: 2
+  articles: { total: 4, ref: authors }
+endpoints:
+  - path: /api/articles
+    entity: articles
+    filters: { missing_fk: "$user.id" }
+`), /filters\.missing_fk": field "missing_fk" does not exist in "articles"/);
+});
+
+test('auth: nullable $user field does not match null rows on other entities', () => {
+  const nullYaml = `name: auth-null
+seed: 1
+auth: { user: { entity: authors, id: 1 } }
+world:
+  groups: 2
+  authors: { total: 1, ref: groups, nulls: { group_id: 1 } }
+  articles: { total: 4, ref: groups, nulls: { group_id: 2 } }
+endpoints:
+  - path: /api/group-articles
+    entity: articles
+    filters: { group_id: "$user.group_id" }
+  - path: /api/group-singleton
+    entity: articles
+    shape: object
+    filters: { group_id: "$user.group_id" }
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(nullYaml, 'n.yaml'), 'n.yaml'));
+  const eng = createEngine(ds);
+  assert.equal(eng.currentUser.group_id, null);
+  const res = eng.handle({ method: 'GET', pathname: '/api/group-articles' });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body, []);
+  const single = eng.handle({ method: 'GET', pathname: '/api/group-singleton' });
+  assert.equal(single.status, 404);
+  assert.match(single.body.error, /no articles matches user filter/);
+});
+
+test('auth: $user.<field> validates field type compatibility in direct filters and { from, where }', () => {
+  const parseErr = (filterBlock, extraWorld = '', userEntity = 'authors') => {
+    const yaml = `name: bad-user-types
+seed: 1
+auth: { user: { entity: ${userEntity}, id: 1 } }
+world:
+  groups: { total: 2, fields: { name: string, active: boolean } }
+  authors:
+    total: 2
+    ref: groups
+    fields:
+      name: string
+      active: boolean
+      balance: number
+      level: integer
+      email: email
+      role: [admin, editor]
+      badge: { default: string, when: { active: true }, value: vip }
+  users: 2
+  articles:
+    total: 4
+    ref: [authors, groups]
+    fields:
+      title: string
+      active: boolean
+      score: number
+      published_at: date
+      contact_email: email
+      role: [admin, viewer]
+${extraWorld}endpoints:
+  - path: /api/articles
+    entity: articles
+    filters: ${filterBlock}
+`;
+    try {
+      normalizeScenario(parseYaml(yaml, 'bad-types.yaml'), 'bad-types.yaml');
+    } catch (e) {
+      assert.ok(e instanceof AtrezzoError);
+      assert.equal(e.exitCode, 3);
+      return e.message;
+    }
+    assert.fail(`expected scenario validation error for: ${filterBlock}`);
+  };
+
+  // Direct filters: incompatible types
+  assert.match(parseErr('{ author_id: "$user.name" }'), /filters\.author_id": "\$user\.name" \(authors\.name: string\) is incompatible with field "author_id" in "articles"/);
+  assert.match(parseErr('{ title: "$user.id" }'), /filters\.title": "\$user\.id" \(authors\.id: integer 1\.\.2\) is incompatible with field "title" in "articles" \(string\)/);
+  assert.match(parseErr('{ author_id: "$user.active" }'), /filters\.author_id": "\$user\.active" \(authors\.active: boolean\) is incompatible with field "author_id" in "articles"/);
+  assert.match(parseErr('{ author_id: "$user.balance" }'), /filters\.author_id": "\$user\.balance" \(authors\.balance: number\) is incompatible with field "author_id" in "articles"/);
+  assert.match(parseErr('{ published_at: "$user.email" }'), /filters\.published_at": "\$user\.email" \(authors\.email: email\) is incompatible with field "published_at" in "articles" \(date\)/);
+  assert.match(parseErr('{ active: "$user.role" }'), /filters\.active": "\$user\.role" \(authors\.role: enum \["admin","editor"\]\) is incompatible with field "active" in "articles" \(boolean\)/);
+  assert.match(parseErr('{ author_id: "$user.badge" }'), /filters\.author_id": "\$user\.badge" \(authors\.badge: string\) is incompatible with field "author_id" in "articles"/);
+  // Template users.email (inferred as email) vs date
+  assert.match(parseErr('{ published_at: "$user.email" }', '', 'users'), /filters\.published_at": "\$user\.email" \(users\.email: email\) is incompatible with field "published_at" in "articles" \(date\)/);
+
+  // World-resolved filters { from, where }: incompatible $user.<field> (scalar and inside list)
+  assert.match(parseErr('{ group_id: { from: groups, where: { id: "$user.name" } } }'), /where\.id": "\$user\.name" \(authors\.name: string\) is incompatible with field "id" in "groups" \(integer 1\.\.2\)/);
+  assert.match(parseErr('{ group_id: { from: groups, where: { name: "$user.id" } } }'), /where\.name": "\$user\.id" \(authors\.id: integer 1\.\.2\) is incompatible with field "name" in "groups" \(string\)/);
+  assert.match(parseErr('{ group_id: { from: groups, where: { active: "$user.name" } } }'), /where\.active": "\$user\.name" \(authors\.name: string\) is incompatible with field "active" in "groups" \(boolean\)/);
+  assert.match(parseErr('{ group_id: { from: groups, where: { id: [1, "$user.name"] } } }'), /where\.id": "\$user\.name" \(authors\.name: string\) is incompatible with field "id" in "groups" \(integer 1\.\.2\)/);
+
+  // Compatible types succeed (boolean, string, enum, email->email, template email->string, integer->number, conditional)
+  const okYaml = `name: ok-user-types
+seed: 5
+auth: { user: { entity: users, id: 1 } }
+world:
+  groups: { total: 2, fields: { name: string, active: boolean } }
+  users: 2
+  articles:
+    total: 6
+    ref: groups
+    fields:
+      owner_name: string
+      contact_email: email
+      raw_email: string
+      role: [admin, operator]
+      score: number
+endpoints:
+  - path: /api/by-name
+    entity: articles
+    filters: { owner_name: "$user.name" }
+  - path: /api/by-email
+    entity: articles
+    filters: { contact_email: "$user.email", raw_email: "$user.email" }
+  - path: /api/by-role
+    entity: articles
+    filters: { role: "$user.role" }
+  - path: /api/by-score
+    entity: articles
+    filters: { score: "$user.id" }
+  - path: /api/by-group-name
+    entity: articles
+    filters: { group_id: { from: groups, where: { name: "$user.name", active: true } } }
+`;
+  const okDs = generateWorld(normalizeScenario(parseYaml(okYaml, 'ok-types.yaml'), 'ok-types.yaml'));
+  const okEng = createEngine(okDs);
+  assert.equal(okEng.handle({ method: 'GET', pathname: '/api/by-role' }).status, 200);
+  assert.equal(okEng.handle({ method: 'GET', pathname: '/api/by-email' }).status, 200);
+  assert.equal(okEng.handle({ method: 'GET', pathname: '/api/by-score' }).status, 200);
+  assert.equal(okEng.handle({ method: 'GET', pathname: '/api/by-group-name' }).status, 200);
+});

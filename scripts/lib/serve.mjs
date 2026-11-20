@@ -80,6 +80,7 @@ function summary(state, available, generatedDir, misses, latency = 0) {
   };
   const errors = errorSummary(d.endpoints);
   if (Object.keys(errors).length) out.errors = errors; // only when declared
+  if (d.auth) out.auth = d.auth; // only when declared
   if (misses) out.misses = misses.summary();
   if (generatedDir) {
     const gen = join(generatedDir, `${d.scenario}.json`);

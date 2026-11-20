@@ -43,6 +43,7 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     const notes = [`${ep.entity}`];
     if (ep.filters.length) notes.push(`filters: ${ep.filters.join(', ')}`);
     if (ep.worldFilters?.length) notes.push(`world filters: ${ep.worldFilters.map((w) => `${w.field}→${w.from}`).join(', ')}`);
+    if (ep.userFilters?.length) notes.push(`user filters: ${ep.userFilters.map((u) => `${u.field}=$user.${u.userField}`).join(', ')}`);
     if (ep.pagination) notes.push(`pagination: ${ep.pagination.limit}/${ep.pagination.offset}`);
     if (ep.sorts) notes.push(`sorts: ${ep.sorts.by}${ep.sorts.order ? `/${ep.sorts.order}` : ''} (${ep.sorts.fields.join(', ')})`);
     if (ep.include.length) notes.push(`includes: ${ep.include.join(', ')}`);

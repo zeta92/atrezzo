@@ -165,6 +165,7 @@ function cmdWorld({ pos, flags }) {
   const emitted = emitRuntimes(ids, { dataset, scenario, config: emitCfg, dir: cfg._dir, requests });
   for (const e of emitted) writeEmitted(cfg._dir, e.files);
   out(`World "${scenario.name}" · seed ${scenario.seed} · now ${scenario.now} · hash ${dataset.hash}`);
+  if (scenario.auth) out(`Auth user: ${scenario.auth.user.entity}#${scenario.auth.user.id}`);
   out('Entities:');
   for (const spec of scenario.world) {
     const extra = [];
@@ -178,6 +179,7 @@ function cmdWorld({ pos, flags }) {
     const bits = [ep.entity];
     if (ep.filters.length) bits.push(`filters: ${ep.filters.join(',')}`);
     if (ep.worldFilters?.length) bits.push(`world-filters: ${ep.worldFilters.map((w) => `${w.field}→${w.from}`).join(',')}`);
+    if (ep.userFilters?.length) bits.push(`user-filters: ${ep.userFilters.map((u) => `${u.field}=$user.${u.userField}`).join(',')}`);
     if (ep.pagination) bits.push(`pagination: ${ep.pagination.limit}/${ep.pagination.page ?? ep.pagination.offset}${ep.pagination.page ? ' (by page)' : ''}`);
     bits.push(`sort: ${ep.sort.map((s) => (s.dir === 'desc' ? '-' : '') + s.field).join(',')}`);
     if (ep.sorts) bits.push(`sorts: ${ep.sorts.by}${ep.sorts.order ? `/${ep.sorts.order}` : ''} (${ep.sorts.fields.join(',')})`);
