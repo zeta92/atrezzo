@@ -515,11 +515,14 @@ export function createEngine(dataset) {
       for (const f of fields) {
         if (Object.hasOwn(rawRow, f)) out[f] = canonicalValue(rawRow[f]);
       }
-      for (const k of Object.keys(rawRow).sort()) {
-        if (!Object.hasOwn(out, k)) out[k] = canonicalValue(rawRow[k]);
-      }
       return out;
     };
+    const readEp = (() => {
+      const m = match(pathname);
+      if (m?.ep.entity === entity && !m.ep.pluck) return m.ep;
+      return routes.find((ep) => ep.entity === entity && !ep.pluck) ?? null;
+    })();
+    const formatWriteRow = (row) => (readEp ? shapeRow(row, readEp, []) : { ...row });
 
     if (action === 'create') {
       const raw = {};
@@ -536,7 +539,7 @@ export function createEngine(dataset) {
       const created = buildRow(raw);
       rows.push(created);
       invalidateIndexes();
-      return respond({ ...created });
+      return respond(formatWriteRow(created));
     }
 
     const bound = (w.params ?? []).filter((p) => p.field !== null);
@@ -572,10 +575,10 @@ export function createEngine(dataset) {
         updatedList.push(updated);
       }
       invalidateIndexes();
-      return respond(singleTarget && updatedList.length === 1 ? { ...updatedList[0] } : updatedList.map((r) => ({ ...r })));
+      return respond(singleTarget && updatedList.length === 1 ? formatWriteRow(updatedList[0]) : updatedList.map(formatWriteRow));
     }
 
-    const deletedList = indices.map((idx) => ({ ...rows[idx] }));
+    const deletedList = indices.map((idx) => formatWriteRow(rows[idx]));
     for (let j = indices.length - 1; j >= 0; j--) rows.splice(indices[j], 1);
     invalidateIndexes();
     return respond(singleTarget && deletedList.length === 1 ? deletedList[0] : deletedList);

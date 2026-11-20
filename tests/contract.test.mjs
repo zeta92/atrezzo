@@ -1725,7 +1725,9 @@ test('writes: determinism — response body does not depend on key arrival order
   const r1 = e1.handle({ method: 'POST', pathname: '/api/orders', body: { amount: 55, customer_id: 1, reference: 'ORD-NEW', extra_z: 1, extra_a: 2 } });
   const r2 = e2.handle({ method: 'POST', pathname: '/api/orders', body: { extra_a: 2, reference: 'ORD-NEW', extra_z: 1, customer_id: 1, amount: 55 } });
   assert.equal(JSON.stringify(r1.body), JSON.stringify(r2.body));
-  assert.deepEqual(Object.keys(r1.body), ['id', 'reference', 'customer_id', 'status', 'amount', 'extra_a', 'extra_z']);
+  assert.deepEqual(Object.keys(r1.body), ['id', 'reference', 'customer_id', 'status', 'amount', 'customer']);
+  assert.equal('extra_a' in r1.body, false);
+  assert.equal('extra_z' in r1.body, false);
 
   // Echo-only write sorts keys deterministically regardless of arrival order
   const eo1 = e1.handle({ method: 'POST', pathname: '/api/echo-only', body: { z: 1, a: { d: 4, c: 3 } } });
@@ -1755,6 +1757,58 @@ test('writes: determinism — response body does not depend on key arrival order
     JSON.stringify(e1.handle({ method: 'GET', pathname: '/api/orders' }).body),
     JSON.stringify(e2.handle({ method: 'GET', pathname: '/api/orders' }).body),
   );
+});
+
+test('writes: unknown request fields are dropped and echo: true matches subsequent GET projection', () => {
+  const ds = generateWorld(normalizeScenario(parseYaml(WRITES_SCENARIO, 'w.yaml'), 'w.yaml'));
+  const eng = createEngine(ds);
+
+  const created = eng.handle({
+    method: 'POST',
+    pathname: '/api/orders',
+    body: { customer_id: 2, amount: 149.5, unknown_field: 'should-not-leak', extra: { nested: 1 } },
+  });
+  assert.equal(created.status, 201);
+  assert.equal('unknown_field' in created.body, false);
+  assert.equal('extra' in created.body, false);
+  const fetchedCreated = eng.handle({ method: 'GET', pathname: `/api/orders/${created.body.id}` });
+  assert.equal(fetchedCreated.status, 200);
+  assert.deepEqual(created.body, fetchedCreated.body);
+  assert.equal(JSON.stringify(created.body), JSON.stringify(fetchedCreated.body));
+  assert.equal('unknown_field' in eng.dataset.entities.orders.at(-1), false);
+
+  const patched = eng.handle({
+    method: 'PATCH',
+    pathname: `/api/orders/${created.body.id}`,
+    body: { amount: 250, unknown_patch_field: true },
+  });
+  assert.equal(patched.status, 200);
+  assert.equal('unknown_patch_field' in patched.body, false);
+  const fetchedPatched = eng.handle({ method: 'GET', pathname: `/api/orders/${created.body.id}` });
+  assert.deepEqual(patched.body, fetchedPatched.body);
+  assert.equal(JSON.stringify(patched.body), JSON.stringify(fetchedPatched.body));
+
+  const putRes = eng.handle({
+    method: 'PUT',
+    pathname: '/api/orders/1',
+    body: { amount: 333, unknown_put_field: 'nope' },
+  });
+  assert.equal(putRes.status, 200);
+  assert.equal('unknown_put_field' in putRes.body, false);
+  const fetchedPut = eng.handle({ method: 'GET', pathname: '/api/orders/1' });
+  assert.deepEqual(putRes.body, fetchedPut.body);
+  assert.equal(JSON.stringify(putRes.body), JSON.stringify(fetchedPut.body));
+
+  const createdCustomer = eng.handle({
+    method: 'POST',
+    pathname: '/api/customers',
+    body: { name: 'Beta Co', bogus: 42 },
+  });
+  assert.equal(createdCustomer.status, 201);
+  assert.equal('bogus' in createdCustomer.body, false);
+  const fetchedCustomer = eng.handle({ method: 'GET', pathname: `/api/customers/${createdCustomer.body.id}` });
+  assert.deepEqual(createdCustomer.body, fetchedCustomer.body);
+  assert.equal(JSON.stringify(createdCustomer.body), JSON.stringify(fetchedCustomer.body));
 });
 
 test('writes: validation rejects missing method, unsupported method, unknown entity, unknown fields, and invalid expect/mutate', () => {
