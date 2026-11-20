@@ -47,13 +47,13 @@ export function listScenarios(dir) {
     if (!/\.(ya?ml|json)$/.test(f)) continue;
     const file = join(dir, f);
     out[scenarioNameFromFile(f)] = file;
-    try { out[loadScenario(file).name] = file; } catch { /* invalid files surface when selected */ }
+    try { out[loadScenario(file, { checkFixtures: false }).name] = file; } catch { /* invalid files surface when selected */ }
   }
   return out;
 }
 
-export function buildState(scenarioFile) {
-  const scenario = loadScenario(scenarioFile);
+export function buildState(scenarioFile, fixturesDir = null) {
+  const scenario = loadScenario(scenarioFile, { fixturesDir });
   const dataset = generateWorld(scenario);
   return { scenario, dataset, engine: createEngine(dataset), file: scenarioFile };
 }
@@ -80,6 +80,8 @@ function summary(state, available, generatedDir, misses, latency = 0) {
   };
   const errors = errorSummary(d.endpoints);
   if (Object.keys(errors).length) out.errors = errors; // only when declared
+  const passthrough = Object.fromEntries(d.endpoints.filter((e) => e.passthrough).map((e) => [e.path, e.passthrough.fixture]));
+  if (Object.keys(passthrough).length) out.passthrough = passthrough; // only when declared
   if (d.writes?.length) out.writes = d.writes.map((w) => `${w.method} ${w.path}`); // only when declared
   if (d.streams?.length) out.streams = d.streams.map((s) => s.path); // only when declared
   if (d.auth) out.auth = d.auth; // only when declared
@@ -111,7 +113,7 @@ async function readBody(req) {
  *   missesFile: where gaps are recorded (null = memory only) · onMiss: 404 (log) or empty 200 (stub)
  *   latency: ms every contract answer waits (an endpoint's `latency:` wins) · sleep: how it waits
  */
-export function createMockServer({ scenariosDir, scenario, staticDir = null, generatedDir = null, missesFile = null, onMiss = 'log', latency = 0, sleep = wait, log = () => {}, onRequest = () => {} }) {
+export function createMockServer({ scenariosDir, scenario, staticDir = null, generatedDir = null, fixturesDir = null, missesFile = null, onMiss = 'log', latency = 0, sleep = wait, log = () => {}, onRequest = () => {} }) {
   if (!ON_MISS.includes(onMiss)) throw new AtrezzoError(`--on-miss must be ${ON_MISS.join(' or ')} (got "${onMiss}")`);
   if (!Number.isInteger(latency) || latency < 0 || latency > MAX_LATENCY) throw new AtrezzoError(`--latency must be an integer between 0 and ${MAX_LATENCY} ms (got "${latency}")`);
   const misses = createMissStore(missesFile);
@@ -126,7 +128,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
     if (!available[name]) throw new AtrezzoError(`Scenario "${name}" not found in ${scenariosDir} (available: ${[...new Set(Object.values(available).map(scenarioNameFromFile))].join(', ') || 'none'})`);
     return available[name];
   };
-  let state = buildState(pick(scenario));
+  let state = buildState(pick(scenario), fixturesDir);
 
   const send = (res, status, body, headers = {}) => {
     // body null = no body (a count-only answer); everything else that is not text goes out as JSON.
@@ -252,7 +254,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
       }
       if (url.pathname === '/__atrezzo/reload') {
         if (req.method !== 'POST') return send(res, 405, { error: 'use POST' }, { ...JSON_CT, allow: 'POST' });
-        const nextState = buildState(pick(state.dataset.scenario));
+        const nextState = buildState(pick(state.dataset.scenario), fixturesDir);
         closeAllStreams();
         state = nextState;
         log(`reload → ${state.dataset.scenario} (hash ${state.dataset.hash})`);
@@ -262,7 +264,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         if (req.method !== 'POST') return send(res, 405, { error: 'use POST' }, { allow: 'POST' });
         const body = await readBody(req);
         const name = body.scenario ?? url.searchParams.get('scenario') ?? state.dataset.scenario;
-        const nextState = buildState(pick(name));
+        const nextState = buildState(pick(name), fixturesDir);
         closeAllStreams();
         state = nextState;
         log(`reset → ${state.dataset.scenario}`);

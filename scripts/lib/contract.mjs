@@ -519,8 +519,8 @@ export function createEngine(dataset) {
     };
     const readEp = (() => {
       const m = match(pathname);
-      if (m?.ep.entity === entity && !m.ep.pluck) return m.ep;
-      return routes.find((ep) => ep.entity === entity && !ep.pluck) ?? null;
+      if (m?.ep.entity === entity && !m.ep.pluck && !m.ep.passthrough) return m.ep;
+      return routes.find((ep) => ep.entity === entity && !ep.pluck && !ep.passthrough) ?? null;
     })();
     const formatWriteRow = (row) => (readEp ? shapeRow(row, readEp, []) : { ...row });
 
@@ -610,6 +610,19 @@ export function createEngine(dataset) {
     const { ep, id } = m;
     // `error:` answers the declared status and body on the list and the detail route, world untouched.
     if (ep.error) return json(ep.error.status, ep.error.body, { 'x-atrezzo-error': 'declared' });
+    // `passthrough:` answers the recorded fixture with its declared patch applied, leaving everything else untouched.
+    if (ep.passthrough) {
+      const pt = dataset.passthrough?.[ep.path];
+      if (!pt) return json(500, { error: `missing resolved passthrough fixture "${ep.passthrough.fixture}" for ${ep.path}` });
+      const ct = pt.contentType ?? 'application/json; charset=utf-8';
+      const isJsonCt = /\bjson\b|\+json/i.test(ct);
+      const outBody = pt.body === null ? null : (isJsonCt && typeof pt.body === 'string' ? JSON.stringify(pt.body) : pt.body);
+      return {
+        status: pt.status,
+        headers: { 'content-type': ct, 'x-atrezzo-scenario': dataset.scenario },
+        body: outBody,
+      };
+    }
     // A parameterised path (`/projects/:project_id/tasks`) only sees the rows its parameters name.
     const rows = byParams(workingEntities[ep.entity], ep, m.params);
     // PostgREST parameters; a declared filter of the same name keeps its meaning.

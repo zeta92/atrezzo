@@ -19,6 +19,7 @@ import { createMissStore, missesFile, hintFor, formatMisses } from './lib/misses
 import { parseHeaderArgs, headerLines } from './lib/headers.mjs';
 import { parseStorageJson } from './lib/storage.mjs';
 import { runHarvest, formatHarvestReport } from './lib/harvest.mjs';
+import { recordEndpoint, formatRecordReport } from './lib/record.mjs';
 
 const HELP = `atrezzo — API mocks from application states
 
@@ -56,6 +57,10 @@ Commands:
       prints the result and leaves a temporary copy; with --write, merges into <file>.
       --storage <file.json> (or @- from stdin) seeds localStorage/sessionStorage before the first
       navigation from { "local": {…}, "session": {…} }; \${…} is invalid (exit 3) and only keys are printed.
+  record <url> --scenario <file> --endpoint <path> [--fixture <name>] [--header "Name: value"]… [--write]
+      Captures a real GET response into atrezzo/fixtures/<name>.json (status, content-type and body only;
+      request and response headers/credentials are never saved) for endpoint \`passthrough: { fixture, patch }\`.
+      With --write, attaches \`passthrough: { fixture }\` to the endpoint in <file>.
   runtimes [--dir .]
       Lists the adapters, their score in this project, the reason and how to start each one.
   import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
@@ -155,7 +160,7 @@ function writeEmitted(root, files) {
 function cmdWorld({ pos, flags }) {
   if (!pos[0]) throw new AtrezzoError('Usage: atrezzo world <scenario.yaml>');
   const cfg = loadConfig(flags.dir ?? '.');
-  const scenario = loadScenario(resolve(pos[0]));
+  const scenario = loadScenario(resolve(pos[0]), { fixturesDir: join(cfg._dir, cfg.fixturesDir) });
   const dataset = generateWorld(scenario);
   const problems = checkIntegrity(dataset);
   if (problems.length) throw new AtrezzoError('Referential integrity broken (atrezzo bug, please report it)', { exitCode: EXIT.FAIL, issues: problems });
@@ -178,6 +183,14 @@ function cmdWorld({ pos, flags }) {
   }
   out('Endpoints covered:');
   for (const ep of scenario.endpoints) {
+    if (ep.passthrough) {
+      const bits = [`passthrough: ${ep.passthrough.fixture}`];
+      const patchKeys = Object.keys(ep.passthrough.patch ?? {});
+      if (patchKeys.length) bits.push(`patch: ${patchKeys.join(',')}`);
+      if (ep.latency !== undefined) bits.push(`latency: ${ep.latency} ms`);
+      out(`  GET ${ep.path}  ${bits.join(' · ')}`);
+      continue;
+    }
     const bits = [ep.entity];
     if (ep.filters.length) bits.push(`filters: ${ep.filters.join(',')}`);
     if (ep.worldFilters?.length) bits.push(`world-filters: ${ep.worldFilters.map((w) => `${w.field}→${w.from}`).join(',')}`);
@@ -240,8 +253,8 @@ async function cmdServe({ flags }) {
   if (!Number.isInteger(latency) || latency > MAX_LATENCY) throw new AtrezzoError(`invalid --latency: ${flags.latency} (milliseconds, an integer between 0 and ${MAX_LATENCY})`);
   const mock = createMockServer({
     scenariosDir, scenario: flags.scenario, staticDir: staticDir && resolve(staticDir),
-    generatedDir: join(cfg._dir, cfg.generatedDir), log: (s) => out(`  ${s}`),
-    missesFile: missesFile(cfg), onMiss: flags['on-miss'] ?? 'log', latency,
+    generatedDir: join(cfg._dir, cfg.generatedDir), fixturesDir: join(cfg._dir, cfg.fixturesDir),
+    log: (s) => out(`  ${s}`), missesFile: missesFile(cfg), onMiss: flags['on-miss'] ?? 'log', latency,
   });
   let addr;
   try { addr = await mock.listen(port, flags.host ?? '127.0.0.1'); } catch (e) {
@@ -253,6 +266,7 @@ async function cmdServe({ flags }) {
     const notes = [];
     if (ep.latency !== undefined && ep.latency !== latency) notes.push(`latency ${ep.latency} ms`);
     if (ep.error) notes.push(`declared error ${ep.error.status}`);
+    if (ep.passthrough) notes.push(`passthrough ${ep.passthrough.fixture}`);
     out(`  GET ${ep.path}${notes.length ? `  (${notes.join(' · ')})` : ''}`);
   }
   for (const w of d.writes ?? []) {
@@ -276,6 +290,13 @@ async function cmdServe({ flags }) {
   return new Promise(() => {}); // run until killed
 }
 
+// --header @- takes the header lines from stdin, so the value never sits in argv (ps) or history.
+function parseCliHeaders(flags) {
+  const items = (flags.header ?? []).flatMap((h) => (h === '@-' ? headerLines(readFileSync(0, 'utf8')) : [h]));
+  if (flags.header?.includes('@-') && !items.length) throw new AtrezzoError('--header @-: stdin had no "Name: value" line');
+  return parseHeaderArgs(items);
+}
+
 async function cmdVerify({ pos, flags }) {
   if (!pos[0]) throw new AtrezzoError('Usage: atrezzo verify <flow.yaml> [--driver http|playwright]');
   const cfg = loadConfig(flags.dir ?? '.');
@@ -284,10 +305,7 @@ async function cmdVerify({ pos, flags }) {
   if (!['http', 'playwright'].includes(driver)) throw new AtrezzoError(`--driver must be http or playwright (got "${driver}")`);
   if (flags['strict-console'] && driver !== 'playwright') throw new AtrezzoError('--strict-console requires --driver playwright (the http driver has no browser console)');
   const url = flags.url ?? flow.baseUrl ?? cfg.mock.baseUrl;
-  // --header @- takes the header lines from stdin, so the value never sits in argv (ps) or history.
-  const items = (flags.header ?? []).flatMap((h) => (h === '@-' ? headerLines(readFileSync(0, 'utf8')) : [h]));
-  if (flags.header?.includes('@-') && !items.length) throw new AtrezzoError('--header @-: stdin had no "Name: value" line');
-  const headers = parseHeaderArgs(items);
+  const headers = parseCliHeaders(flags);
   let clickTimeout;
   if (flags['click-timeout'] !== undefined) {
     const n = Number(flags['click-timeout']);
@@ -360,7 +378,7 @@ function cmdMisses({ flags }) {
   const sdir = join(cfg._dir, cfg.scenariosDir);
   if (existsSync(sdir)) {
     for (const f of readdirSync(sdir).filter((x) => /\.(ya?ml|json)$/.test(x)).sort()) {
-      try { scenarios.push(loadScenario(join(sdir, f))); } catch { /* doctor reports invalid scenarios */ }
+      try { scenarios.push(loadScenario(join(sdir, f), { checkFixtures: false })); } catch { /* doctor reports invalid scenarios */ }
     }
   }
   const hints = new Map(list.filter((m) => !m.resolved).map((m) => [m, hintFor(m, { spec, contract, scenarios })]));
@@ -418,10 +436,30 @@ async function cmdHarvest({ pos, flags }) {
   return EXIT.OK;
 }
 
+async function cmdRecord({ pos, flags }) {
+  if (!pos[0] || !flags.scenario || !flags.endpoint) {
+    throw new AtrezzoError('Usage: atrezzo record <url> --scenario <file> --endpoint <path> [--fixture <name>] [--header "Name: value"]… [--write]');
+  }
+  const cfg = loadConfig(flags.dir ?? '.');
+  const headers = parseCliHeaders(flags);
+  const result = await recordEndpoint({
+    url: pos[0],
+    scenarioFile: flags.scenario,
+    endpointPath: flags.endpoint,
+    fixtureName: flags.fixture ?? flags.name ?? null,
+    headers,
+    write: !!flags.write,
+    fixturesDir: join(cfg._dir, cfg.fixturesDir),
+    cwd: cfg._dir,
+  });
+  out(formatRecordReport(result));
+  return EXIT.OK;
+}
+
 export async function main(argv) {
   const args = parseArgs(argv);
   if (!args.cmd || args.flags.help || args.cmd === 'help') { out(HELP); return EXIT.OK; }
-  const cmds = { init: cmdInit, world: cmdWorld, serve: cmdServe, verify: cmdVerify, doctor: cmdDoctor, runtimes: cmdRuntimes, import: cmdImport, misses: cmdMisses, harvest: cmdHarvest };
+  const cmds = { init: cmdInit, world: cmdWorld, serve: cmdServe, verify: cmdVerify, doctor: cmdDoctor, runtimes: cmdRuntimes, import: cmdImport, misses: cmdMisses, harvest: cmdHarvest, record: cmdRecord };
   const fn = cmds[args.cmd];
   if (!fn) throw new AtrezzoError(`Unknown command "${args.cmd}". Commands: ${Object.keys(cmds).join(', ')}`);
   return fn(args);

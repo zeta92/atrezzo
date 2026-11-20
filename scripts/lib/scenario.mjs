@@ -7,6 +7,7 @@ import { AtrezzoError } from './errors.mjs';
 import { templateFor, entityFields, firstValueList, valueListFields, RENAMED_TEMPLATES } from './world.mjs';
 import { parseHeaders } from './headers.mjs';
 import { parseStorage } from './storage.mjs';
+import { FORBIDDEN_PATH_SEGMENTS, normalizeFixtureName, resolvePassthroughs } from './passthrough.mjs';
 
 export const DEFAULT_NOW = '2025-01-15T09:00:00.000Z';
 
@@ -587,7 +588,7 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'include', 'embed', 'counts', 'shape', 'envelope', 'detail', 'pick', 'latency', 'pluck', 'error'];
+const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'include', 'embed', 'counts', 'shape', 'envelope', 'detail', 'pick', 'latency', 'pluck', 'error', 'passthrough'];
 
 /** Levels of `embed` below an endpoint's entity (the endpoint's own children are level 1). */
 export const MAX_EMBED_DEPTH = 4;
@@ -637,8 +638,8 @@ export function embedLabel(embed) {
 
 const PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-/** Names of the `:name` segments of a path, validated (whole segments, unique, not a trailing `:id`). */
-function pathParams(path, field, issues) {
+/** Names of the `:name` segments of a path, validated (whole segments, unique, not a trailing `:id` unless passthrough). */
+function pathParams(path, field, issues, { allowTrailingId = false } = {}) {
   const names = [];
   const segs = path.split('/');
   segs.forEach((seg, i) => {
@@ -646,7 +647,7 @@ function pathParams(path, field, issues) {
     const name = seg.slice(1);
     if (!seg.startsWith(':') || !PARAM_NAME.test(name)) { issues.add(field, `"${seg}": a parameter is a whole segment ":name" (letters, digits, "_")`); return; }
     if (names.includes(name)) { issues.add(field, `parameter ":${name}" appears twice`); return; }
-    if (name === 'id' && i === segs.length - 1) { issues.add(field, 'a trailing "/:id" is the detail route, generated automatically (detail: true); declare the collection path'); return; }
+    if (!allowTrailingId && name === 'id' && i === segs.length - 1) { issues.add(field, 'a trailing "/:id" is the detail route, generated automatically (detail: true); declare the collection path'); return; }
     names.push(name);
   });
   return names;
@@ -956,6 +957,62 @@ function parseWorldFilter(field, raw, spec, fkTarget, byName, auth, authDeclared
   return fkOk && where ? { field, from, where } : null;
 }
 
+function parsePassthrough(raw, ep, f, issues) {
+  const pf = `${f}.passthrough`;
+  if (!isObj(raw)) {
+    issues.add(pf, `must be a map { fixture, patch }; got ${typeName(raw)}`);
+    return null;
+  }
+  issues.unknownKeys(raw, ['fixture', 'patch'], pf);
+  let fixture = null;
+  if (typeof raw.fixture !== 'string' || !raw.fixture.trim()) {
+    issues.add(`${pf}.fixture`, 'required; fixture name (e.g. "market" for atrezzo/fixtures/market.json)');
+  } else {
+    fixture = normalizeFixtureName(raw.fixture);
+    if (!fixture) {
+      issues.add(`${pf}.fixture`, `invalid fixture name ${JSON.stringify(raw.fixture)} (use letters, digits, ".", "_" or "-", without paths or "..")`);
+    }
+  }
+  let patch = null;
+  if (raw.patch !== undefined) {
+    if (!isObj(raw.patch)) {
+      issues.add(`${pf}.patch`, `must be a map { "field.path": value }; got ${typeName(raw.patch)}`);
+    } else {
+      patch = {};
+      for (const [k, v] of Object.entries(raw.patch)) {
+        const parts = k.split('.');
+        if (!k || parts.some((p) => !p || FORBIDDEN_PATH_SEGMENTS.has(p))) {
+          issues.add(`${pf}.patch.${k}`, `invalid patch path ${JSON.stringify(k)}: must be a non-empty dot-separated path`);
+          continue;
+        }
+        if (v === undefined) {
+          issues.add(`${pf}.patch.${k}`, 'patch value must be JSON-serializable');
+          continue;
+        }
+        patch[k] = v;
+      }
+    }
+  }
+  if (ep.error !== undefined) {
+    issues.add(pf, 'cannot combine "passthrough" with "error"');
+  }
+  if (ep.detail === true) {
+    issues.add(`${f}.detail`, 'cannot combine "detail: true" with "passthrough"');
+  }
+  if (ep.entity === undefined) {
+    for (const k of ['filters', 'pagination', 'sort', 'sorts', 'include', 'embed', 'counts', 'pluck', 'envelope', 'pick']) {
+      if (ep[k] !== undefined) issues.add(`${f}.${k}`, `incompatible with "passthrough" without "entity"`);
+    }
+    if (ep.shape !== undefined && ep.shape !== 'array') {
+      issues.add(`${f}.shape`, 'incompatible with "passthrough" without "entity"');
+    }
+  }
+  if (!fixture) return null;
+  const out = { fixture };
+  if (patch && Object.keys(patch).length) out.patch = patch;
+  return out;
+}
+
 function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
   if (!Array.isArray(endpoints) || !endpoints.length) { issues.add('endpoints', 'required; a list with at least one endpoint'); return []; }
   const byName = Object.fromEntries(world.map((s) => [s.name, s]));
@@ -968,21 +1025,27 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
     if (typeof ep.path !== 'string' || !ep.path.startsWith('/')) { issues.add(`${f}.path`, 'required; must start with "/"'); return; }
     if (/[?#]/.test(ep.path)) issues.add(`${f}.path`, 'no query or fragment');
     const path = ep.path.replace(/\/+$/, '') || '/';
-    const names = pathParams(path, `${f}.path`, issues);
+    const names = pathParams(path, `${f}.path`, issues, { allowTrailingId: ep.passthrough !== undefined });
     // `/a/:x` and `/a/:y` answer the same requests: compare with the parameter names erased.
     const shapeKey = path.replace(/\/:[^/]+/g, '/:');
     if (seen.has(shapeKey)) issues.add(`${f}.path`, `duplicate: "${path}"`);
     seen.add(shapeKey);
-    if (ep.entity === undefined) { issues.add(`${f}.entity`, `missing; name the world entity that "${path}" projects`); return; }
-    const spec = byName[ep.entity];
-    if (!spec) { issues.add(`${f}.entity`, `"${ep.entity}" is not declared in world (declared: ${Object.keys(byName).join(', ') || 'none'})`); return; }
-    const fields = entityFields(spec);
-    const fkTarget = Object.fromEntries(spec.refs.map((r) => [templateFor(r).fk, r]));
+
+    const passthrough = ep.passthrough !== undefined ? parsePassthrough(ep.passthrough, ep, f, issues) : null;
+    let spec = null;
+    if (ep.entity === undefined) {
+      if (ep.passthrough === undefined) { issues.add(`${f}.entity`, `missing; name the world entity that "${path}" projects`); return; }
+    } else {
+      spec = byName[ep.entity];
+      if (!spec) { issues.add(`${f}.entity`, `"${ep.entity}" is not declared in world (declared: ${Object.keys(byName).join(', ') || 'none'})`); return; }
+    }
+    const fields = spec ? entityFields(spec) : [];
+    const fkTarget = spec ? Object.fromEntries(spec.refs.map((r) => [templateFor(r).fk, r])) : {};
     const filters = [];
     const worldFilters = [];
     const userFilters = [];
     const bound = {}; // ":param" -> field | null, from the map form of `filters`
-    if (ep.filters !== undefined) {
+    if (ep.filters !== undefined && spec) {
       if (Array.isArray(ep.filters)) {
         ep.filters.forEach((fl, j) => {
           if (!fields.includes(fl)) issues.add(`${f}.filters[${j}]`, `field "${fl}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
@@ -1011,6 +1074,7 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
     }
     const params = [];
     for (const name of names) {
+      if (!spec) { params.push({ name, field: null }); continue; }
       if (Object.hasOwn(bound, name)) { params.push({ name, field: bound[name] }); continue; }
       const field = paramField(name, path, names.length, fields);
       if (field) params.push({ name, field });
@@ -1021,9 +1085,9 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
         issues.add(`${f}.path`, `parameter ":${name}" binds to no field of "${spec.name}" (${looked}; fields: ${fields.join(', ')}); rename it after a field or map it: filters: { ":${name}": <field> } (null = accept any value)`);
       }
     }
-    const embed = ep.embed === undefined ? [] : normalizeEmbed(ep.embed, spec, [spec.name], `${f}.embed`, byName, issues);
-    const epCounts = ep.counts === undefined ? [] : parseCounts(ep.counts, spec, `${f}.counts`, byName, issues);
-    const epRowCounts = mergeCounts(spec.counts, epCounts);
+    const embed = ep.embed === undefined || !spec ? [] : normalizeEmbed(ep.embed, spec, [spec.name], `${f}.embed`, byName, issues);
+    const epCounts = ep.counts === undefined || !spec ? [] : parseCounts(ep.counts, spec, `${f}.counts`, byName, issues);
+    const epRowCounts = spec ? mergeCounts(spec.counts, epCounts) : [];
     let pagination = null;
     if (ep.pagination !== undefined && ep.pagination !== null) {
       if (!isObj(ep.pagination)) issues.add(`${f}.pagination`, 'must be a map { param_limit, param_offset, default_limit, max_limit }');
@@ -1050,7 +1114,7 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
       }
     }
     const include = [];
-    if (ep.include !== undefined) {
+    if (ep.include !== undefined && spec) {
       const list = Array.isArray(ep.include) ? ep.include : [ep.include];
       list.forEach((inc) => {
         if (!spec.refs.includes(inc)) issues.add(`${f}.include`, `"${inc}" is not a reference of "${spec.name}" (refs: ${spec.refs.join(', ') || 'none'})`);
@@ -1086,7 +1150,7 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
     }
     // `pluck: id`: each row answers that field's value as a string (["1","2"]), not the row.
     let pluck = null;
-    if (ep.pluck !== undefined) {
+    if (ep.pluck !== undefined && spec) {
       if (typeof ep.pluck !== 'string' || !ep.pluck) issues.add(`${f}.pluck`, `must be a field name of "${spec.name}" (fields: ${fields.join(', ')})`);
       else if (!fields.includes(ep.pluck)) issues.add(`${f}.pluck`, `field "${ep.pluck}" does not exist in "${spec.name}" (fields: ${fields.join(', ')}); pluck answers that field of each row, as a string`);
       else pluck = ep.pluck;
@@ -1106,10 +1170,10 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
         else error = { status, body: ep.error.body === undefined ? { error: String(status) } : ep.error.body };
       }
     }
-    const sorts = parseSorts(ep.sorts, fields, filters, pagination, f, issues);
+    const sorts = spec ? parseSorts(ep.sorts, fields, filters, pagination, f, issues) : null;
     const norm = {
-      path, entity: spec.name, filters, pagination,
-      sort: parseSort(ep.sort, fields, f, issues), include, shape, detail: ep.detail ?? true,
+      path, entity: spec ? spec.name : null, filters, pagination,
+      sort: spec ? parseSort(ep.sort, fields, f, issues) : [], include, shape, detail: ep.detail ?? !passthrough,
     };
     if (sorts) norm.sorts = sorts; // only when declared: keeps scenario hashes stable
     if (worldFilters.length) norm.worldFilters = worldFilters; // same: absent unless declared
@@ -1122,6 +1186,7 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
     if (epRowCounts.length) norm.counts = epRowCounts; // same: absent unless declared
     if (pluck) norm.pluck = pluck; // same
     if (error) norm.error = error; // same
+    if (passthrough) norm.passthrough = passthrough; // same: absent unless declared
     out.push(norm);
   });
   return out;
@@ -1517,7 +1582,8 @@ export function normalizeScenario(doc, file = '<scenario>') {
     if (Number.isNaN(ms)) issues.add('now', 'must be an ISO 8601 date, e.g. 2025-01-15T09:00:00Z');
     else now = new Date(ms).toISOString();
   }
-  const world = normalizeWorld(doc.world, issues);
+  const allPassthrough = Array.isArray(doc.endpoints) && doc.endpoints.length > 0 && doc.endpoints.every((ep) => isObj(ep) && ep.passthrough !== undefined);
+  const world = doc.world === undefined && allPassthrough ? [] : normalizeWorld(doc.world, issues);
   const auth = normalizeAuth(doc.auth, world, issues);
   const endpoints = normalizeEndpoints(doc.endpoints, world, auth, doc.auth !== undefined, issues);
   const writes = normalizeWrites(doc.writes, world, auth, doc.auth !== undefined, issues);
@@ -1554,8 +1620,15 @@ export function normalizeScenario(doc, file = '<scenario>') {
   return out;
 }
 
-export function loadScenario(file) {
-  return normalizeScenario(readYaml(file, 'scenario'), file);
+export function loadScenario(file, { fixturesDir = null, checkFixtures = true } = {}) {
+  const scenario = normalizeScenario(readYaml(file, 'scenario'), file);
+  if (checkFixtures) {
+    const resolved = resolvePassthroughs(scenario, { scenarioFile: file, fixturesDir });
+    if (Object.keys(resolved).length) {
+      Object.defineProperty(scenario, '_passthrough', { value: resolved, enumerable: false, configurable: true });
+    }
+  }
+  return scenario;
 }
 
 // ---------- flow ----------

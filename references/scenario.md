@@ -184,7 +184,7 @@ Generator guarantees:
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (required, declared in `world`), `filters` (existing fields for query filters, `{ <field>: "$user.<field>" }` for seeded-user filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `counts` (child count fields `{ <name>: { entity, on } }`), `shape` (`array` default, `envelope`, `object`), `envelope` (custom response keys `{ items, total, page, per_page }` when `shape: envelope`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error).
+`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (declared in `world`; optional when `passthrough` is set), `filters` (existing fields for query filters, `{ <field>: "$user.<field>" }` for seeded-user filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `counts` (child count fields `{ <name>: { entity, on } }`), `shape` (`array` default, `envelope`, `object`), `envelope` (custom response keys `{ items, total, page, per_page }` when `shape: envelope`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error), `passthrough` (serve a frozen fixture `{ fixture, patch }` with dot-path overrides).
 
 - Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
 - `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` or `envelope` uses `data`). A single key, no nested paths.
@@ -429,6 +429,29 @@ endpoints:
 - `serve` prints each one in its banner (`(declared error 503)`) and `GET /__atrezzo/state` lists them as `errors: { path: status }`. It is not a gap.
 - `verify` treats it as a real answer: a `data` assertion reads 0 rows from it, so a step that expects data is KO (with the note "answered the error the scenario declares", and a `declared-error` hypothesis under `--diagnose`), while an assertion that expects the error state (`count: 0`, or the screen's error banner with the playwright driver) can pass.
 - Prism declares only that response, with the body as its example; WireMock gets one static mapping for the list and the detail route.
+
+#### Passthrough-and-patch (`passthrough` and `atrezzo record`)
+
+To reproduce rare edge states (a locked item, a closed or empty market) without modeling a whole world for that payload, freeze a real response with `atrezzo record` and override specific fields with `patch`:
+
+```bash
+atrezzo record https://api.example.com/api/market --scenario atrezzo/scenarios/market.yaml --endpoint /api/market --header "Authorization: Bearer $TOKEN"
+```
+
+```yaml
+endpoints:
+  - path: /api/market
+    passthrough:
+      fixture: api-market           # reads atrezzo/fixtures/api-market.json
+      patch:
+        "market.open": false        # dot-path override (objects and numeric array indices)
+        "items.0.locked": true
+```
+
+- **No secrets saved**: `atrezzo record` discards all request headers and all response headers (cookies, auth tokens, tracking headers, query tokens); `atrezzo/fixtures/<name>.json` stores **only** `{ status, contentType, body }`.
+- **Byte-for-byte preservation**: `serve` (and generated MSW handlers) respond with the recorded `status`, `contentType`, and `body` with only the declared `patch` paths modified, keeping every other key, order, array element, and value intact.
+- **`entity` and `world` optional**: when `passthrough` is set, `entity` is optional on the endpoint, and `world` is optional at the root if every endpoint uses `passthrough`. `detail` defaults to `false` and cannot be `true`; `passthrough` cannot be combined with `error`.
+- **Validation (exit 3)**: a missing fixture file or any `patch` path whose key, nested segment, or array index does not exist in the fixture body fails loudly in `loadScenario`, `world`, `serve`, and `doctor` (never silently creates missing paths). `POST /__atrezzo/reload` picks up edited fixtures and patches without restarting `serve`.
 
 #### Singletons (`shape: object`)
 

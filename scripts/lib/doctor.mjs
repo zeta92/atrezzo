@@ -77,7 +77,7 @@ export function doctor(dir) {
       if (!files.length) add('warn', `no scenarios in ${cfg.scenariosDir}`, 'use /atrezzo:scene');
       for (const f of files) {
         try {
-          const sc = loadScenario(join(sdir, f));
+          const sc = loadScenario(join(sdir, f), { fixturesDir: join(dir, cfg.fixturesDir) });
           const ds = generateWorld(sc);
           const gen = join(dir, cfg.generatedDir, `${sc.name}.json`);
           let state = 'not generated';

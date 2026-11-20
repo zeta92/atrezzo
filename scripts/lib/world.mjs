@@ -331,12 +331,15 @@ export function generateWorld(scenario) {
     };
     entities[spec.name] = rows;
   }
+  const hash = scenario._passthrough
+    ? createHash('sha256').update(JSON.stringify({ scenario, passthrough: scenario._passthrough })).digest('hex').slice(0, 16)
+    : scenarioHash(scenario);
   const dataset = {
     atrezzo: 1,
     scenario: scenario.name,
     seed: scenario.seed,
     now: scenario.now,
-    hash: scenarioHash(scenario),
+    hash,
     schema,
     endpoints: scenario.endpoints,
     entities,
@@ -344,6 +347,7 @@ export function generateWorld(scenario) {
   if (scenario.auth) dataset.auth = scenario.auth;
   if (scenario.writes?.length) dataset.writes = scenario.writes;
   if (scenario.streams?.length) dataset.streams = scenario.streams;
+  if (scenario._passthrough) dataset.passthrough = scenario._passthrough;
   return dataset;
 }
 

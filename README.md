@@ -147,6 +147,7 @@ A mock built endpoint by endpoint is a set of canned responses. They drift apart
 | `atrezzo world` | builds the world and writes the files each adapter needs |
 | `atrezzo serve` | serves the projections over HTTP, switches scenarios without a restart, records gaps |
 | `atrezzo harvest` | opens a URL in Chromium, discovers 404 gaps across rounds, infers entities/fields (`--types`, `select=`, or guess), and updates the scenario |
+| `atrezzo record` | captures a real HTTP response (without credentials/headers) into `atrezzo/fixtures/<name>.json` for `passthrough` + `patch` endpoints |
 | `atrezzo verify` | runs a flow against the screen, compares counts, diagnoses failures |
 
 Helpers: `atrezzo misses` (recorded gaps), `atrezzo runtimes` (adapter scores for this project), `atrezzo doctor` (what is installed, valid or stale).
@@ -247,6 +248,7 @@ node scripts/cli.mjs world <scenario.yaml> [--out dir]
 node scripts/cli.mjs serve [--scenario demo] [--port 4010] [--static dir] [--runtime builtin] [--on-miss log|stub] [--latency ms]
 node scripts/cli.mjs misses [--json] [--clear]
 node scripts/cli.mjs harvest <url> --scenario <file> [--storage <file.json|@->] [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
+node scripts/cli.mjs record <url> --scenario <file> --endpoint <path> [--fixture <name>] [--header "Name: value"|@-]… [--write]
 node scripts/cli.mjs verify <flow.yaml> [--url …] [--driver http|playwright] [--header "Name: value"|@-]… [--diagnose] [--strict-console] [--no-reset] [--json]
 node scripts/cli.mjs doctor
 ```
@@ -300,6 +302,10 @@ the two folders removes everything it wrote.
 
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
+
+### 0.22.0
+
+**Passthrough-and-patch mode (`record` and `passthrough`).** Added `atrezzo record <url> --scenario <file> --endpoint <path> [--fixture <name>] [--header …] [--write]` to freeze a real HTTP response into `atrezzo/fixtures/<name>.json` storing only `{ status, contentType, body }` (discarding all request/response headers, cookies, and query secrets), and endpoint-level `passthrough: { fixture, patch: { "nested.field": value } }` in scenarios so rare states (such as a locked item or empty market) can be reproduced without modeling an entire world. `atrezzo serve` (and generated MSW/Prism/WireMock outputs) serves the recorded fixture with only the declared dot-path patches applied, preserving all other fields, key order, and array elements byte-for-byte. Validation rejects missing fixtures, invalid paths, non-existent patch keys/indices, and conflicting options (`error`, `detail: true`) with exit `3`; scenarios without `passthrough` keep their exact behaviour and hash. Documented in `references/scenario.md` and `references/runtimes.md`, covered in `tests/passthrough.test.mjs`.
 
 ### 0.21.0
 
