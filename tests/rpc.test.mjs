@@ -10,6 +10,8 @@ import { request, getJson } from './helpers/http.mjs';
 import { startServe } from './helpers/serve.mjs';
 import { normalizeScenario } from '../scripts/lib/scenario.mjs';
 import { generateWorld } from '../scripts/lib/world.mjs';
+import { writeGenerated } from '../scripts/lib/codegen.mjs';
+import { createEngine } from '../scripts/lib/contract.mjs';
 import { hintFor } from '../scripts/lib/misses.mjs';
 
 const CONFIG = JSON.stringify({
@@ -153,10 +155,65 @@ test('scenario: rpc is validated and absent rpc keeps the hash', () => {
   bad({ f: { expect: { status: 204 }, body: 1 } }, /cannot have a response body/);
   bad({ f: { match: {} } }, /non-empty map/);
   assert.throws(() => normalizeScenario({ ...doc({ f: { body: 1 } }), writes: { 'POST /rest/v1/rpc/f': { expect: { status: 200 } } } }), (e) => e.issues.some((i) => /conflicts with writes/.test(i)));
+  for (const route of ['POST /rpc/:fn', 'POST /rest/v1/rpc/:fn', 'POST /rest/:v/rpc/:fn', 'POST /:prefix/:fn']) {
+    assert.throws(
+      () => normalizeScenario({ ...doc({ f: { body: 1 } }), writes: { [route]: { expect: { status: 201 } } } }),
+      (e) => e.issues.some((i) => /conflicts with writes/.test(i)),
+      `should reject ${route}`,
+    );
+  }
+  const nonOverlap = normalizeScenario({
+    ...doc({ f: { body: 1 } }),
+    writes: {
+      'POST /rpc/other': { expect: { status: 201 } },
+      'PUT /rpc/:fn': { expect: { status: 200 } },
+    },
+  });
+  assert.equal(nonOverlap.rpc[0].fn, 'f');
+  assert.equal(nonOverlap.writes.length, 2);
+
   const plain = normalizeScenario(doc(undefined));
   assert.equal('rpc' in plain, false);
   assert.equal(generateWorld(plain).hash, generateWorld(normalizeScenario(doc(undefined))).hash);
   const withRpc = normalizeScenario(doc({ f: { body: false } }));
   assert.deepEqual(withRpc.rpc, [{ fn: 'f', expect: { status: 200 }, body: false }]);
   assert.notEqual(generateWorld(withRpc).hash, generateWorld(plain).hash);
+});
+
+test('rpc takes precedence over writes in engine and generated MSW handlers', async () => {
+  const dataset = {
+    scenario: 'precedence',
+    seed: 1,
+    now: '2025-01-01T00:00:00.000Z',
+    hash: 'abc',
+    world: { items: [] },
+    endpoints: [{ path: '/api/items', entity: 'items', shape: 'collection', detail: false, filters: [], include: [], sort: [] }],
+    writes: [
+      { method: 'POST', path: '/rpc/:fn', expect: { status: 201, body: { from: 'write-param' } } },
+      { method: 'POST', path: '/rpc/other', expect: { status: 201, body: { from: 'write-other' } } },
+    ],
+    rpc: [{ fn: 'declared_fn', expect: { status: 200 }, body: { from: 'rpc' } }],
+  };
+
+  const engine = createEngine(dataset);
+  assert.deepEqual(engine.handle({ method: 'POST', pathname: '/rpc/declared_fn', body: {} }).body, { from: 'rpc' });
+  assert.deepEqual(engine.handle({ method: 'POST', pathname: '/rest/v1/rpc/declared_fn', body: {} }).body, { from: 'rpc' });
+  assert.deepEqual(engine.handle({ method: 'POST', pathname: '/rpc/other', body: {} }).body, { from: 'write-other' });
+
+  const dir = tmpProject({});
+  mkdirSync(join(dir, 'node_modules/msw'), { recursive: true });
+  writeFileSync(join(dir, 'node_modules/msw/package.json'), JSON.stringify({ name: 'msw', type: 'module', exports: './index.js' }));
+  writeFileSync(join(dir, 'node_modules/msw/index.js'), MSW_STUB);
+  const files = writeGenerated(dataset, join(dir, 'gen'));
+  const mod = await import(pathToFileURL(files.handlers).href);
+  const rpcIdx = mod.handlers.findIndex((h) => h.method === 'POST' && h.path === '*/rpc/:fn');
+  const writeIdx = mod.handlers.findIndex((h) => h.method === 'POST' && h.path === '*/rpc/other');
+  assert.ok(rpcIdx !== -1 && writeIdx !== -1 && rpcIdx < writeIdx, 'rpc handler is registered before write handlers');
+
+  const callFirst = async (path) => mod.handlers[rpcIdx].resolver({
+    request: new Request(`http://localhost${path}`, { method: 'POST', headers: JSON_H, body: '{}' }),
+  });
+  assert.deepEqual((await callFirst('/rpc/declared_fn')).body, { from: 'rpc' });
+  assert.deepEqual((await callFirst('/rest/v1/rpc/declared_fn')).body, { from: 'rpc' });
+  assert.deepEqual((await callFirst('/rpc/other')).body, { from: 'write-other' });
 });

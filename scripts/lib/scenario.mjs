@@ -1739,7 +1739,7 @@ function normalizeRpc(rawRpc, writes, issues) {
       issues.add(f, 'the function name is letters, digits and "_" (not starting with a digit), without "/rpc/" or a prefix');
       continue;
     }
-    const clash = (writes ?? []).find((w) => w.method === 'POST' && rpcPaths(fn).includes(w.path));
+    const clash = (writes ?? []).find((w) => w.method === 'POST' && rpcPaths(fn).some((p) => pathFits(w.path.split('/'), p.split('/'))));
     if (clash) issues.add(f, `conflicts with writes "POST ${clash.path}"; declare the function in one place`);
     if (!isObj(rule)) {
       issues.add(f, `must be a map { expect, body, match }; got ${typeName(rule)}`);

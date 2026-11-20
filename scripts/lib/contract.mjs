@@ -658,9 +658,10 @@ export function createEngine(dataset) {
   function handle({ method = 'GET', pathname, query, headers, body }) {
     const upper = method.toUpperCase();
     if (upper !== 'GET' && upper !== 'HEAD') {
+      const rpc = matchRpc(pathname);
+      if (rpc?.rule && upper === 'POST') return handleRpc(rpc, pathname, body);
       const wm = matchWrite(upper, pathname);
       if (wm) return handleWrite(wm, pathname, body);
-      const rpc = matchRpc(pathname);
       if (rpc && upper === 'POST') return handleRpc(rpc, pathname, body);
       const allowed = allowedMethods(pathname);
       if (rpc?.rule && !allowed.length) return json(405, { error: `${upper} ${pathname} is not in the contract (PostgREST functions answer POST)` }, { allow: 'POST' });
