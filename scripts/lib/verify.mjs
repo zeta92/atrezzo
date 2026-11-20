@@ -157,6 +157,7 @@ async function defaultPageFactory(cwd, { viewport } = {}) {
 const normPath = (p) => (p.length > 1 ? p.replace(/\/+$/, '') : p);
 const LOGIN_RE = /(^|\/)(login|signin|sign-in|iniciar-sesion|auth)(\/|$)/i;
 const samePath = (a, b) => a.origin === b.origin && normPath(a.pathname) === normPath(b.pathname);
+const sameUrl = (a, b) => samePath(a, b) && a.search === b.search && a.hash === b.hash;
 
 function matchesRedirectTarget(got, expected) {
   if (!samePath(got, expected)) return false;
@@ -191,19 +192,16 @@ async function openStep(pw, url, step, headers, storageScript) {
   let redirect = null;
   if (finalUrl) {
     const want = new URL(target); const got = new URL(finalUrl);
-    const where = got.origin === want.origin ? got.pathname + got.search : finalUrl;
+    const where = got.origin === want.origin ? got.pathname + got.search + got.hash : finalUrl;
     if (step.redirectsTo) {
       const expected = new URL(joinUrl(url, step.redirectsTo));
       const matched = matchesRedirectTarget(got, expected);
-      if (!samePath(got, want)) {
-        redirect = { from: step.visit, to: where, declared: matched };
-        if (!matched) return ko(`the app redirected ${step.visit} → ${where} (expected ${step.redirectsTo})`, redirect);
-      } else if (matched && (expected.search || expected.hash) && (got.search !== want.search || got.hash !== want.hash)) {
-        redirect = { from: step.visit, to: where, declared: true };
-      } else if (!matched) {
+      if (sameUrl(got, want)) {
         return ko(`expected ${step.visit} to redirect to ${step.redirectsTo}, but stayed on ${where}`);
       }
-    } else if (!samePath(got, want)) {
+      redirect = { from: step.visit, to: where, declared: matched };
+      if (!matched) return ko(`the app redirected ${step.visit} → ${where} (expected ${step.redirectsTo})`, redirect);
+    } else if (step.allowRedirect ? !sameUrl(got, want) : !samePath(got, want)) {
       redirect = { from: step.visit, to: where, declared: Boolean(step.allowRedirect) };
       if (!step.allowRedirect) {
         return ko(`the app redirected ${step.visit} → ${where}` + (LOGIN_RE.test(got.pathname) ? ' (login screen: no session or session expired; check the flow headers/Cookie)' : ''), redirect);

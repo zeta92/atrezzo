@@ -217,6 +217,11 @@ test('declared redirect (allow_redirect: true): OK when redirected or when stayi
   const r2 = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', pageFactory: fpSame.factory });
   assert.equal(r2.exitCode, 0);
   assert.equal(r2.steps[0].redirect, undefined);
+
+  const fpQuery = fakeRedirectPage({ redirectTo: '/orders?next=%2Flogin', countsByPath: { '/orders': { '#target': 1 } } });
+  const r3 = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', pageFactory: fpQuery.factory });
+  assert.equal(r3.exitCode, 0);
+  assert.deepEqual(r3.steps[0].redirect, { from: '/orders', to: '/orders?next=%2Flogin', declared: true });
 });
 
 test('undeclared redirect: stays KO with current warning', async () => {
@@ -254,6 +259,44 @@ test('declared redirect to wrong destination or without redirecting: KO', async 
   assert.match(rNone.rows[0].note, /expected \/orders to redirect to \/login, but stayed on \/orders/);
   assert.equal(rNone.rows[0].hypotheses[0].type, 'navigation');
   assert.equal(rNone.steps[0].redirect, undefined);
+});
+
+test('declared redirect (redirects_to) on same pathname: KO when staying on visit, OK with redirect metadata on query/fragment change', async () => {
+  const samePathDir = tmpProject({
+    'same.yaml': 'steps:\n  - screen: orders\n    visit: /orders\n    redirects_to: /orders\n    expect: [{ selector: "#login-form", count: 1 }]\n',
+    'query.yaml': 'steps:\n  - screen: orders\n    visit: /orders\n    redirects_to: /orders?step=1\n    expect: [{ selector: "#login-form", count: 1 }]\n',
+  });
+
+  // visit: /orders, redirects_to: /orders, no redirect ⇒ KO (never a false OK)
+  const fpStayed = fakeRedirectPage({ redirectTo: null, countsByPath: { '/orders': { '#login-form': 1 } } });
+  const rStayed = await runVerify(loadFlow(join(samePathDir, 'same.yaml')), { url, driver: 'playwright', diagnose: true, pageFactory: fpStayed.factory });
+  assert.equal(rStayed.exitCode, 1);
+  assert.equal(rStayed.rows[0].status, 'KO');
+  assert.match(rStayed.rows[0].note, /expected \/orders to redirect to \/orders, but stayed on \/orders/);
+  assert.equal(rStayed.rows[0].hypotheses[0].type, 'navigation');
+  assert.equal(rStayed.steps[0].redirect, undefined);
+
+  // visit: /orders, redirects_to: /orders, redirected only by query ⇒ OK with redirect metadata
+  const fpQuery = fakeRedirectPage({ redirectTo: '/orders?next=%2Flogin', countsByPath: { '/orders': { '#login-form': 1 } } });
+  const rQuery = await runVerify(loadFlow(join(samePathDir, 'same.yaml')), { url, driver: 'playwright', pageFactory: fpQuery.factory });
+  assert.equal(rQuery.exitCode, 0, formatReport(rQuery));
+  assert.equal(rQuery.rows[0].status, 'OK');
+  assert.deepEqual(rQuery.steps[0].redirect, { from: '/orders', to: '/orders?next=%2Flogin', declared: true });
+
+  // visit: /orders, redirects_to: /orders, redirected only by fragment ⇒ OK with redirect metadata
+  const fpHash = fakeRedirectPage({ redirectTo: '/orders#auth', countsByPath: { '/orders': { '#login-form': 1 } } });
+  const rHash = await runVerify(loadFlow(join(samePathDir, 'same.yaml')), { url, driver: 'playwright', pageFactory: fpHash.factory });
+  assert.equal(rHash.exitCode, 0, formatReport(rHash));
+  assert.equal(rHash.rows[0].status, 'OK');
+  assert.deepEqual(rHash.steps[0].redirect, { from: '/orders', to: '/orders#auth', declared: true });
+
+  // visit: /orders, redirects_to: /orders?step=1, redirected to /orders?step=2 ⇒ KO with redirect metadata
+  const fpWrongQuery = fakeRedirectPage({ redirectTo: '/orders?step=2', countsByPath: { '/orders': { '#login-form': 1 } } });
+  const rWrongQuery = await runVerify(loadFlow(join(samePathDir, 'query.yaml')), { url, driver: 'playwright', pageFactory: fpWrongQuery.factory });
+  assert.equal(rWrongQuery.exitCode, 1);
+  assert.equal(rWrongQuery.rows[0].status, 'KO');
+  assert.match(rWrongQuery.rows[0].note, /redirected \/orders → \/orders\?step=2 \(expected \/orders\?step=1\)/);
+  assert.deepEqual(rWrongQuery.steps[0].redirect, { from: '/orders', to: '/orders?step=2', declared: false });
 });
 
 const realPw = await loadPlaywright(ROOT);
