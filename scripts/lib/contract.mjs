@@ -385,8 +385,8 @@ export function createEngine(dataset) {
   }
 
   /**
-   * Find the endpoint for a pathname: a list route first (the most literal one, i.e. the fewest
-   * parameters, wins; ties in declaration order), then a `<path>/<id>` detail route.
+   * Find the endpoint for a pathname: a list route first, then a `<path>/<id>` detail route (in each
+   * phase, the most literal route, i.e. the fewest parameters, wins; ties in declaration order).
    */
   function match(pathname) {
     const clean = pathname.replace(/\/+$/, '') || '/';
@@ -402,9 +402,9 @@ export function createEngine(dataset) {
     for (const { ep, segs } of compiled) {
       if (!ep.detail) continue;
       const params = fit(segs, parts.slice(0, -1));
-      if (params) return { ep, id, params };
+      if (params && (!best || Object.keys(params).length < Object.keys(best.params).length)) best = { ep, id, params };
     }
-    return null;
+    return best;
   }
 
   function matchWrite(method, pathname) {

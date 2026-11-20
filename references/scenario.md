@@ -528,11 +528,27 @@ writes:
   - `status`: integer HTTP status `200..599`.
   - `echo: true`: echoes the created/updated row (or deleted row / request payload when no `mutate` is given). Mutually exclusive with `body` and with `204`/`205`/`304`.
   - `body`: static JSON value returned verbatim.
-- **`mutate`**: `{ entity, action, set, where }` (optional; omit for a stateless response):
+- **`mutate`**: `{ entity, action, set, where }`, or `false` for an explicitly stateless response. When omitted, the entity is **inferred** if the route is a contract endpoint (see below); otherwise the answer is stateless:
   - `entity` (required): declared entity in `world`.
   - `action`: `'create' | 'update' | 'delete'` (defaults to `create` for `POST`, `update` for `PUT`/`PATCH`, `delete` for `DELETE`).
   - `set` (for `create` and `update`): map `<field>: <scalar | "$user.<field>">` of existing fields of `entity` (`id` cannot be set). Values in `set` override incoming request body fields.
   - `where` (for `update` and `delete`): map `<field>: <scalar | [scalars] | "$user.<field>">` to select target rows alongside any bound path parameters (404 when no row matches).
+- **Inferred `mutate`**: a write without `mutate` whose route is a GET endpoint of the contract behaves as `mutate: { entity: <that endpoint's entity> }` with the default action for its method. This covers `POST <endpoint>` (create; not on `shape: object`), `PUT`/`PATCH`/`DELETE <endpoint>/:param` (update/delete through the detail route; needs `detail` on) and `PUT`/`PATCH <endpoint>` on a `shape: object` endpoint (update its row). Parameters compare by position (`:id` matches `:post_id`). Inference needs every path parameter to bind to a field of the entity. It never applies to endpoints with `pluck`, `error` or `passthrough`, or to routes that are not endpoints (`POST /api/login`, `POST /api/posts/:id/archive`): those stay stateless. The `serve` banner marks these rules `inferred from GET <path>`. Use `mutate: false` to keep an endpoint write stateless.
+
+  ```yaml
+  writes:
+    "POST /api/posts":                    # explicit: creates with kind = archived
+      expect: { status: 201, echo: true }
+      mutate: { entity: posts, set: { kind: archived } }
+    "DELETE /api/posts/:id":              # inferred: deletes from posts (GET /api/posts)
+      expect: { status: 204 }
+    "POST /api/posts/:id/preview":        # not an endpoint route: stateless
+      expect: { status: 200, body: { ok: true } }
+    "PUT /api/posts/:id":                 # endpoint route, explicitly stateless
+      expect: { status: 200 }
+      mutate: false
+  ```
+- **Response body**: `expect.body` when declared, else the resulting row(s) with `echo: true`, else `{}` (no body for `204`/`205`/`304`). In `serve`, an undeclared method on a contract route answers `405` with `Allow` and an unknown route answers `404`. Both are recorded as gaps, and their `atrezzo` payload lists `endpoints` and the declared `writes`.
 - **Determinism**: no `Math.random()` or wall clock is used. Each entity assigns sequential integer `id`s independently (`maxId + 1`), mutated rows keep only declared entity schema fields in canonical schema order (formatted like reads when a GET endpoint exists, ignoring unknown request fields), stateless `echo: true` sorts payload keys deterministically, and `GET` projections preserve deterministic sort order across mutations.
 - **Session & reset**: `serve` and MSW handlers keep mutations in memory across subsequent reads in the same session (`embed` and `counts` indexes are invalidated automatically). `POST /__atrezzo/reset` (in both `serve` and MSW handlers, plus `reset()` exported from `<scenario>.handlers.mjs`) restores the world and ID counters to their initial seeded state.
 - **Validation (scenario error, exit 3)**: rejects empty `writes`, route keys without an explicit `POST`/`PUT`/`PATCH`/`DELETE` method, duplicate write routes, unknown `mutate.entity`, unknown fields in `set`/`where`, `id` in `set`, unbound `:param` segments, `set` on `delete`, `where` on `create`, and `echo: true`/`body` with `204`. Scenarios without `writes` keep their exact behaviour and hash.

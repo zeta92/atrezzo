@@ -1280,7 +1280,47 @@ function writeParamField(name, path, spec) {
   return null;
 }
 
-function normalizeWrites(rawWrites, world, auth, authDeclared, issues) {
+/**
+ * The contract endpoint a mutate-less write targets, or null: `POST <list>`, `PUT|PATCH|DELETE <list>/:param`
+ * (the detail route) and `PUT|PATCH` on a `shape: object` endpoint. Precedence mirrors `match()`: list
+ * routes first, then `<list>/:param` detail routes (in each phase, the fewest parameters wins; ties in
+ * declaration order). Matching requires identical parameter positions so a literal write does not drop an
+ * endpoint's bound parameter, and never infers from endpoints without an entity or with `pluck`, `error` or
+ * `passthrough`.
+ */
+function writeTargetEndpoint(method, path, endpoints) {
+  const segs = path.split('/');
+  const fits = (a, b) => a.length === b.length && a.every((s, i) => s === b[i] || s.startsWith(':'));
+  const same = (a, b) => a.length === b.length && a.every((s, i) => s === b[i] || (s.startsWith(':') && b[i].startsWith(':')));
+  const eligible = (ep) => Boolean(ep.entity && !ep.pluck && !ep.error && !ep.passthrough);
+  const pickMostSpecific = (candidates, targetSegs) => {
+    let best = null;
+    for (const ep of candidates) {
+      const epSegs = ep.path.split('/');
+      if (!fits(epSegs, targetSegs)) continue;
+      const count = epSegs.reduce((n, s) => n + (s.startsWith(':') ? 1 : 0), 0);
+      if (!best || count < best.count) best = { ep, epSegs, count };
+    }
+    return best;
+  };
+
+  const listMatch = pickMostSpecific(endpoints, segs);
+  if (listMatch) {
+    const { ep, epSegs } = listMatch;
+    if (!eligible(ep) || !same(epSegs, segs)) return null;
+    if (method === 'POST' && ep.shape !== 'object') return ep;
+    if ((method === 'PUT' || method === 'PATCH') && ep.shape === 'object') return ep;
+    return null;
+  }
+
+  if (method === 'POST' || segs.length < 2 || !segs.at(-1).startsWith(':')) return null;
+  const parentSegs = segs.slice(0, -1);
+  const detailMatch = pickMostSpecific(endpoints.filter((ep) => ep.detail), parentSegs);
+  if (detailMatch && eligible(detailMatch.ep) && same(detailMatch.epSegs, parentSegs)) return detailMatch.ep;
+  return null;
+}
+
+function normalizeWrites(rawWrites, world, auth, authDeclared, issues, endpoints = []) {
   if (rawWrites === undefined) return [];
   if (!isObj(rawWrites) || !Object.keys(rawWrites).length) {
     issues.add('writes', 'must be a non-empty map "<METHOD> /path": { expect, mutate }');
@@ -1366,15 +1406,28 @@ function normalizeWrites(rawWrites, world, auth, authDeclared, issues) {
       if (hasBody) expect.body = rawRule.expect.body;
     }
 
+    // No `mutate` on a contract endpoint's route ⇒ it mutates that endpoint's entity (default action by method),
+    // as long as every path parameter binds to one of its fields. `mutate: false` keeps it stateless.
+    let rawMutate = rawRule.mutate === false ? undefined : rawRule.mutate;
+    let inferredFrom = null;
+    if (rawRule.mutate === undefined && paramNames) {
+      const ep = writeTargetEndpoint(method, path, endpoints);
+      const spec = ep && Object.hasOwn(byName, ep.entity) ? byName[ep.entity] : null;
+      if (spec && paramNames.every((p) => writeParamField(p, path, spec))) {
+        rawMutate = { entity: spec.name };
+        inferredFrom = ep.path;
+      }
+    }
+
     let mutate = null;
     const params = [];
-    if (rawRule.mutate !== undefined) {
+    if (rawMutate !== undefined) {
       const mf = `${f}.mutate`;
-      if (!isObj(rawRule.mutate)) {
-        issues.add(mf, `must be a map { entity, action, set, where }; got ${typeName(rawRule.mutate)}`);
+      if (!isObj(rawMutate)) {
+        issues.add(mf, `must be a map { entity, action, set, where } or false (stateless); got ${typeName(rawMutate)}`);
       } else {
-        issues.unknownKeys(rawRule.mutate, ['entity', 'action', 'set', 'where'], mf);
-        const entityName = rawRule.mutate.entity;
+        issues.unknownKeys(rawMutate, ['entity', 'action', 'set', 'where'], mf);
+        const entityName = rawMutate.entity;
         let spec = null;
         if (typeof entityName !== 'string' || !entityName) {
           issues.add(`${mf}.entity`, `required; a declared world entity (declared: ${Object.keys(byName).join(', ') || 'none'})`);
@@ -1385,11 +1438,11 @@ function normalizeWrites(rawWrites, world, auth, authDeclared, issues) {
         }
 
         let action = method === 'POST' ? 'create' : method === 'DELETE' ? 'delete' : 'update';
-        if (rawRule.mutate.action !== undefined) {
-          if (!WRITE_ACTIONS.includes(rawRule.mutate.action)) {
-            issues.add(`${mf}.action`, `must be ${WRITE_ACTIONS.map((a) => `"${a}"`).join(', ')}; got ${JSON.stringify(rawRule.mutate.action)}`);
+        if (rawMutate.action !== undefined) {
+          if (!WRITE_ACTIONS.includes(rawMutate.action)) {
+            issues.add(`${mf}.action`, `must be ${WRITE_ACTIONS.map((a) => `"${a}"`).join(', ')}; got ${JSON.stringify(rawMutate.action)}`);
           } else {
-            action = rawRule.mutate.action;
+            action = rawMutate.action;
           }
         }
 
@@ -1406,15 +1459,15 @@ function normalizeWrites(rawWrites, world, auth, authDeclared, issues) {
         }
 
         let set;
-        if (rawRule.mutate.set !== undefined) {
+        if (rawMutate.set !== undefined) {
           const sf = `${mf}.set`;
           if (action === 'delete') {
             issues.add(sf, '"set" cannot be used with delete');
-          } else if (!isObj(rawRule.mutate.set) || !Object.keys(rawRule.mutate.set).length) {
+          } else if (!isObj(rawMutate.set) || !Object.keys(rawMutate.set).length) {
             issues.add(sf, 'must be a non-empty map field: value');
           } else {
             set = {};
-            for (const [sk, sv] of Object.entries(rawRule.mutate.set)) {
+            for (const [sk, sv] of Object.entries(rawMutate.set)) {
               const sff = `${sf}.${sk}`;
               if (spec && !fields.includes(sk)) {
                 issues.add(sff, `field "${sk}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
@@ -1433,15 +1486,15 @@ function normalizeWrites(rawWrites, world, auth, authDeclared, issues) {
         }
 
         let where;
-        if (rawRule.mutate.where !== undefined) {
+        if (rawMutate.where !== undefined) {
           const wf = `${mf}.where`;
           if (action === 'create') {
             issues.add(wf, '"where" cannot be used with create');
-          } else if (!isObj(rawRule.mutate.where) || !Object.keys(rawRule.mutate.where).length) {
+          } else if (!isObj(rawMutate.where) || !Object.keys(rawMutate.where).length) {
             issues.add(wf, 'must be a non-empty map field: value');
           } else {
             where = {};
-            for (const [wk, wv] of Object.entries(rawRule.mutate.where)) {
+            for (const [wk, wv] of Object.entries(rawMutate.where)) {
               const wff = `${wf}.${wk}`;
               if (spec && !fields.includes(wk)) {
                 issues.add(wff, `field "${wk}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
@@ -1474,6 +1527,7 @@ function normalizeWrites(rawWrites, world, auth, authDeclared, issues) {
     const norm = { method, path, expect };
     if (params.length) norm.params = params;
     if (mutate) norm.mutate = mutate;
+    if (mutate && inferredFrom) norm.inferred = inferredFrom; // the GET endpoint the entity came from
     out.push(norm);
   }
   return out;
@@ -1586,7 +1640,7 @@ export function normalizeScenario(doc, file = '<scenario>') {
   const world = doc.world === undefined && allPassthrough ? [] : normalizeWorld(doc.world, issues);
   const auth = normalizeAuth(doc.auth, world, issues);
   const endpoints = normalizeEndpoints(doc.endpoints, world, auth, doc.auth !== undefined, issues);
-  const writes = normalizeWrites(doc.writes, world, auth, doc.auth !== undefined, issues);
+  const writes = normalizeWrites(doc.writes, world, auth, doc.auth !== undefined, issues, endpoints);
   const streams = normalizeStreams(doc.streams, endpoints, issues);
 
   let path = [];

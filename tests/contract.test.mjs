@@ -1866,3 +1866,187 @@ ${writesBlock}`;
     (e) => e instanceof AtrezzoError && /requires a top-level "auth: \{ user: \{ entity, id \} \}"/.test(e.message),
   );
 });
+
+test('writes: no mutate on a contract endpoint route ⇒ entity inferred; elsewhere or with mutate: false ⇒ stateless', () => {
+  const norm = (writesBlock, endpointsExtra = '') => normalizeScenario(parseYaml(`name: infer
+seed: 1
+world:
+  boards: 2
+  cards:
+    total: 4
+    ref: boards
+    fields: { title: string }
+  profile:
+    total: 1
+    fields: { title: string }
+endpoints:
+  - path: /api/cards
+    entity: cards
+  - path: /api/boards/:board_id/cards
+    entity: cards
+  - path: /api/profile
+    entity: profile
+    shape: object
+${endpointsExtra}writes:
+${writesBlock}`, 'i.yaml'), 'i.yaml').writes;
+
+  const w = norm(`  "POST /api/cards": { expect: { status: 201 } }
+  "PATCH /api/cards/:id": { expect: { status: 200 } }
+  "DELETE /api/cards/:id": { expect: { status: 204 } }
+  "POST /api/boards/:board_id/cards": { expect: { status: 201 } }
+  "PATCH /api/profile": { expect: { status: 200 } }
+  "POST /api/login": { expect: { status: 200 } }
+  "POST /api/cards/:id/archive": { expect: { status: 200 } }
+  "DELETE /api/cards": { expect: { status: 204 } }
+  "PUT /api/cards/:id": { expect: { status: 200 }, mutate: false }
+`);
+  const by = Object.fromEntries(w.map((x) => [`${x.method} ${x.path}`, x]));
+  assert.deepEqual(by['POST /api/cards'].mutate, { entity: 'cards', action: 'create' });
+  assert.equal(by['POST /api/cards'].inferred, '/api/cards');
+  assert.deepEqual(by['PATCH /api/cards/:id'].mutate, { entity: 'cards', action: 'update' });
+  assert.deepEqual(by['PATCH /api/cards/:id'].params, [{ name: 'id', field: 'id' }]);
+  assert.deepEqual(by['DELETE /api/cards/:id'].mutate, { entity: 'cards', action: 'delete' });
+  assert.deepEqual(by['POST /api/boards/:board_id/cards'].params, [{ name: 'board_id', field: 'board_id' }]);
+  assert.equal(by['POST /api/boards/:board_id/cards'].inferred, '/api/boards/:board_id/cards');
+  assert.deepEqual(by['PATCH /api/profile'].mutate, { entity: 'profile', action: 'update' });
+  for (const k of ['POST /api/login', 'POST /api/cards/:id/archive', 'DELETE /api/cards', 'PUT /api/cards/:id']) {
+    assert.equal(by[k].mutate, undefined, k);
+    assert.equal(by[k].inferred, undefined, k);
+  }
+  assert.deepEqual(by['PUT /api/cards/:id'].params, [{ name: 'id', field: null }]);
+
+  // the engine applies the inferred delete
+  const ds = generateWorld(normalizeScenario(parseYaml(`name: d
+seed: 1
+world:
+  cards: 3
+endpoints:
+  - path: /api/cards
+    entity: cards
+writes:
+  "DELETE /api/cards/:id": { expect: { status: 204 } }
+`, 'd.yaml'), 'd.yaml'));
+  const engine = createEngine(ds);
+  assert.equal(engine.handle({ method: 'DELETE', pathname: '/api/cards/2' }).status, 204);
+  assert.equal(engine.handle({ pathname: '/api/cards/2' }).status, 404);
+  assert.equal(engine.handle({ pathname: '/api/cards' }).body.length, 2);
+
+  assert.throws(
+    () => norm('  "POST /api/cards": { mutate: true }\n'),
+    (e) => e instanceof AtrezzoError && /must be a map \{ entity, action, set, where \} or false/.test(e.message),
+  );
+});
+
+test('writes: inference follows match() precedence on overlapping routes (list before detail, fewest params)', () => {
+  // 1. Detail route declared before a matching shape: object list route: GET and PATCH both resolve the list route.
+  const listBeatsDetail = normalizeScenario(parseYaml(`name: list-beats-detail
+seed: 1
+world:
+  boards: 2
+  board_pages:
+    total: 2
+    fields: { slug: string, title: string }
+endpoints:
+  - path: /api/boards
+    entity: boards
+  - path: /api/boards/:slug
+    entity: board_pages
+    shape: object
+    filters: { ":slug": id }
+writes:
+  "PATCH /api/boards/:id": { expect: { status: 200 } }
+  "DELETE /api/boards/:id": { expect: { status: 204 } }
+`, 'lbd.yaml'), 'lbd.yaml');
+  const lbdWrites = Object.fromEntries(listBeatsDetail.writes.map((w) => [`${w.method} ${w.path}`, w]));
+  assert.deepEqual(lbdWrites['PATCH /api/boards/:id'].mutate, { entity: 'board_pages', action: 'update' });
+  assert.equal(lbdWrites['PATCH /api/boards/:id'].inferred, '/api/boards/:slug');
+  assert.equal(lbdWrites['DELETE /api/boards/:id'].mutate, undefined);
+  const lbdEngine = createEngine(generateWorld(listBeatsDetail));
+  assert.equal(lbdEngine.match('/api/boards/1').ep.entity, 'board_pages');
+  assert.equal(lbdEngine.handle({ method: 'PATCH', pathname: '/api/boards/1', body: { title: 'Updated' } }).status, 200);
+  assert.equal(lbdEngine.handle({ pathname: '/api/boards/1' }).body.title, 'Updated');
+
+  // 2. More literal list route declared after a parameterized one: fewest params wins (including when ineligible).
+  const literalWins = normalizeScenario(parseYaml(`name: literal-wins
+seed: 1
+world:
+  posts:
+    total: 2
+    fields: { section: string, title: string }
+  board_posts:
+    total: 2
+    fields: { title: string }
+endpoints:
+  - path: /api/:section/posts
+    entity: posts
+  - path: /api/boards/posts
+    entity: board_posts
+writes:
+  "POST /api/boards/posts": { expect: { status: 201 } }
+`, 'lw.yaml'), 'lw.yaml');
+  assert.deepEqual(literalWins.writes[0].mutate, { entity: 'board_posts', action: 'create' });
+  assert.equal(literalWins.writes[0].inferred, '/api/boards/posts');
+  assert.equal(createEngine(generateWorld(literalWins)).match('/api/boards/posts').ep.entity, 'board_posts');
+
+  const literalErrorWins = normalizeScenario(parseYaml(`name: literal-error-wins
+seed: 1
+world:
+  posts:
+    total: 2
+    fields: { section: string, title: string }
+  board_posts:
+    total: 2
+    fields: { title: string }
+endpoints:
+  - path: /api/:section/posts
+    entity: posts
+  - path: /api/boards/posts
+    entity: board_posts
+    error: { status: 403 }
+writes:
+  "POST /api/boards/posts": { expect: { status: 201 } }
+`, 'lew.yaml'), 'lew.yaml');
+  assert.equal(literalErrorWins.writes[0].mutate, undefined);
+
+  // 3. Broad list route (or ineligible list route) shadows a detail route on GET ⇒ detail write stays stateless.
+  const shadowedDetail = normalizeScenario(parseYaml(`name: shadowed-detail
+seed: 1
+world:
+  boards: 2
+  pages:
+    total: 2
+    fields: { section: string, slug: string }
+endpoints:
+  - path: /api/:section/:slug
+    entity: pages
+    shape: object
+  - path: /api/boards
+    entity: boards
+writes:
+  "PATCH /api/boards/:id": { expect: { status: 200 } }
+  "DELETE /api/boards/:id": { expect: { status: 204 } }
+`, 'sd.yaml'), 'sd.yaml');
+  for (const w of shadowedDetail.writes) assert.equal(w.mutate, undefined, `${w.method} ${w.path}`);
+  assert.equal(createEngine(generateWorld(shadowedDetail)).match('/api/boards/1').ep.entity, 'pages');
+
+  // 4. Overlapping detail routes: fewest parameters wins in both match() and inference.
+  const detailLiteralWins = normalizeScenario(parseYaml(`name: detail-literal-wins
+seed: 1
+world:
+  sections:
+    total: 2
+    fields: { section: string }
+  boards: 2
+endpoints:
+  - path: /api/:section
+    entity: sections
+    filters: { ":section": section }
+  - path: /api/boards
+    entity: boards
+writes:
+  "DELETE /api/boards/:id": { expect: { status: 204 } }
+`, 'dlw.yaml'), 'dlw.yaml');
+  assert.deepEqual(detailLiteralWins.writes[0].mutate, { entity: 'boards', action: 'delete' });
+  assert.equal(detailLiteralWins.writes[0].inferred, '/api/boards');
+  assert.equal(createEngine(generateWorld(detailLiteralWins)).match('/api/boards/1').ep.entity, 'boards');
+});

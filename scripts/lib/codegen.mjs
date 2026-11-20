@@ -83,7 +83,7 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     const orderedWrites = [...dataset.writes].sort((a, b) => (a.params?.length ?? 0) - (b.params?.length ?? 0));
     for (const w of orderedWrites) {
       const notes = [`status ${w.expect.status}${w.expect.echo ? ' · echo' : ''}`];
-      if (w.mutate) notes.push(`${w.mutate.action} ${w.mutate.entity}`);
+      if (w.mutate) notes.push(`${w.mutate.action} ${w.mutate.entity}${w.inferred ? ` (inferred from GET ${w.inferred})` : ''}`);
       lines.push(`  // ${w.method} ${w.path} → ${notes.join(' · ')}`);
       lines.push(`  http.${w.method.toLowerCase()}('*${w.path}', mutate),`);
     }
