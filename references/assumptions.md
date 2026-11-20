@@ -21,13 +21,14 @@ A gap is a field where the client assumes more than the contract promises. Traff
 2. **For each read, look for the guarantee** in the contract: required? nullable? closed enum? minItems? format/precision?
 3. **Look for the guard in the client**: `?.`, `?? value`, `if (x)`, `.length ?`, `default:` in the switch, `toFixed` with explicit rounding.
 4. **Classify** each read in the matrix below.
-5. **Turn each red cell into a scenario** (or into `nulls:` on an existing one) with its assertion. Write the gap into the scenario as a comment: `# gap: customer.email can be null and the row uses it unguarded`.
+5. **Turn each red cell into a scenario** (or into `nulls:` / `empty:` on an existing one) with its assertion. Write the gap into the scenario as a comment: `# gap: customer.email can be null and the row uses it unguarded`.
 
 ## Patterns to look for
 
 | pattern | signal in the code | what the schema does not guarantee | scenario that exposes it |
 |---|---|---|---|
 | Unguarded null field | `x.field.method()`, `x.field.length`, a `{x.field}` template that renders "null" | `nullable: true` or a non-`required` field | `nulls: { field: 1 }` + row assertion |
+| Empty string treated as present | `{x.field}` rendered with no fallback, `x.field ?? 'N/A'` (does not catch `""`), `if (x.field !== null)` | `minLength: 1` | `fields: { field: { type: string, empty: 0.3 } }` + row assertion |
 | Array assumed non-empty | `items[0].`, `reduce` without an initial value, `Math.max(...arr)` | no `minItems: 1` | entity with `total: 0` (empty state) |
 | Closed enum | `switch` without `default`, an `ICONS[status]` map with no fallback, `'a' \| 'b'` types | open enum or free string | `distribution` with a new value (`under_review: 1`) |
 | Rounding | client-side sums of amounts, `toFixed(2)` after summing, `===` on decimals | precision, currency, decimal vs. float | `amount` with a range that forces cents; assertion on the rendered total |

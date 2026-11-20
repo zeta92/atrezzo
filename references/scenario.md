@@ -84,7 +84,29 @@ world:
       createdAt: date
 ```
 
-Types: `string`, `integer`, `number`, `boolean`, `date` (ISO, within `days` before `now`), `email`, `uuid`, `url`, or a list of values. With `fields`, the entity has **exactly** `id` + the fks of its `ref` + `fields` (+ the `distribution` field and the `amount` fields if you declare them): the template (`customers`, `orders`…) adds neither its own fields nor its defaults. `id` cannot be declared (always integers 1..n). Values come from a dedicated PRNG stream (`fields:<entity>`): adding `fields` to one entity does not change the others.
+Types: `string`, `integer`, `number`, `boolean`, `date` (ISO, within `days` before `now`), `email`, `uuid`, `url`, or a list of values. A field can also be written as `{ type: <type> }`, and a `string` one can add `empty:` (see below). With `fields`, the entity has **exactly** `id` + the fks of its `ref` + `fields` (+ the `distribution` field and the `amount` fields if you declare them): the template (`customers`, `orders`…) adds neither its own fields nor its defaults. `id` cannot be declared (always integers 1..n). Values come from a dedicated PRNG stream (`fields:<entity>`): adding `fields` to one entity does not change the others.
+
+##### Empty strings (`{ type: string, empty }`)
+
+A `string` field can come out as `""` in some rows, to exercise branches such as "No description available" without touching the rest of `fields`:
+
+```yaml
+world:
+  notes:
+    total: 10
+    nulls: { description: 2 }
+    fields:
+      title: string
+      description: { type: string, empty: 0.4 }   # 4 of 10 rows with ""
+      summary: { type: string, empty: true }      # every row with ""
+```
+
+- `{ type: <type> }` is the object form of a plain field: `{ type: string }` is exactly `string` (same normalized scenario, same hash).
+- `empty` (optional): a number `0..1` (share of rows: `round(empty × total)` rows get `""`) or `true` (every row). `empty: 1` = `true`; `empty: 0` = not declared. It can also go on a conditional field whose `default` is `string` (`{ default: string, when, value, empty }`).
+- The rows come from their own stream (`empty:<entity>.<field>`): the drawn values of every other field and entity stay as they were, the non-empty rows keep their value, and scenarios that do not use it keep their hash.
+- With `nulls:` on the same field, the empty rows are drawn among the rows that are not null: a row is null or `""`, never both (with `empty: true`, every non-null row is `""`). The nulls fall on the same rows as without `empty`.
+- Applied after `nulls` and before conditional fields, so a `when: { description: "" }` matches the empty rows.
+- Validation (scenario error): `empty` only on `string` fields (not `email`, `url`, `uuid`, enums or any other type), and only `0..1` or `true`.
 
 ##### Conditional field values (`{ default, when, value }`)
 

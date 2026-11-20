@@ -336,6 +336,7 @@ the two folders removes everything it wrote.
 
 ### 0.11.x
 
+- **Empty strings (`empty`)**: a `string` field in `world.<entity>.fields` can declare `{ type: string, empty: 0.4 }` (share of rows with `""`) or `empty: true` (every row), so an empty-text branch can be asserted without rewriting `fields`. Own stream (`empty:<entity>.<field>`): other fields keep their values and scenarios without it keep their hash. With `nulls:` on the same field a row is null or empty, never both. `empty` on a non-string field or outside `0..1` is a scenario error.
 - **Scopes (`scopes`)**: endpoints can declare query parameters with set semantics on a boolean field, e.g. `scopes: { is_archived: { field: archived, default: exclude, when_true: add, when_false: only } }`: `?is_archived=true` widens the list to the archived rows, `false` keeps only the others, absent answers the endpoint default. Scope parameters are never listed in `X-Atrezzo-Ignored`, combine with filters, sort and pagination (`X-Total-Count` counts the resulting set), and any value other than `true`/`false` answers `400`. Scenarios without `scopes` keep their hash.
 - **Dynamic sorting (`sorts`)**: endpoints can declare `sorts: { by, order, fields }` to resolve `order=asc|desc`, `-field`/`+field`, and `field.asc`/`field.desc` before pagination and `shape: object`; disallowed fields or invalid directions return `400`.
 - **Conditional fields (`{ default, when, value }`)**: `world.<entity>.fields` entries can override their drawn `default` deterministically when `when` matches other fields of the same row.

@@ -217,6 +217,24 @@ function parseFieldType(val, ff, issues) {
   return val;
 }
 
+/**
+ * `empty:` of a `fields` entry: share of rows with `""` (0..1) or `true` (every row). Returns the
+ * ratio (`true` ⇒ 1), 0 when absent, or 0 after reporting an issue. Only `string` fields accept it.
+ */
+function parseEmpty(val, type, ff, issues) {
+  if (val === undefined) return 0;
+  if (type !== 'string') {
+    issues.add(ff, `only string fields can be empty (this one is ${Array.isArray(type) ? 'an enum' : type})`);
+    return 0;
+  }
+  if (val === true) return 1;
+  if (typeof val !== 'number' || !Number.isFinite(val) || val < 0 || val > 1) {
+    issues.add(ff, `must be a number between 0 and 1 or true; got ${JSON.stringify(val)}`);
+    return 0;
+  }
+  return val;
+}
+
 function isScalarCompatibleWithType(v, type) {
   switch (type) {
     case 'integer': return Number.isInteger(v);
@@ -509,12 +527,24 @@ function normalizeWorld(world, issues) {
       if (!isObj(raw.fields) || !Object.keys(raw.fields).length) issues.add(`${f}.fields`, 'must be a non-empty map field: type');
       else {
         const fields = {};
+        const empty = {};
         for (const [k, type] of Object.entries(raw.fields)) {
           const ff = `${f}.fields.${k}`;
           if (k === 'id') issues.add(ff, 'atrezzo assigns the id (integers 1..n); remove it from fields');
           else if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) issues.add(ff, 'invalid field name (letters, digits, "_")');
-          else if (isObj(type)) {
-            issues.unknownKeys(type, ['default', 'when', 'value'], ff);
+          else if (isObj(type) && type.default === undefined && type.when === undefined && type.value === undefined) {
+            // Plain typed field in object form: `{ type: string, empty: 0.4 }`.
+            issues.unknownKeys(type, ['type', 'empty'], ff);
+            const parsed = type.type === undefined
+              ? (issues.add(`${ff}.type`, 'required; a field type or non-empty list of scalar values'), null)
+              : parseFieldType(type.type, `${ff}.type`, issues);
+            if (parsed !== null) {
+              fields[k] = parsed;
+              const ratio = parseEmpty(type.empty, parsed, `${ff}.empty`, issues);
+              if (ratio) empty[k] = ratio;
+            }
+          } else if (isObj(type)) {
+            issues.unknownKeys(type, ['default', 'when', 'value', 'empty'], ff);
             const def = type.default === undefined
               ? (issues.add(`${ff}.default`, 'required; a field type or non-empty list of scalar values'), null)
               : parseFieldType(type.default, `${ff}.default`, issues);
@@ -537,12 +567,18 @@ function normalizeWorld(world, issues) {
             }
             if (def !== null && when !== null && value !== null) fields[k] = { default: def, when, value };
             else if (def !== null) fields[k] = def;
+            if (def !== null) {
+              const ratio = parseEmpty(type.empty, def, `${ff}.empty`, issues);
+              if (ratio) empty[k] = ratio;
+            }
           } else {
             const parsed = parseFieldType(type, ff, issues);
             if (parsed !== null) fields[k] = parsed;
           }
         }
         spec.fields = fields;
+        // Only when some field can be empty: a scenario without it keeps its normalized form (and its hash).
+        if (Object.keys(empty).length) spec.empty = empty;
       }
     }
     if (raw.values !== undefined) {

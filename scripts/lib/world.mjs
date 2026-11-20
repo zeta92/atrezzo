@@ -261,6 +261,15 @@ function generateEntity(spec, scenario, counts, built) {
     nulled.set(field, new Set(indices));
   }
 
+  // Empty strings ("fields: { description: { type: string, empty: 0.4 } }"): round(ratio * total)
+  // rows get "", drawn from their own stream (empty:<entity>.<field>) among the rows not set to
+  // null, so a row is null or empty, never both. `empty: true` (ratio 1) empties every non-null row.
+  for (const [field, ratio] of Object.entries(spec.empty || {})) {
+    const eligible = rows.map((_, i) => i).filter((i) => !nulled.get(field)?.has(i));
+    const k = Math.min(Math.round(ratio * n), eligible.length);
+    for (const j of createRng(scenario.seed, `empty:${spec.name}.${field}`).sample(eligible.length, k)) rows[eligible[j]][field] = '';
+  }
+
   // Conditional field overrides: applied after normal field assignment (and nulls on other fields)
   // in topological order, preserving explicit nulls on the target field itself.
   if (spec.fields) {
