@@ -28,6 +28,7 @@ endpoints:
     pagination: { param_limit: limit, param_offset: offset, default_limit: 50, max_limit: 100 }
     sort: -created_at                 # or a list: [status, -amount]; default id
     sorts: { by: sort_by, order: order_by, fields: [id, status, created_at] }   # optional dynamic sort
+    scopes: { is_archived: archived } # optional: ?is_archived=true widens the set to archived rows (needs a boolean field)
     include: [customers]              # embeds the parent as "customer"
     shape: array                      # array (default) | envelope → { data, total, limit, offset } | object → first row
     detail: true                      # also generates /api/orders/:id (default true)
@@ -184,7 +185,7 @@ Generator guarantees:
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (declared in `world`; optional when `passthrough` is set), `filters` (existing fields for query filters, `{ <field>: "$user.<field>" }` for seeded-user filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `counts` (child count fields `{ <name>: { entity, on } }`), `shape` (`array` default, `envelope`, `object`), `envelope` (custom response keys `{ items, total, page, per_page }` when `shape: envelope`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error), `passthrough` (serve a frozen fixture `{ fixture, patch }` with dot-path overrides).
+`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (declared in `world`; optional when `passthrough` is set), `filters` (existing fields for query filters, `{ <field>: "$user.<field>" }` for seeded-user filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `scopes` (query parameters that pick the set of rows by a boolean field), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `counts` (child count fields `{ <name>: { entity, on } }`), `shape` (`array` default, `envelope`, `object`), `envelope` (custom response keys `{ items, total, page, per_page }` when `shape: envelope`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error), `passthrough` (serve a frozen fixture `{ fixture, patch }` with dot-path overrides).
 
 - Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
 - `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` or `envelope` uses `data`). A single key, no nested paths.
@@ -241,6 +242,47 @@ endpoints:
 - **`fields`** (required, non-empty list): allowed fields of the entity. Declared `by`/`order` parameters are consumed by sorting (not listed in `X-Atrezzo-Ignored`), and sorting runs **before** pagination and `shape: object`.
 - **No silent errors**: in the scenario, an unknown entity field in `fields`, missing/empty `fields`, duplicate field, `by == order`, or collision with `filters`/`pagination` is a scenario error (exit 3). At request time, a field outside `fields`, an invalid direction (anything other than `asc`/`desc`), or a conflicting direction (`?sort_by=-id&order_by=asc`) answers `400 { error: ... }`.
 - Without `sorts:`, behaviour and scenario hashes are unchanged (client sort parameters stay in `X-Atrezzo-Ignored`).
+
+#### Scopes (`scopes`)
+
+Some parameters do not filter rows by a value: they choose **which set** the list is drawn from. `?is_archived=true` usually means "include the archived rows too", not "only the archived rows". A filter cannot say that, so `scopes` declares those parameters explicitly:
+
+```yaml
+world:
+  widgets:
+    total: 30
+    fields: { name: string, finish: [matte, gloss], archived: boolean }
+endpoints:
+  - path: /api/widgets
+    entity: widgets
+    filters: [finish]
+    scopes:
+      is_archived:                 # query parameter name
+        field: archived            # boolean field of the entity (required)
+        default: exclude           # without the parameter: exclude (hide rows with archived: true) | include (every row)
+        when_true: add             # ?is_archived=true:  add (default set + rows with archived: true) | only (just those rows)
+        when_false: only           # ?is_archived=false: only (just rows with archived ≠ true) | add (default set + those rows)
+  - path: /api/widgets-all
+    entity: widgets
+    scopes: { is_archived: archived }   # short form: same as { field: archived } with the defaults above
+```
+
+With the defaults (`exclude` / `add` / `only`):
+
+| request | rows |
+|---|---|
+| `/api/widgets` | the endpoint default: rows whose `archived` is not `true` |
+| `/api/widgets?is_archived=true` | the set widens: every row, archived or not |
+| `/api/widgets?is_archived=false` | only rows whose `archived` is not `true` |
+| `/api/widgets?is_archived=maybe` | `400 { error: "\"is_archived\" must be \"true\" or \"false\"; got \"maybe\"" }` |
+
+- **Not a filter**: a declared scope parameter is consumed by the engine and never listed in `X-Atrezzo-Ignored`. `null` and `false` both count as "not `true`".
+- **Values**: `true` or `false` (case-insensitive). An empty value (`?is_archived=`) is the same as absent. Anything else, or the parameter repeated with different values, answers `400`.
+- **Combines**: the scope runs together with path parameters, world/user filters and query filters (intersection), then `sort`/`sorts`, pagination, `shape: object` and `head=true`. `X-Total-Count`, `Content-Range` and envelope `total` count the resulting set before pagination.
+- **Lists only**: the detail route (`/api/widgets/:id`) is not scoped; an archived row is still reachable by id.
+- **Runtimes**: `serve` and MSW run the same engine; Prism documents the parameter as `enum: [true, false]`; WireMock pre-computes `?param=true` and `?param=false`.
+- **Validation (scenario error, exit 3)**: `field` must exist and be a boolean (`fields: { archived: boolean }`, or a `values:`/enum list of booleans); `default` must be `exclude`/`include`, `when_true`/`when_false` must be `add`/`only`; unknown keys are rejected; the parameter name cannot collide with a declared filter, a pagination or sort parameter, `select` or `head`.
+- Without `scopes:`, behaviour and scenario hashes are unchanged (the parameter stays in `X-Atrezzo-Ignored`).
 
 #### World-resolved filters (`filters: { <fk>: { from, where } }`)
 
@@ -499,7 +541,7 @@ endpoints:
 - Only `serve` waits: the MSW handlers ignore `latency` (wrap them with MSW's own `delay()` if you need it there). The data never changes with the latency.
 
 Projection semantics (identical in `serve` and the MSW handlers, same `runtime.mjs` file):
-1. World-resolved filters (`{ from, where }`) and query equality filters; a comma means any of the values; `null` matches nulls.
+1. Scopes (`scopes`), world-resolved filters (`{ from, where }`) and query equality filters; a comma means any of the values; `null` matches nulls.
 2. Sorted by `sorts` query parameters when declared and sent (else the endpoint's `sort`), nulls last, ties broken by original position (stable).
 3. `X-Total-Count` = total after filters, before pagination.
 4. `limit` above the total ⇒ everything; out-of-range `offset` ⇒ `[]`; non-integer values ⇒ 400.

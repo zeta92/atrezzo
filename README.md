@@ -160,6 +160,7 @@ Full syntax and validation rules live in [`references/scenario.md`](references/s
     tier_level: { default: [2], when: { locked: true }, value: [0] }
   ```
 - **World-resolved filters and seeded session user (`auth`, `$user.<field>`)**: filter rows on a condition in another entity without exposing a query parameter (`filters: { source_id: { from: sources, where: { active: true } } }`), or bind endpoints and writes to a seeded user (`auth: { user: { entity: accounts, id: 2 } }` with `filters: { id: "$user.id" }`).
+- **Scopes (`scopes`)**: declare `scopes: { is_archived: archived }` on an endpoint so `?is_archived=true` includes the archived rows (the set widens) and `false` excludes them, instead of the parameter being ignored; other values answer `400`.
 - **Dynamic sorting (`sorts`)**: declare `sorts: { by: sort_by, order: order_by, fields: [id, status, created_at] }` on an endpoint to accept `order=asc|desc`, `-field`/`+field`, and `field.asc`/`field.desc` before pagination; disallowed fields or invalid directions answer `400`.
 - **Declarative envelopes (`envelope`) and child counts (`counts`)**: on `shape: envelope`, rename response keys including dot-paths (`envelope: { items: records, total: meta.total, page: meta.page, per_page: per_page }`). Add `counts: { items: { entity: items, on: cabinet_id } }` on an entity or endpoint to project exact world-computed child counts (`items_count`, or any declared key name) unaffected by pagination.
 - **Business writes (`writes`) and SSE streams (`streams`)**: declare root `writes:` (`POST`, `PUT`, `PATCH`, `DELETE` with `expect` and `mutate`) so `serve` and MSW handlers update the in-memory world for subsequent reads until `POST /__atrezzo/reset`. Declare root `streams:` (`"/api/ticks": { interval: 1000, events: [...], loop: true }`) so `serve` emits `text/event-stream` updates cleanly.
@@ -241,7 +242,7 @@ The scenario does not depend on where it is served. `world` always writes the wo
 
 | adapter | picked when the repo has | does | does not |
 |---|---|---|---|
-| `builtin` | nothing more specific; any backend or language | real HTTP via `atrezzo serve`: filters, `sorts`, pagination, `counts`, custom `envelope`, detail routes, `writes`, SSE `streams`, `passthrough`, `error`, `latency`, scenario reset, hot reload, gap log | undeclared writes (405), business logic, or RLS |
+| `builtin` | nothing more specific; any backend or language | real HTTP via `atrezzo serve`: filters, `sorts`, `scopes`, pagination, `counts`, custom `envelope`, detail routes, `writes`, SSE `streams`, `passthrough`, `error`, `latency`, scenario reset, hot reload, gap log | undeclared writes (405), business logic, or RLS |
 | `msw` | `msw` in dependencies | handlers that run the same engine as `serve` (including `writes` and `passthrough`) in the browser or in Node tests | install `msw` or register the worker for you; serve SSE `streams`; record gaps |
 | `supabase` | `supabase/config.toml`, `@supabase/supabase-js`, `supabase/` | `schema.sql`, `seed.sql` with the world's ids, and an idempotent `reset.sh` that refuses a non-local database | simulate RLS or auth; filtering and pagination are PostgREST's, not atrezzo's |
 | `prism` | `@stoplight/prism-cli` (a spec alone is not enough) | an OpenAPI 3.1 file whose schemas and examples (`scenario`, filter examples, `passthrough`, `error`) come from the world | filter or paginate: any query gets the default example |
@@ -335,6 +336,7 @@ the two folders removes everything it wrote.
 
 ### 0.11.x
 
+- **Scopes (`scopes`)**: endpoints can declare query parameters with set semantics on a boolean field, e.g. `scopes: { is_archived: { field: archived, default: exclude, when_true: add, when_false: only } }`: `?is_archived=true` widens the list to the archived rows, `false` keeps only the others, absent answers the endpoint default. Scope parameters are never listed in `X-Atrezzo-Ignored`, combine with filters, sort and pagination (`X-Total-Count` counts the resulting set), and any value other than `true`/`false` answers `400`. Scenarios without `scopes` keep their hash.
 - **Dynamic sorting (`sorts`)**: endpoints can declare `sorts: { by, order, fields }` to resolve `order=asc|desc`, `-field`/`+field`, and `field.asc`/`field.desc` before pagination and `shape: object`; disallowed fields or invalid directions return `400`.
 - **Conditional fields (`{ default, when, value }`)**: `world.<entity>.fields` entries can override their drawn `default` deterministically when `when` matches other fields of the same row.
 - **World-resolved filters (`filters: { <fk>: { from, where } }`)**: endpoints filter by a condition on a referenced entity in `world` without exposing a query parameter.

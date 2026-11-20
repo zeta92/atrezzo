@@ -60,6 +60,7 @@ export function combinations(ep, dataset, requests = []) {
     for (const v of distinct) add({ [f]: v }, `filter ${f}`);
     if (hasNull) add({ [f]: 'null' }, `filter ${f}`);
   }
+  for (const s of ep.scopes ?? []) for (const v of ['true', 'false']) add({ [s.param]: v }, `scope ${s.param}`);
   if (ep.pagination) {
     const pg = ep.pagination;
     const sizes = [...new Set([pg.defaultLimit, pg.maxLimit].filter((x) => x !== null))];
@@ -78,6 +79,7 @@ export function combinations(ep, dataset, requests = []) {
     ...ep.filters,
     ...(ep.pagination ? [ep.pagination.limit, ep.pagination.page ?? ep.pagination.offset] : []),
     ...(ep.sorts ? [ep.sorts.by, ...(ep.sorts.order ? [ep.sorts.order] : [])] : []),
+    ...(ep.scopes ?? []).map((s) => s.param),
   ]);
   for (const r of requests) {
     const u = new URL(r, 'http://x');

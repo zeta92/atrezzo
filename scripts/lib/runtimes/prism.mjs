@@ -152,6 +152,14 @@ export function openapiDocument(dataset, config) {
         parameters.push({ name: ep.sorts.order, in: 'query', required: false, schema: { type: 'string', enum: ['asc', 'desc'] } });
       }
     }
+    for (const s of ep.scopes ?? []) {
+      const set = (a, v) => (a === 'only' ? `only rows with ${s.field} = ${v}` : `adds the rows with ${s.field} = ${v}`);
+      parameters.push({
+        name: s.param, in: 'query', required: false,
+        description: `Scope on ${s.field}: true ${set(s.when_true, true)}, false ${set(s.when_false, false)}; absent ${s.default === 'include' ? 'keeps every row' : `hides rows with ${s.field} = true`}.`,
+        schema: { type: 'string', enum: ['true', 'false'] },
+      });
+    }
     const item = itemSchema(ep, dataset, names);
     const list = { type: 'array', items: item };
     let schema;

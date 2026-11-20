@@ -78,6 +78,29 @@ function resolveSort(ep, params, scenario) {
   return { sort: out };
 }
 
+/**
+ * Scopes (`ep.scopes`): each declared parameter picks a SET of rows by a boolean field, it does not
+ * filter by a value. Without the parameter the set is `default` (`exclude` hides rows whose field is
+ * true, `include` keeps every row); `?p=true|false` either adds the rows with that value to the
+ * default set (`add`) or keeps only them (`only`). Returns one predicate per sent scope, or `{ error }`.
+ */
+function resolveScopes(ep, params) {
+  const preds = [];
+  for (const s of ep.scopes ?? []) {
+    const sent = params.getAll(s.param).filter((v) => v !== '').map((v) => v.toLowerCase());
+    const bad = sent.find((v) => v !== 'true' && v !== 'false');
+    if (bad !== undefined) return { error: `"${s.param}" must be "true" or "false"; got "${params.getAll(s.param).find((v) => v.toLowerCase() === bad)}"` };
+    if (new Set(sent).size > 1) return { error: `conflicting values for "${s.param}": ${params.getAll(s.param).join(', ')}` };
+    const inDefault = (r) => s.default === 'include' || r[s.field] !== true;
+    if (!sent.length) { preds.push(inDefault); continue; }
+    const want = sent[0] === 'true';
+    const action = want ? s.when_true : s.when_false;
+    const hasValue = (r) => (r[s.field] === true) === want;
+    preds.push(action === 'only' ? hasValue : (r) => inDefault(r) || hasValue(r));
+  }
+  return { preds };
+}
+
 // PostgREST operator prefixes: `eq.`, `neq.`, `gt.`, `gte.`, `lt.`, `lte.`, `like.`, `ilike.`,
 // `is.` (null/true/false) and `in.(a,b,c)`. A value with no prefix is an equality, and a
 // comma-separated list is still an OR of equalities (`?status=issue,pending`).
@@ -640,8 +663,12 @@ export function createEngine(dataset) {
     const reserved = [
       ...(ep.pagination ? [ep.pagination.limit, ep.pagination.page ?? ep.pagination.offset] : []),
       ...(ep.sorts ? [ep.sorts.by, ...(ep.sorts.order ? [ep.sorts.order] : [])] : []),
+      ...(ep.scopes ?? []).map((s) => s.param),
     ];
+    const scopeRes = resolveScopes(ep, params);
+    if (scopeRes.error) return json(400, { error: scopeRes.error });
     let result = byUserFilters(byWorldFilters(rows, ep), ep);
+    if (scopeRes.preds.length) result = result.filter((r) => scopeRes.preds.every((p) => p(r)));
     for (const [key, raw] of params) {
       if (reserved.includes(key)) continue;
       if (ep.filters.includes(key)) result = result.filter((r) => matchesFilter(r[key], raw));
