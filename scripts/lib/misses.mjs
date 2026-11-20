@@ -198,6 +198,7 @@ export function coveringScenarios(scenarios, path, method = 'GET') {
       if ((sc.writes ?? []).some((w) => w.method === method && fits(w.path, parts))) out.push(sc.name);
       continue;
     }
+    if ((sc.streams ?? []).some((s) => fits(s.path, parts))) { out.push(sc.name); continue; }
     for (const ep of sc.endpoints) {
       const detail = ep.detail !== false && parts.length > 1 && fits(ep.path, parts.slice(0, -1));
       if (fits(ep.path, parts) || detail) { out.push(sc.name); break; }

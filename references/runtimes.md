@@ -41,7 +41,7 @@ In a monorepo the signals of the root, the front end and the backend add up (e.g
 
 ### builtin (`atrezzo serve`)
 
-- **Does**: serves the projections over HTTP (`GET /api/x?filter=&limit=&offset=`, `/:id` detail, envelopes, `X-Total-Count`) and declared `writes` (`POST`/`PUT`/`PATCH`/`DELETE` against the in-memory world), switches or resets scenarios without restarting (`POST /__atrezzo/reset {"scenario":"x"}`), rereads the YAML (`POST /__atrezzo/reload`), serves static files with `--static`, and records gaps (`atrezzo misses`).
+- **Does**: serves the projections over HTTP (`GET /api/x?filter=&limit=&offset=`, `/:id` detail, envelopes, `X-Total-Count`), declared `writes` (`POST`/`PUT`/`PATCH`/`DELETE` against the in-memory world), and declared SSE `streams` (`Content-Type: text/event-stream`), switches or resets scenarios without restarting (`POST /__atrezzo/reset {"scenario":"x"}`), rereads the YAML (`POST /__atrezzo/reload`), serves static files with `--static`, and records gaps (`atrezzo misses`).
 - **Does not**: undeclared writes (405, recorded as a gap), injected latency or errors.
 - **Start**: `atrezzo serve --scenario orders --port 4010`.
 

@@ -202,6 +202,9 @@ function cmdWorld({ pos, flags }) {
     }
     out(`  ${w.method} ${w.path}  ${bits.join(' · ')}`);
   }
+  for (const s of scenario.streams ?? []) {
+    out(`  SSE ${s.path}  (interval: ${s.interval} ms · ${s.events.length} ${s.events.length === 1 ? 'event' : 'events'}${s.loop ? ' · loop' : ''})`);
+  }
   out('Written:');
   for (const f of Object.values(files)) out(`  ${relative(process.cwd(), f) || f}`);
   for (const e of emitted) {
@@ -256,6 +259,9 @@ async function cmdServe({ flags }) {
     const notes = [`→ ${w.expect.status}`];
     if (w.mutate) notes.push(`${w.mutate.action} ${w.mutate.entity}`);
     out(`  ${w.method} ${w.path}  (${notes.join(' · ')})`);
+  }
+  for (const s of d.streams ?? []) {
+    out(`  SSE ${s.path}  (interval ${s.interval} ms · ${s.events.length} ${s.events.length === 1 ? 'event' : 'events'}${s.loop ? ' · loop' : ''})`);
   }
   const errors = d.endpoints.filter((e) => e.error);
   if (errors.length) out(`  errors: ${errors.length} ${errors.length === 1 ? 'endpoint answers' : 'endpoints answer'} the error the scenario declares, whatever the world holds (${errors.map((e) => `${e.path} → ${e.error.status}`).join(', ')})`);

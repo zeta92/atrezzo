@@ -1412,9 +1412,73 @@ function normalizeWrites(rawWrites, world, auth, authDeclared, issues) {
   return out;
 }
 
+// ---------- streams ----------
+
+function normalizeStreams(rawStreams, issues) {
+  if (rawStreams === undefined) return [];
+  if (!isObj(rawStreams) || !Object.keys(rawStreams).length) {
+    issues.add('streams', 'must be a non-empty map "/path": { interval, events, loop }');
+    return [];
+  }
+  const seen = new Set();
+  const out = [];
+  for (const [rawPath, rawCfg] of Object.entries(rawStreams)) {
+    const f = `streams[${rawPath}]`;
+    if (!rawPath.startsWith('/')) {
+      issues.add(f, `path ${JSON.stringify(rawPath)} must start with "/"`);
+      continue;
+    }
+    if (/[?#\s]/.test(rawPath)) {
+      issues.add(f, `path ${JSON.stringify(rawPath)} must not contain whitespace, query or fragment`);
+      continue;
+    }
+    const path = rawPath.replace(/\/+$/, '') || '/';
+    if (seen.has(path)) {
+      issues.add(f, `duplicate stream path "${path}"`);
+      continue;
+    }
+    seen.add(path);
+
+    if (!isObj(rawCfg)) {
+      issues.add(f, `must be a map { interval, events, loop }; got ${typeName(rawCfg)}`);
+      continue;
+    }
+    issues.unknownKeys(rawCfg, ['interval', 'events', 'loop'], f);
+
+    let intervalOk = false;
+    if (rawCfg.interval === undefined) {
+      issues.add(`${f}.interval`, 'required; integer > 0 (milliseconds)');
+    } else if (!isInt(rawCfg.interval) || rawCfg.interval <= 0) {
+      issues.add(`${f}.interval`, `must be an integer > 0 (milliseconds); got ${JSON.stringify(rawCfg.interval)}`);
+    } else {
+      intervalOk = true;
+    }
+
+    let eventsOk = false;
+    if (!Array.isArray(rawCfg.events) || !rawCfg.events.length) {
+      issues.add(`${f}.events`, 'required; must be a non-empty list with at least one event');
+    } else if (rawCfg.events.some((ev) => ev === undefined)) {
+      issues.add(`${f}.events`, 'every event must be a JSON-serializable value');
+    } else {
+      eventsOk = true;
+    }
+
+    let loop = false;
+    if (rawCfg.loop !== undefined) {
+      if (typeof rawCfg.loop !== 'boolean') issues.add(`${f}.loop`, 'must be true or false');
+      else loop = rawCfg.loop;
+    }
+
+    if (intervalOk && eventsOk) {
+      out.push({ path, interval: rawCfg.interval, events: rawCfg.events, loop });
+    }
+  }
+  return out;
+}
+
 // ---------- scenario ----------
 
-const SCENARIO_KEYS = ['name', 'description', 'seed', 'now', 'auth', 'world', 'endpoints', 'writes', 'entry', 'path', 'expect'];
+const SCENARIO_KEYS = ['name', 'description', 'seed', 'now', 'auth', 'world', 'endpoints', 'writes', 'streams', 'entry', 'path', 'expect'];
 
 export function normalizeScenario(doc, file = '<scenario>') {
   const issues = new Issues();
@@ -1432,6 +1496,7 @@ export function normalizeScenario(doc, file = '<scenario>') {
   const auth = normalizeAuth(doc.auth, world, issues);
   const endpoints = normalizeEndpoints(doc.endpoints, world, auth, doc.auth !== undefined, issues);
   const writes = normalizeWrites(doc.writes, world, auth, doc.auth !== undefined, issues);
+  const streams = normalizeStreams(doc.streams, issues);
 
   let path = [];
   if (doc.path !== undefined) {
@@ -1460,6 +1525,7 @@ export function normalizeScenario(doc, file = '<scenario>') {
   const out = { name: doc.name, description: doc.description ?? null, seed: doc.seed, now, world, endpoints, entry, path, expect };
   if (auth) out.auth = auth; // only when declared: keeps scenario hashes stable
   if (writes.length) out.writes = writes; // same: absent unless declared
+  if (streams.length) out.streams = streams; // same: absent unless declared
   return out;
 }
 

@@ -343,6 +343,7 @@ export function generateWorld(scenario) {
   };
   if (scenario.auth) dataset.auth = scenario.auth;
   if (scenario.writes?.length) dataset.writes = scenario.writes;
+  if (scenario.streams?.length) dataset.streams = scenario.streams;
   return dataset;
 }
 
