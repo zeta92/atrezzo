@@ -130,11 +130,18 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
   };
   let state = buildState(pick(scenario), fixturesDir);
 
-  const send = (res, status, body, headers = {}) => {
-    // body null = no body (a count-only answer); everything else that is not text goes out as JSON.
-    const payload = body === null ? '' : typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body);
+  const send = (res, status, body, headers = {}, hasBody = body !== null) => {
+    // hasBody false (or body null without hasBody) = no body (e.g. a count-only answer); text/binary goes verbatim, JSON values go through JSON.stringify.
+    const isJsonCt = /\bjson\b|\+json/i.test(headers['content-type'] ?? '');
+    const payload = !hasBody
+      ? ''
+      : Buffer.isBuffer(body)
+        ? body
+        : typeof body === 'string' && !isJsonCt
+          ? body
+          : JSON.stringify(body);
     res.writeHead(status, { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-total-count, content-range, x-atrezzo-scenario, x-atrezzo-ignored, x-atrezzo-stub, x-atrezzo-error', 'cache-control': 'no-store', ...headers });
-    res.end(res.req.method === 'HEAD' ? undefined : payload);
+    res.end(!hasBody || res.req.method === 'HEAD' ? undefined : payload);
   };
 
   const JSON_CT = { 'content-type': 'application/json; charset=utf-8' };
@@ -291,7 +298,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
       if (r) {
         if (misses.resolve(req.method, url.pathname)) log(`gap ${missKey(req.method, url.pathname)} resolved`);
         log(`${req.method} ${url.pathname}${safeSearch(url.searchParams)} → ${r.status}`);
-        return send(res, r.status, r.body, r.headers);
+        return send(res, r.status, r.body, r.headers, r.hasBody ?? r.body !== null);
       }
       if (staticDir && (req.method === 'GET' || req.method === 'HEAD')) {
         const root = resolve(staticDir);

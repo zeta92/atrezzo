@@ -68,7 +68,7 @@ export function cloneJson(value) {
   return value;
 }
 
-/** Read and validate `<fixturesDir>/<fixtureName>.json` (only `status`, `contentType`, `body`). */
+/** Read and validate `<fixturesDir>/<fixtureName>.json` (`status`, `contentType`, `hasBody`, `body`). */
 export function loadFixture(fixturesDir, fixtureName, endpointPath = '<endpoint>') {
   const filePath = fixtureFilePath(fixturesDir, fixtureName);
   let text;
@@ -97,18 +97,28 @@ export function loadFixture(fixturesDir, fixtureName, endpointPath = '<endpoint>
   if (!Number.isInteger(doc.status) || doc.status < 100 || doc.status > 599) {
     throw new AtrezzoError(`passthrough fixture "${fixtureName}" (${filePath}): "status" must be an integer HTTP status (100..599)`, { exitCode: EXIT.INVALID });
   }
-  if (!Object.hasOwn(doc, 'body')) {
+  if (Object.hasOwn(doc, 'hasBody') && typeof doc.hasBody !== 'boolean') {
+    throw new AtrezzoError(`passthrough fixture "${fixtureName}" (${filePath}): "hasBody" must be a boolean`, { exitCode: EXIT.INVALID });
+  }
+  const explicitHasBody = Object.hasOwn(doc, 'hasBody') ? doc.hasBody : undefined;
+  if (explicitHasBody !== false && !Object.hasOwn(doc, 'body')) {
     throw new AtrezzoError(`passthrough fixture "${fixtureName}" (${filePath}): missing "body" field`, { exitCode: EXIT.INVALID });
+  }
+  if (explicitHasBody === false && Object.hasOwn(doc, 'body') && doc.body !== null) {
+    throw new AtrezzoError(`passthrough fixture "${fixtureName}" (${filePath}): "hasBody: false" cannot be combined with a non-null "body"`, { exitCode: EXIT.INVALID });
   }
   const ct = doc.contentType ?? doc['content-type'] ?? null;
   if (ct !== null && typeof ct !== 'string') {
     throw new AtrezzoError(`passthrough fixture "${fixtureName}" (${filePath}): "contentType" must be a string`, { exitCode: EXIT.INVALID });
   }
+  const hasBody = explicitHasBody ?? (doc.body !== null);
+  const body = hasBody ? doc.body : null;
 
   return {
     status: doc.status,
-    contentType: ct ?? (typeof doc.body === 'string' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8'),
-    body: doc.body,
+    contentType: ct ?? (typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8'),
+    hasBody,
+    body,
   };
 }
 
@@ -203,7 +213,7 @@ export function applyPatch(body, patch, { endpointPath = '<endpoint>', fixtureNa
 
 /**
  * Resolve all `ep.passthrough` declarations in a normalized scenario against disk fixtures
- * and return a map `{ [ep.path]: { status, contentType, body } }`.
+ * and return a map `{ [ep.path]: { status, contentType, hasBody, body } }`.
  */
 export function resolvePassthroughs(scenario, { scenarioFile = null, fixturesDir = null } = {}) {
   const passthroughEndpoints = (scenario.endpoints ?? []).filter((ep) => ep.passthrough);
@@ -220,6 +230,7 @@ export function resolvePassthroughs(scenario, { scenarioFile = null, fixturesDir
     resolved[ep.path] = {
       status: fixture.status,
       contentType: fixture.contentType,
+      hasBody: fixture.hasBody,
       body,
     };
   }

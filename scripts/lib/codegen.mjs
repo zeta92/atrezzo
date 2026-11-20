@@ -33,7 +33,7 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     '  const url = new URL(request.url);',
     '  const res = engine.handle({ method: request.method, pathname: url.pathname, query: url.searchParams, headers: request.headers });',
     '  if (!res) return undefined; // not ours: MSW moves on to the next handler',
-    '  if (res.body === null) return new HttpResponse(null, { status: res.status, headers: res.headers }); // count only',
+    '  if (res.hasBody === false || (res.hasBody === undefined && res.body === null)) return new HttpResponse(null, { status: res.status, headers: res.headers }); // count only or empty body',
     "  if (typeof res.body === 'string' && !/\\bjson\\b|\\+json/i.test(res.headers['content-type'] ?? '')) return new HttpResponse(res.body, { status: res.status, headers: res.headers });",
     '  return HttpResponse.json(res.body, { status: res.status, headers: res.headers });',
     '}',
@@ -53,7 +53,7 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
       '  }',
       '  const res = engine.handle({ method: request.method, pathname: url.pathname, query: url.searchParams, headers: request.headers, body });',
       '  if (!res) return undefined;',
-      '  if (res.body === null) return new HttpResponse(null, { status: res.status, headers: res.headers });',
+      '  if (res.hasBody === false || (res.hasBody === undefined && res.body === null)) return new HttpResponse(null, { status: res.status, headers: res.headers });',
       '  return HttpResponse.json(res.body, { status: res.status, headers: res.headers });',
       '}',
     );

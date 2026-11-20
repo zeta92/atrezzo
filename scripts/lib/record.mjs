@@ -42,7 +42,7 @@ export function defaultFixtureName(endpointPath) {
 }
 
 /**
- * Capture a real response from `url` and save `{ status, contentType, body }`
+ * Capture a real response from `url` and save `{ status, contentType, hasBody, body }`
  * (zero request/response secret headers) to `atrezzo/fixtures/<name>.json`.
  */
 export async function recordEndpoint({
@@ -121,9 +121,10 @@ export async function recordEndpoint({
   const status = res.status;
   const rawCt = res.headers?.get?.('content-type') ?? null;
   const rawText = await res.text();
+  const hasBody = rawText !== '';
 
   let body;
-  if (rawText === '') {
+  if (!hasBody) {
     body = null;
   } else if (rawCt && JSON_CT.test(rawCt)) {
     try {
@@ -141,8 +142,8 @@ export async function recordEndpoint({
   }
 
   const contentType = rawCt ?? (typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8');
-  // Persist ONLY status, contentType, and body: no request/response headers, cookies, or tokens.
-  const fixturePayload = { status, contentType, body };
+  // Persist ONLY status, contentType, hasBody, and body: no request/response headers, cookies, or tokens.
+  const fixturePayload = { status, contentType, hasBody, body };
 
   mkdirSync(dirname(outFile), { recursive: true });
   writeFileSync(outFile, `${JSON.stringify(fixturePayload, null, 2)}\n`);

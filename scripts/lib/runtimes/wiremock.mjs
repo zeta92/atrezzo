@@ -123,10 +123,13 @@ export function emit({ dataset, config, dir = '.', requests = [] }) {
       const pt = dataset.passthrough?.[ep.path];
       if (!pt) continue;
       const base = slug(ep.path);
+      const hasBody = pt.hasBody ?? (pt.body !== null);
       const ext = typeof pt.body === 'string' && !/\bjson\b|\+json/i.test(pt.contentType ?? '') ? 'txt' : 'json';
       const bodyFile = p(dataset.scenario, base, `passthrough.${ext}`);
-      const content = ext === 'json' ? json(pt.body) : pt.body;
-      files.push({ path: p(root, '__files', bodyFile), content });
+      if (hasBody) {
+        const content = ext === 'json' ? json(pt.body) : pt.body;
+        files.push({ path: p(root, '__files', bodyFile), content });
+      }
       const escaped = ep.path.split('/').map((seg) => (seg.startsWith(':') ? '[^/]+' : seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))).join('/');
       const mapping = {
         name: `${ep.path} (passthrough ${ep.passthrough.fixture})`,
@@ -135,7 +138,7 @@ export function emit({ dataset, config, dir = '.', requests = [] }) {
         response: {
           status: pt.status,
           headers: { 'content-type': pt.contentType ?? 'application/json; charset=utf-8', 'x-atrezzo-scenario': dataset.scenario },
-          ...(pt.body === null ? {} : { bodyFileName: bodyFile }),
+          ...(hasBody ? { bodyFileName: bodyFile } : {}),
         },
       };
       stubs += 1;

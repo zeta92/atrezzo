@@ -9,6 +9,8 @@ import { parseYaml } from '../scripts/lib/yaml.mjs';
 import { generateWorld, scenarioHash } from '../scripts/lib/world.mjs';
 import { createMockServer } from '../scripts/lib/serve.mjs';
 import { recordEndpoint } from '../scripts/lib/record.mjs';
+import { getAdapter } from '../scripts/lib/runtimes/index.mjs';
+import { DEFAULT_CONFIG } from '../scripts/lib/config.mjs';
 import { AtrezzoError, EXIT } from '../scripts/lib/errors.mjs';
 import { SCENARIO, tmpProject, cli, cliAsync } from './helpers.mjs';
 import { request, postJson } from './helpers/http.mjs';
@@ -289,9 +291,10 @@ endpoints:
     const fixturePath = join(dir, 'atrezzo/fixtures/market-cap.json');
     assert.ok(existsSync(fixturePath));
     const saved = JSON.parse(readFileSync(fixturePath, 'utf8'));
-    assert.deepEqual(Object.keys(saved), ['status', 'contentType', 'body']);
+    assert.deepEqual(Object.keys(saved), ['status', 'contentType', 'hasBody', 'body']);
     assert.equal(saved.status, 200);
     assert.equal(saved.contentType, 'application/json; charset=utf-8');
+    assert.equal(saved.hasBody, true);
     assert.deepEqual(saved.body, MARKET_FIXTURE.body);
 
     const rawSaved = readFileSync(fixturePath, 'utf8');
@@ -351,7 +354,7 @@ endpoints:
     );
     assert.equal(ok.code, 0, ok.stderr);
     const saved = JSON.parse(readFileSync(join(dir, 'atrezzo/fixtures/api-health.json'), 'utf8'));
-    assert.deepEqual(saved, { status: 206, contentType: 'text/plain; charset=utf-8', body: 'plain-text-payload' });
+    assert.deepEqual(saved, { status: 206, contentType: 'text/plain; charset=utf-8', hasBody: true, body: 'plain-text-payload' });
 
     const updated = loadScenario(join(dir, 'atrezzo/scenarios/demo.yaml'), { fixturesDir: join(dir, 'atrezzo/fixtures') });
     const ep = updated.endpoints.find((e) => e.path === '/api/health');
@@ -400,4 +403,182 @@ export const HttpResponse = Object.assign(
 
   const doc = cli(['doctor'], dir);
   assert.equal(doc.code, 0, doc.stdout);
+});
+
+test('atrezzo record and playback distinguish JSON null from empty/bodiless responses across serve, MSW, WireMock and Prism', async () => {
+  const upstream = await startUpstream((req, res) => {
+    if (req.url === '/nullable') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      res.end('null');
+      return;
+    }
+    if (req.url === '/empty-200') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      res.end();
+      return;
+    }
+    if (req.url === '/no-content') {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    if (req.url === '/json-string') {
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify('hello'));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+
+  const dir = tmpProject({
+    'atrezzo/scenarios/edge.yaml': `name: edge
+seed: 1
+endpoints:
+  - path: /api/nullable
+    passthrough:
+      fixture: nullable
+  - path: /api/empty-200
+    passthrough:
+      fixture: empty-200
+  - path: /api/no-content
+    passthrough:
+      fixture: no-content
+  - path: /api/json-string
+    passthrough:
+      fixture: json-string
+`,
+  });
+
+  try {
+    for (const [ep, upPath] of [
+      ['/api/nullable', '/nullable'],
+      ['/api/empty-200', '/empty-200'],
+      ['/api/no-content', '/no-content'],
+      ['/api/json-string', '/json-string'],
+    ]) {
+      const rec = await cliAsync(
+        ['record', `${upstream.url}${upPath}`, '--scenario', 'atrezzo/scenarios/edge.yaml', '--endpoint', ep],
+        dir,
+      );
+      assert.equal(rec.code, 0, rec.stderr);
+    }
+
+    const nullableFix = JSON.parse(readFileSync(join(dir, 'atrezzo/fixtures/nullable.json'), 'utf8'));
+    const empty200Fix = JSON.parse(readFileSync(join(dir, 'atrezzo/fixtures/empty-200.json'), 'utf8'));
+    const noContentFix = JSON.parse(readFileSync(join(dir, 'atrezzo/fixtures/no-content.json'), 'utf8'));
+    const jsonStringFix = JSON.parse(readFileSync(join(dir, 'atrezzo/fixtures/json-string.json'), 'utf8'));
+
+    assert.deepEqual(nullableFix, { status: 200, contentType: 'application/json; charset=utf-8', hasBody: true, body: null });
+    assert.deepEqual(empty200Fix, { status: 200, contentType: 'application/json; charset=utf-8', hasBody: false, body: null });
+    assert.deepEqual(noContentFix, { status: 204, contentType: 'application/json; charset=utf-8', hasBody: false, body: null });
+    assert.deepEqual(jsonStringFix, { status: 200, contentType: 'application/json; charset=utf-8', hasBody: true, body: 'hello' });
+
+    // Serve over HTTP preserves exact bodies
+    const srv = createMockServer({
+      scenariosDir: join(dir, 'atrezzo/scenarios'),
+      fixturesDir: join(dir, 'atrezzo/fixtures'),
+      scenario: 'edge',
+    });
+    const base = `http://127.0.0.1:${(await srv.listen(0)).port}`;
+    try {
+      const rNull = await request(`${base}/api/nullable`);
+      assert.equal(rNull.status, 200);
+      assert.equal(rNull.headers.get('content-type'), 'application/json; charset=utf-8');
+      assert.equal(rNull.text, 'null');
+      assert.equal(JSON.parse(rNull.text), null);
+
+      const rEmpty = await request(`${base}/api/empty-200`);
+      assert.equal(rEmpty.status, 200);
+      assert.equal(rEmpty.text, '');
+
+      const r204 = await request(`${base}/api/no-content`);
+      assert.equal(r204.status, 204);
+      assert.equal(r204.text, '');
+
+      const rJsonStr = await request(`${base}/api/json-string`);
+      assert.equal(rJsonStr.status, 200);
+      assert.equal(rJsonStr.text, '"hello"');
+      assert.equal(JSON.parse(rJsonStr.text), 'hello');
+    } finally {
+      await srv.close();
+    }
+
+    // MSW handlers distinguish bodiless new HttpResponse(null) vs HttpResponse.json(null)
+    const w = cli(['world', 'atrezzo/scenarios/edge.yaml'], dir);
+    assert.equal(w.code, 0, w.stderr);
+    mkdirSync(join(dir, 'node_modules/msw'), { recursive: true });
+    writeFileSync(join(dir, 'node_modules/msw/package.json'), JSON.stringify({ name: 'msw', type: 'module', exports: './index.js' }));
+    writeFileSync(join(dir, 'node_modules/msw/index.js'), `
+export const http = { get: (path, resolver) => ({ method: 'GET', path, resolver }) };
+export class HttpResponse {
+  constructor(body, init) { this.kind = 'raw'; this.body = body; Object.assign(this, init); }
+  static json(body, init) { return { kind: 'json', body, ...init }; }
+}
+`);
+    const mod = await import(pathToFileURL(join(dir, 'atrezzo/.generated/edge.handlers.mjs')).href);
+    const callMsw = (p) => mod.handlers.find((h) => h.path === `*${p}`).resolver({ request: new Request(`http://localhost${p}`) });
+
+    const mswNull = callMsw('/api/nullable');
+    assert.equal(mswNull.kind, 'json');
+    assert.equal(mswNull.body, null);
+
+    const mswEmpty = callMsw('/api/empty-200');
+    assert.equal(mswEmpty.kind, 'raw');
+    assert.equal(mswEmpty.body, null);
+
+    const msw204 = callMsw('/api/no-content');
+    assert.equal(msw204.kind, 'raw');
+    assert.equal(msw204.body, null);
+
+    const mswStr = callMsw('/api/json-string');
+    assert.equal(mswStr.kind, 'json');
+    assert.equal(mswStr.body, 'hello');
+
+    // WireMock & Prism preserve JSON null vs bodiless
+    const sc = loadScenario(join(dir, 'atrezzo/scenarios/edge.yaml'), { fixturesDir: join(dir, 'atrezzo/fixtures') });
+    const ds = generateWorld(sc);
+    const cfg = { ...DEFAULT_CONFIG, _dir: dir };
+
+    const wm = getAdapter('wiremock').emit({ dataset: ds, config: cfg, requests: [] });
+    const wmFiles = Object.fromEntries(wm.files.map((f) => [f.path, f.content]));
+    const nullMapping = JSON.parse(wmFiles['atrezzo/.generated/wiremock/edge/mappings/api-nullable.json']).mappings[0];
+    assert.equal(nullMapping.response.bodyFileName, 'edge/api-nullable/passthrough.json');
+    assert.equal(wmFiles['atrezzo/.generated/wiremock/edge/__files/edge/api-nullable/passthrough.json'], 'null\n');
+
+    const emptyMapping = JSON.parse(wmFiles['atrezzo/.generated/wiremock/edge/mappings/api-empty-200.json']).mappings[0];
+    assert.equal(emptyMapping.response.bodyFileName, undefined);
+    assert.equal(wmFiles['atrezzo/.generated/wiremock/edge/__files/edge/api-empty-200/passthrough.json'], undefined);
+
+    const prismOut = getAdapter('prism').emit({ dataset: ds, config: cfg });
+    const oas = parseYaml(prismOut.files[0].content);
+    assert.equal(oas.paths['/api/nullable'].get.responses['200'].content['application/json'].examples.scenario.value, null);
+    assert.equal(oas.paths['/api/empty-200'].get.responses['200'].content, undefined);
+  } finally {
+    await upstream.close();
+  }
+});
+
+test('fixture validation: rejects invalid hasBody values or hasBody: false with non-null body', () => {
+  for (const [label, fixtureObj, expectedRe] of [
+    ['non-boolean hasBody', { status: 200, contentType: 'application/json', hasBody: 'yes', body: null }, /"hasBody" must be a boolean/],
+    ['hasBody false with non-null body', { status: 200, contentType: 'application/json', hasBody: false, body: { a: 1 } }, /"hasBody: false" cannot be combined/],
+    ['hasBody true without body', { status: 200, contentType: 'application/json', hasBody: true }, /missing "body" field/],
+  ]) {
+    const dir = tmpProject({
+      'atrezzo/scenarios/bad-fix.yaml': `name: bad-fix
+seed: 1
+endpoints:
+  - path: /api/x
+    passthrough:
+      fixture: x
+`,
+      'atrezzo/fixtures/x.json': JSON.stringify(fixtureObj),
+    });
+    assert.throws(
+      () => loadScenario(join(dir, 'atrezzo/scenarios/bad-fix.yaml'), { fixturesDir: join(dir, 'atrezzo/fixtures') }),
+      (err) => err instanceof AtrezzoError && err.exitCode === EXIT.INVALID && expectedRe.test(err.message),
+      label,
+    );
+  }
 });

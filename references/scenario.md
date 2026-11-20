@@ -448,7 +448,7 @@ endpoints:
         "items.0.locked": true
 ```
 
-- **No secrets saved**: `atrezzo record` discards all request headers and all response headers (cookies, auth tokens, tracking headers, query tokens); `atrezzo/fixtures/<name>.json` stores **only** `{ status, contentType, body }`.
+- **No secrets saved**: `atrezzo record` discards all request headers and all response headers (cookies, auth tokens, tracking headers, query tokens); `atrezzo/fixtures/<name>.json` stores **only** `{ status, contentType, hasBody, body }` (`hasBody` distinguishes JSON `null` from an empty/bodiless response).
 - **Byte-for-byte preservation**: `serve` (and generated MSW handlers) respond with the recorded `status`, `contentType`, and `body` with only the declared `patch` paths modified, keeping every other key, order, array element, and value intact.
 - **`entity` and `world` optional**: when `passthrough` is set, `entity` is optional on the endpoint, and `world` is optional at the root if every endpoint uses `passthrough`. `detail` defaults to `false` and cannot be `true`; `passthrough` cannot be combined with `error`.
 - **Validation (exit 3)**: a missing fixture file or any `patch` path whose key, nested segment, or array index does not exist in the fixture body fails loudly in `loadScenario`, `world`, `serve`, and `doctor` (never silently creates missing paths). `POST /__atrezzo/reload` picks up edited fixtures and patches without restarting `serve`.

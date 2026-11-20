@@ -104,11 +104,12 @@ export function openapiDocument(dataset, config) {
       const oasPath = ep.path.replace(/\/:([A-Za-z_]\w*)/g, '/{$1}');
       const parameters = (ep.params ?? []).map((prm) => ({ name: prm.name, in: 'path', required: true, description: 'Passthrough path parameter.', schema: { type: 'string' } }));
       const pt = dataset.passthrough?.[ep.path];
+      const hasBody = pt ? (pt.hasBody ?? (pt.body !== null)) : false;
       const op = slug(ep.path).replace(/[.-]/g, '_');
       const mime = (pt?.contentType ?? 'application/json').split(';')[0].trim() || 'application/json';
       const resp = {
         description: `Passthrough fixture "${ep.passthrough.fixture}"`,
-        ...(pt && pt.body !== null ? { content: { [mime]: { schema: {}, examples: { scenario: { summary: `Fixture ${ep.passthrough.fixture}`, value: pt.body } } } } } : {}),
+        ...(hasBody ? { content: { [mime]: { schema: {}, examples: { scenario: { summary: `Fixture ${ep.passthrough.fixture}`, value: pt.body } } } } } : {}),
       };
       paths[oasPath] = { get: { operationId: `list_${op}`, summary: `${ep.path} (atrezzo passthrough)`, parameters, responses: { [pt?.status ?? 200]: resp } } };
       continue;
