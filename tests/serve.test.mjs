@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { createMockServer } from '../scripts/lib/serve.mjs';
 import { SCENARIO, SMALL, tmpProject } from './helpers.mjs';
-import { request } from './helpers/http.mjs';
+import { request, getJson as httpGetJson, postJson, del } from './helpers/http.mjs';
 
 let mock; let url;
 before(async () => {
@@ -119,5 +119,106 @@ test('SPA fallback: an HTML navigation gets index.html; JSON, unknown API paths,
   } finally {
     await spa.close();
     await bare.close();
+  }
+});
+
+// ---------- Business writes over HTTP (`serve` + `POST /__atrezzo/reset`) ----------
+
+const WRITES_YAML = `name: tienda-writes
+seed: 7712
+now: 2025-03-01T09:00:00Z
+world:
+  customers: 3
+  orders:
+    total: 5
+    distribution: { paid: 3, pending: 1, issue: 1 }
+    amount: { min: 20, max: 500, currency: EUR }
+endpoints:
+  - path: /api/orders
+    entity: orders
+    filters: [status, customer_id]
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: id
+  - path: /api/customers
+    entity: customers
+    counts:
+      orders: { entity: orders, on: customer_id }
+writes:
+  "POST /api/orders":
+    expect: { status: 201, echo: true }
+    mutate: { entity: orders, set: { status: "nuevo" } }
+  "PATCH /api/orders/:id":
+    expect: { status: 200, echo: true }
+    mutate: { entity: orders, set: { status: "enviado" } }
+  "DELETE /api/orders/:id":
+    expect: { status: 204 }
+    mutate: { entity: orders }
+`;
+
+test('serve writes: POST creates, PATCH updates, DELETE removes, state updates, and POST /__atrezzo/reset restores', async () => {
+  const dir = tmpProject({ 'scenarios/tienda-writes.yaml': WRITES_YAML });
+  const srv = createMockServer({ scenariosDir: join(dir, 'scenarios'), scenario: 'tienda-writes' });
+  const base = `http://127.0.0.1:${(await srv.listen(0)).port}`;
+  try {
+    const initialState = (await httpGetJson(`${base}/__atrezzo/state`)).body;
+    assert.equal(initialState.counts.orders, 5);
+    assert.deepEqual(initialState.writes, ['POST /api/orders', 'PATCH /api/orders/:id', 'DELETE /api/orders/:id']);
+
+    // POST creates order #6 with status "nuevo"
+    const created = await postJson(`${base}/api/orders`, JSON.stringify({ customer_id: 1, amount: 85 }));
+    assert.equal(created.status, 201);
+    assert.equal(created.body.id, 6);
+    assert.equal(created.body.status, 'nuevo');
+    assert.equal(created.body.amount, 85);
+
+    // Subsequent GET reads and /__atrezzo/state see the new order
+    const nuevoList = await httpGetJson(`${base}/api/orders?status=nuevo`);
+    assert.equal(nuevoList.status, 200);
+    assert.equal(nuevoList.body.length, 1);
+    assert.equal(nuevoList.body[0].id, 6);
+    assert.equal((await httpGetJson(`${base}/api/orders/6`)).body.status, 'nuevo');
+    assert.equal((await httpGetJson(`${base}/__atrezzo/state`)).body.counts.orders, 6);
+
+    // Determinism: key arrival order in POST JSON produces identical response body
+    const rA = await postJson(`${base}/api/orders`, JSON.stringify({ amount: 12, customer_id: 2 }));
+    await del(`${base}/api/orders/${rA.body.id}`);
+    await fetch(`${base}/__atrezzo/reset`, { method: 'POST' });
+    await postJson(`${base}/api/orders`, JSON.stringify({ customer_id: 1, amount: 85 }));
+    const rB = await postJson(`${base}/api/orders`, JSON.stringify({ customer_id: 2, amount: 12 }));
+    assert.equal(JSON.stringify(rA.body), JSON.stringify(rB.body));
+
+    // PATCH changes order #6
+    const patchRes = await fetch(`${base}/api/orders/6`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ amount: 199 }),
+    });
+    assert.equal(patchRes.status, 200);
+    const patched = await patchRes.json();
+    assert.equal(patched.status, 'enviado');
+    assert.equal(patched.amount, 199);
+    assert.equal((await httpGetJson(`${base}/api/orders/6`)).body.status, 'enviado');
+
+    // DELETE removes order #6
+    const delRes = await fetch(`${base}/api/orders/6`, { method: 'DELETE' });
+    assert.equal(delRes.status, 204);
+    assert.equal(await delRes.text(), '');
+    assert.equal((await httpGetJson(`${base}/api/orders/6`)).status, 404);
+    assert.equal((await httpGetJson(`${base}/__atrezzo/state`)).body.counts.orders, 6);
+
+    // POST /__atrezzo/reset (with empty body) restores the initial world
+    const resetRes = await postJson(`${base}/__atrezzo/reset`);
+    assert.equal(resetRes.status, 200);
+    assert.equal(resetRes.body.counts.orders, 5);
+    assert.equal((await httpGetJson(`${base}/api/orders?status=nuevo`)).body.length, 0);
+    assert.equal((await httpGetJson(`${base}/api/orders/6`)).status, 404);
+    assert.equal((await httpGetJson(`${base}/api/orders`)).body.length, 5);
+
+    // Invalid JSON body on POST returns 400
+    const badJson = await postJson(`${base}/api/orders`, '{invalid');
+    assert.equal(badJson.status, 400);
+    assert.match(badJson.body.error, /invalid JSON body/);
+  } finally {
+    await srv.close();
   }
 });

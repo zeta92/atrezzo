@@ -342,6 +342,7 @@ export function generateWorld(scenario) {
     entities,
   };
   if (scenario.auth) dataset.auth = scenario.auth;
+  if (scenario.writes?.length) dataset.writes = scenario.writes;
   return dataset;
 }
 

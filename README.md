@@ -210,7 +210,7 @@ The scenario does not depend on where it is served. `world` always writes the wo
 
 | adapter | picked when the repo has | does | does not |
 |---|---|---|---|
-| `builtin` | nothing more specific; any backend or language | real HTTP via `atrezzo serve`: filters, pagination, envelopes, detail routes, scenario reset, hot reload, gap log | writes (405), injected latency or errors |
+| `builtin` | nothing more specific; any backend or language | real HTTP via `atrezzo serve`: filters, pagination, envelopes, detail routes, declared `writes`, scenario reset, hot reload, gap log | undeclared writes (405), injected latency or errors |
 | `msw` | `msw` in dependencies | handlers that run the same engine as `serve`, in the browser or in Node tests | install msw or register the worker for you; record gaps |
 | `supabase` | `supabase/config.toml`, `@supabase/supabase-js`, `supabase/` | `schema.sql`, `seed.sql` with the world's ids, and an idempotent `reset.sh` that refuses a non-local database | simulate RLS or auth; filtering and pagination are PostgREST's, not atrezzo's |
 | `prism` | `@stoplight/prism-cli` (a spec alone is not enough) | an OpenAPI 3.1 file whose examples come from the world | filter or paginate: any query gets the default example |
@@ -230,7 +230,7 @@ MSW handlers then go to the front end, and the Supabase seed goes to the backend
 
 <h2><img src="https://raw.githubusercontent.com/zeta92/atrezzo/media/assets/readme/section-05-limits.png" width="100%" alt="05 Limits"></h2>
 
-- **Reads only.** The mock shapes data. It does not implement business rules: no writes (they return 405), no recomputed totals, no RLS. HTTP errors are not part of the world; inject them in the runtime. Latency is timing, not data: `serve --latency <ms>` or a per-endpoint `latency:` delays contract responses without changing what they contain.
+- **Declarative writes.** Without `writes:`, the mock projects reads only (undeclared writes return 405/404). When a scenario declares `writes:`, `serve` and the MSW handlers mutate the in-memory world for subsequent reads in the same session, and `POST /__atrezzo/reset` restores the initial state. The mock still does not recompute totals, enforce RLS, or infer writes in `import`/`harvest`. Latency is timing, not data: `serve --latency <ms>` or a per-endpoint `latency:` delays contract responses without changing what they contain.
 - **Only `builtin` and `msw` run the projection.** Prism returns examples without filtering or paginating. WireMock serves pre-generated combinations and answers 501 to the rest. Supabase responses take PostgREST's shape.
 - **Gaps are recorded by `atrezzo serve` only**, not by MSW, Prism, WireMock or Supabase. The same route under two prefixes (`/api/users`, `/users`) counts as two gaps. Nested routes such as `/api/customers/:id/orders` are recorded but not projected.
 - **`import` covers GET collections only:** an array of objects, or a `data`/`items`/`results`/`records`/`content` envelope. Nested fields are skipped and reported. Ids are always integers 1..n. No external `$ref`.
@@ -300,6 +300,10 @@ the two folders removes everything it wrote.
 
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
+
+### 0.20.0
+
+**Business writes against the in-memory world (`writes`).** A scenario can now declare a root `writes:` map keyed by `"<METHOD> /path"` (`POST`, `PUT`, `PATCH`, `DELETE`) with `expect: { status, echo, body }` and `mutate: { entity, action, set, where }` so submit-driven UI states work end-to-end. Both `atrezzo serve` and the generated MSW handlers (`http.post`/`put`/`patch`/`delete`, plus `POST /__atrezzo/reset` and `reset()`) apply mutations to the in-memory world, invalidate child count/embed caches, respond with the declared status and deterministic canonicalized body (independent of request key arrival order or cross-entity order), and expose the updated state to subsequent reads in the same session until `POST /__atrezzo/reset` restores the initial world. Validation rejects routes without an explicit write method, unknown entities, unknown `set`/`where` fields, unbound path parameters, and conflicting `expect` options with exit `3`; scenarios without `writes` keep their exact behaviour and hash. Documented in `references/scenario.md` and `references/runtimes.md`, covered in `tests/contract.test.mjs`, `tests/serve.test.mjs`, and `tests/codegen.test.mjs`.
 
 ### 0.19.0
 

@@ -184,8 +184,8 @@ export function findInSpec(spec, method, path) {
   return best;
 }
 
-/** Endpoint paths of scenarios on disk that would serve this gap (with list + detail). */
-export function coveringScenarios(scenarios, path) {
+/** Endpoint paths of scenarios on disk that would serve this gap (with list + detail, plus writes). */
+export function coveringScenarios(scenarios, path, method = 'GET') {
   // A `:name` segment of an endpoint path covers any segment of the gap (`:id` included).
   const fits = (pattern, parts) => {
     const segs = pattern.split('/');
@@ -194,6 +194,10 @@ export function coveringScenarios(scenarios, path) {
   const parts = path.split('/');
   const out = [];
   for (const sc of scenarios) {
+    if (isMutation(method)) {
+      if ((sc.writes ?? []).some((w) => w.method === method && fits(w.path, parts))) out.push(sc.name);
+      continue;
+    }
     for (const ep of sc.endpoints) {
       const detail = ep.detail !== false && parts.length > 1 && fits(ep.path, parts.slice(0, -1));
       if (fits(ep.path, parts) || detail) { out.push(sc.name); break; }
@@ -204,9 +208,9 @@ export function coveringScenarios(scenarios, path) {
 
 /** One suggestion per unresolved gap. */
 export function hintFor(miss, { spec = null, contract = null, scenarios = [] } = {}) {
-  if (isMutation(miss.method)) return 'mutation: atrezzo only projects reads → serve --on-miss stub (or leave it unresolved)';
-  const covering = coveringScenarios(scenarios, miss.path);
+  const covering = coveringScenarios(scenarios, miss.path, miss.method);
   if (covering.length) return `already declared by scenario ${covering.join(', ')} → atrezzo world + POST /__atrezzo/reload (or restart serve)`;
+  if (isMutation(miss.method)) return 'mutation: declare it under writes: in the scenario, or use serve --on-miss stub (or leave it unresolved)';
   if (spec) {
     const hit = findInSpec(spec, miss.method, miss.path);
     if (hit?.method) return `the contract has it (${miss.method} ${hit.path}) → atrezzo import ${contract}`;

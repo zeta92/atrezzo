@@ -197,12 +197,47 @@ function formatEnvelope(ep, page, total, limit, offset, pageNum) {
   return body;
 }
 
+function cloneRows(rows) {
+  return (rows ?? []).map((r) => ({ ...r }));
+}
+
+function cloneEntities(entities) {
+  const out = {};
+  for (const [k, rows] of Object.entries(entities ?? {})) out[k] = cloneRows(rows);
+  return out;
+}
+
+function canonicalValue(v) {
+  if (Array.isArray(v)) return v.map(canonicalValue);
+  if (v && typeof v === 'object') {
+    const out = {};
+    for (const k of Object.keys(v).sort()) out[k] = canonicalValue(v[k]);
+    return out;
+  }
+  return v;
+}
+
 export function createEngine(dataset) {
+  const initialEntities = cloneEntities(dataset.entities);
+  const workingEntities = cloneEntities(initialEntities);
+  const liveDataset = { ...dataset, entities: workingEntities };
   const routes = dataset.endpoints.map((ep) => ({ ...ep }));
+  const writeRoutes = (dataset.writes ?? []).map((w) => ({ ...w }));
   const authUser = dataset.auth?.user ?? null;
-  const currentUser = authUser
-    ? (dataset.entities[authUser.entity] ?? []).find((r) => r.id === authUser.id) ?? null
-    : null;
+  const getCurrentUser = () => (authUser
+    ? (workingEntities[authUser.entity] ?? []).find((r) => r.id === authUser.id) ?? null
+    : null);
+
+  const nextIds = new Map();
+  function initNextIds() {
+    nextIds.clear();
+    for (const [name, rows] of Object.entries(workingEntities)) {
+      let max = 0;
+      for (const r of rows) if (typeof r.id === 'number' && r.id > max) max = r.id;
+      nextIds.set(name, max + 1);
+    }
+  }
+  initNextIds();
 
   /**
    * Counted relations asked in `select`: [{ key, byParent }] for every `child(count)` whose child
@@ -220,7 +255,7 @@ export function createEngine(dataset) {
       const fk = meta ? Object.keys(meta.refs).find((k) => meta.refs[k] === ep.entity) : undefined;
       if (fk === undefined) { honoured = false; continue; }
       const byParent = new Map();
-      for (const r of dataset.entities[m[2]]) if (r[fk] !== null && r[fk] !== undefined) byParent.set(r[fk], (byParent.get(r[fk]) ?? 0) + 1);
+      for (const r of workingEntities[m[2]]) if (r[fk] !== null && r[fk] !== undefined) byParent.set(r[fk], (byParent.get(r[fk]) ?? 0) + 1);
       counts.push({ key: m[1] ?? m[2], byParent });
     }
     return { counts, honoured };
@@ -237,13 +272,13 @@ export function createEngine(dataset) {
     const meta = dataset.schema[ep.entity];
     for (const [fk, target] of Object.entries(meta.refs)) {
       if (!ep.include.includes(target)) continue;
-      const parent = dataset.entities[target].find((r) => r.id === row[fk]) ?? null;
+      const parent = workingEntities[target].find((r) => r.id === row[fk]) ?? null;
       out[dataset.schema[target].singular] = parent ? { ...parent } : null;
     }
     return out;
   }
 
-  // Child rows per parent id, for `embed`: built once per (child, parent) pair on first use.
+  // Child rows per parent id, for `embed`: built on demand per (child, parent) pair and cleared on mutation/reset.
   const childIndex = new Map();
   function childrenOf(child, parent) {
     const key = `${child}>${parent}`;
@@ -251,7 +286,7 @@ export function createEngine(dataset) {
       const meta = dataset.schema[child];
       const fk = Object.keys(meta.refs).find((k) => meta.refs[k] === parent);
       const byParent = new Map();
-      for (const r of dataset.entities[child]) {
+      for (const r of workingEntities[child]) {
         if (r[fk] === null || r[fk] === undefined) continue;
         if (!byParent.has(r[fk])) byParent.set(r[fk], []);
         byParent.get(r[fk]).push(r);
@@ -274,19 +309,32 @@ export function createEngine(dataset) {
     return row;
   }
 
-  // Child counts per parent id, for declarative `ep.counts`: built once per (entity, fk) pair.
+  // Child counts per parent id, for declarative `ep.counts`: built on demand per (entity, fk) pair and cleared on mutation/reset.
   const rowCountIndex = new Map();
   function rowCountMap(entity, fk) {
     const key = `${entity}:${fk}`;
     if (!rowCountIndex.has(key)) {
       const byParent = new Map();
-      for (const r of dataset.entities[entity] ?? []) {
+      for (const r of workingEntities[entity] ?? []) {
         const v = r[fk];
         if (v !== null && v !== undefined) byParent.set(v, (byParent.get(v) ?? 0) + 1);
       }
       rowCountIndex.set(key, byParent);
     }
     return rowCountIndex.get(key);
+  }
+
+  function invalidateIndexes() {
+    childIndex.clear();
+    rowCountIndex.clear();
+  }
+
+  function reset() {
+    for (const [k, rows] of Object.entries(initialEntities)) {
+      workingEntities[k].splice(0, workingEntities[k].length, ...cloneRows(rows));
+    }
+    initNextIds();
+    invalidateIndexes();
   }
 
   function withRowCounts(row, ep) {
@@ -319,6 +367,7 @@ export function createEngine(dataset) {
 
   // Path segments per route; a `:name` segment captures one segment of the request.
   const compiled = routes.map((ep) => ({ ep, segs: ep.path.split('/') }));
+  const compiledWrites = writeRoutes.map((w) => ({ w, segs: w.path.split('/') }));
 
   /** Captured parameters when `parts` fits `segs` segment by segment, else null. */
   function fit(segs, parts) {
@@ -358,6 +407,30 @@ export function createEngine(dataset) {
     return null;
   }
 
+  function matchWrite(method, pathname) {
+    const clean = pathname.replace(/\/+$/, '') || '/';
+    const parts = clean.split('/');
+    const upper = method.toUpperCase();
+    let best = null;
+    for (const { w, segs } of compiledWrites) {
+      if (w.method !== upper) continue;
+      const params = fit(segs, parts);
+      if (params && (!best || Object.keys(params).length < Object.keys(best.params).length)) best = { w, params };
+    }
+    return best;
+  }
+
+  function allowedMethods(pathname) {
+    const clean = pathname.replace(/\/+$/, '') || '/';
+    const parts = clean.split('/');
+    const methods = [];
+    if (match(clean)) methods.push('GET');
+    for (const { w, segs } of compiledWrites) {
+      if (fit(segs, parts) && !methods.includes(w.method)) methods.push(w.method);
+    }
+    return methods;
+  }
+
   /** Rows the path parameters allow: each bound parameter is an equality on its field (null = any). */
   function byParams(rows, ep, params) {
     const bound = (ep.params ?? []).filter((p) => p.field !== null);
@@ -367,8 +440,9 @@ export function createEngine(dataset) {
 
   function matchesWhereValue(actual, expected) {
     if (typeof expected === 'string' && expected.startsWith('$user.')) {
-      if (!currentUser) return false;
-      const val = currentUser[expected.slice(6)];
+      const curUser = getCurrentUser();
+      if (!curUser) return false;
+      const val = curUser[expected.slice(6)];
       return val !== null && val !== undefined && actual === val;
     }
     return actual === expected;
@@ -388,7 +462,7 @@ export function createEngine(dataset) {
     let out = rows;
     for (const wf of ep.worldFilters) {
       const allowedIds = new Set();
-      for (const target of dataset.entities[wf.from] ?? []) {
+      for (const target of workingEntities[wf.from] ?? []) {
         if (matchesWhere(target, wf.where)) allowedIds.add(target.id);
       }
       out = out.filter((r) => r[wf.field] !== null && r[wf.field] !== undefined && allowedIds.has(r[wf.field]));
@@ -399,35 +473,142 @@ export function createEngine(dataset) {
   /** Rows matching `$user.<field>` filters resolved from the seeded auth user (no query param). */
   function byUserFilters(rows, ep) {
     if (!ep.userFilters?.length) return rows;
-    if (!currentUser) return [];
+    const curUser = getCurrentUser();
+    if (!curUser) return [];
     let out = rows;
     for (const uf of ep.userFilters) {
-      const expected = currentUser[uf.userField];
+      const expected = curUser[uf.userField];
       if (expected === null || expected === undefined) return [];
       out = out.filter((r) => r[uf.field] === expected);
     }
     return out;
   }
 
+  function handleWrite(wMatch, pathname, body) {
+    const { w, params } = wMatch;
+    if (body !== undefined && body !== null && (typeof body !== 'object' || Array.isArray(body))) {
+      return json(400, { error: 'request body must be a JSON object' });
+    }
+    const payload = body && typeof body === 'object' ? body : {};
+    const status = w.expect.status;
+    const respond = (defaultBody) => {
+      if (w.expect.body !== undefined) return json(status, w.expect.body === null ? null : JSON.parse(JSON.stringify(w.expect.body)));
+      if (w.expect.echo) return json(status, defaultBody);
+      return json(status, status === 204 || status === 205 || status === 304 ? null : {});
+    };
+
+    if (!w.mutate) return respond(canonicalValue(payload));
+
+    const { entity, action, set, where: whereCond } = w.mutate;
+    const rows = workingEntities[entity];
+    const curUser = getCurrentUser();
+    const resolveVal = (v) => (typeof v === 'string' && v.startsWith('$user.') ? (curUser ? (curUser[v.slice(6)] ?? null) : null) : v);
+    const coerceParam = (field, rawVal) => {
+      const meta = dataset.schema[entity];
+      const isNum = field === 'id' || Object.hasOwn(meta?.refs ?? {}, field) || rows.some((r) => typeof r[field] === 'number');
+      if (isNum && /^-?\d+$/.test(rawVal)) return Number.parseInt(rawVal, 10);
+      return rawVal;
+    };
+    const buildRow = (rawRow) => {
+      const fields = dataset.schema[entity]?.fields ?? [];
+      const out = {};
+      for (const f of fields) {
+        if (Object.hasOwn(rawRow, f)) out[f] = canonicalValue(rawRow[f]);
+      }
+      for (const k of Object.keys(rawRow).sort()) {
+        if (!Object.hasOwn(out, k)) out[k] = canonicalValue(rawRow[k]);
+      }
+      return out;
+    };
+
+    if (action === 'create') {
+      const raw = {};
+      for (const [k, v] of Object.entries(payload)) {
+        if (k !== 'id') raw[k] = v;
+      }
+      for (const p of w.params ?? []) {
+        if (p.field !== null) raw[p.field] = coerceParam(p.field, params[p.name]);
+      }
+      for (const [k, v] of Object.entries(set ?? {})) raw[k] = resolveVal(v);
+      const id = nextIds.get(entity) ?? 1;
+      nextIds.set(entity, id + 1);
+      raw.id = id;
+      const created = buildRow(raw);
+      rows.push(created);
+      invalidateIndexes();
+      return respond({ ...created });
+    }
+
+    const bound = (w.params ?? []).filter((p) => p.field !== null);
+    let indices = [];
+    if (!bound.length && !whereCond && payload.id === undefined) {
+      if (match(pathname)?.ep.shape === 'object') {
+        if (rows.length) indices = [0];
+      } else {
+        return json(400, { error: `cannot identify which "${entity}" row to ${action} (declare ":id" in the path, "where", or send "id" in the body)` });
+      }
+    } else {
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        if (bound.some((p) => r[p.field] === null || r[p.field] === undefined || String(r[p.field]) !== params[p.name])) continue;
+        if (whereCond && !matchesWhere(r, whereCond)) continue;
+        if (!bound.length && !whereCond && payload.id !== undefined && String(r.id) !== String(payload.id)) continue;
+        indices.push(i);
+      }
+    }
+    if (!indices.length) return json(404, { error: `${entity} not found in scenario "${dataset.scenario}"` });
+
+    const singleTarget = bound.length > 0 || payload.id !== undefined || !whereCond;
+    if (action === 'update') {
+      const updatedList = [];
+      for (const idx of indices) {
+        const raw = { ...rows[idx] };
+        for (const [k, v] of Object.entries(payload)) {
+          if (k !== 'id') raw[k] = v;
+        }
+        for (const [k, v] of Object.entries(set ?? {})) raw[k] = resolveVal(v);
+        const updated = buildRow(raw);
+        rows[idx] = updated;
+        updatedList.push(updated);
+      }
+      invalidateIndexes();
+      return respond(singleTarget && updatedList.length === 1 ? { ...updatedList[0] } : updatedList.map((r) => ({ ...r })));
+    }
+
+    const deletedList = indices.map((idx) => ({ ...rows[idx] }));
+    for (let j = indices.length - 1; j >= 0; j--) rows.splice(indices[j], 1);
+    invalidateIndexes();
+    return respond(singleTarget && deletedList.length === 1 ? deletedList[0] : deletedList);
+  }
+
   /**
    * @param {{ method?: string, pathname: string, query?: URLSearchParams | Record<string,string>,
-   *   headers?: Headers | Record<string, string | string[]> }} req
+   *   headers?: Headers | Record<string, string | string[]>, body?: unknown }} req
    * @returns {{ status: number, headers: Record<string,string>, body: unknown, miss?: true } | null}
    *   null = not ours (body null = no body: a count-only answer; miss = a `shape: object` endpoint
    *   whose entity has no rows, which `serve` records as a gap)
    */
-  function handle({ method = 'GET', pathname, query, headers }) {
+  function handle({ method = 'GET', pathname, query, headers, body }) {
+    const upper = method.toUpperCase();
+    if (upper !== 'GET' && upper !== 'HEAD') {
+      const wm = matchWrite(upper, pathname);
+      if (wm) return handleWrite(wm, pathname, body);
+      const allowed = allowedMethods(pathname);
+      if (!allowed.length) return null;
+      return json(405, { error: `${upper} ${pathname} is not in the contract (allowed: ${allowed.join(', ')})` }, { allow: allowed.join(', ') });
+    }
     const m = match(pathname);
-    if (!m) return null;
-    if (method !== 'GET' && method !== 'HEAD') {
-      return json(405, { error: `atrezzo only projects reads (GET); ${method} ${pathname} is not in the contract` }, { allow: 'GET' });
+    if (!m) {
+      const allowed = allowedMethods(pathname);
+      if (allowed.length) return json(405, { error: `${upper} ${pathname} is not in the contract (allowed: ${allowed.join(', ')})` }, { allow: allowed.join(', ') });
+      return null;
     }
     const params = query instanceof URLSearchParams ? query : new URLSearchParams(query ?? {});
     const { ep, id } = m;
     // `error:` answers the declared status and body on the list and the detail route, world untouched.
     if (ep.error) return json(ep.error.status, ep.error.body, { 'x-atrezzo-error': 'declared' });
     // A parameterised path (`/projects/:project_id/tasks`) only sees the rows its parameters name.
-    const rows = byParams(dataset.entities[ep.entity], ep, m.params);
+    const rows = byParams(workingEntities[ep.entity], ep, m.params);
     // PostgREST parameters; a declared filter of the same name keeps its meaning.
     const select = ep.filters.includes('select') ? null : params.get('select');
     const { counts, honoured } = countsFor(ep, select);
@@ -458,7 +639,7 @@ export function createEngine(dataset) {
 
     // Count only: `head=true`, or a HEAD request with `Prefer: count=exact`. Empty body and
     // `Content-Range: 0-<n-1>/<n>` over every row that passes the filters (pagination does not apply).
-    if (head === 'true' || (method === 'HEAD' && wantsCount(headers))) {
+    if (head === 'true' || (upper === 'HEAD' && wantsCount(headers))) {
       const n = result.length;
       const h = { 'x-total-count': String(n), 'content-range': n ? `0-${n - 1}/${n}` : '0-0/0' };
       if (ignored.length) h['x-atrezzo-ignored'] = ignored.join(',');
@@ -479,7 +660,7 @@ export function createEngine(dataset) {
     // Singleton (`shape: object`): the first row after filters and sort, as a JSON object.
     if (ep.shape === 'object') {
       const h = ignored.length ? { 'x-atrezzo-ignored': ignored.join(',') } : {};
-      if (!dataset.entities[ep.entity].length) {
+      if (!workingEntities[ep.entity].length) {
         // An empty singleton is a missing entity, not a client error: same body as a gap, and
         // `miss: true` so `serve` records it in misses like any other undeclared route.
         const gap = `GET ${ep.path}`;
@@ -536,5 +717,14 @@ export function createEngine(dataset) {
     return json(200, page, out);
   }
 
-  return { match, handle, dataset, currentUser: currentUser ? { ...currentUser } : null };
+  return {
+    match,
+    handle,
+    reset,
+    dataset: liveDataset,
+    get currentUser() {
+      const u = getCurrentUser();
+      return u ? { ...u } : null;
+    },
+  };
 }

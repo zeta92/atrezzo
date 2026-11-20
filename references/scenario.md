@@ -58,6 +58,7 @@ expect:
 | `auth` | map | optional; `{ user: { entity, id } }` seeds the current user for `$user.<field>` filters |
 | `world` | map | required, at least one entity |
 | `endpoints` | list | required, at least one |
+| `writes` | map | optional; `<METHOD> /path`: `{ expect, mutate }` for `POST`/`PUT`/`PATCH`/`DELETE` |
 | `entry` | string | optional; with `path`, it must be its first element |
 | `path` | list of strings | optional; screens in order |
 | `expect` | list | optional |
@@ -479,7 +480,38 @@ Projection semantics (identical in `serve` and the MSW handlers, same `runtime.m
 3. `X-Total-Count` = total after filters, before pagination.
 4. `limit` above the total ⇒ everything; out-of-range `offset` ⇒ `[]`; non-integer values ⇒ 400.
 5. Undeclared parameters are ignored and listed in `X-Atrezzo-Ignored`.
-6. GET/HEAD only. Writes ⇒ 405: the mock shapes data, it does not implement business rules.
+6. Undeclared writes (`POST`/`PUT`/`PATCH`/`DELETE` not listed under `writes:`) ⇒ 405 on endpoint routes (or 404 elsewhere).
+
+### Writes (`writes`)
+
+When a screen depends on a form submit or mutation (`POST`, `PUT`, `PATCH`, `DELETE`), declare a root `writes` map in the scenario so both `atrezzo serve` and the generated MSW handlers mutate the in-memory world and reflect changes on subsequent reads in the same server session:
+
+```yaml
+writes:
+  "POST /api/orders":
+    expect: { status: 201, echo: true }
+    mutate: { entity: orders, set: { status: "nuevo" } }
+  "PATCH /api/orders/:id":
+    expect: { status: 200, echo: true }
+    mutate: { entity: orders, set: { status: "enviado" } }
+  "DELETE /api/orders/:id":
+    expect: { status: 204 }
+    mutate: { entity: orders }
+```
+
+- **Route keys**: must be `"<METHOD> /path"` with an explicit HTTP method (`POST`, `PUT`, `PATCH`, `DELETE`) and a path starting with `/` (no query or fragment). Path parameters (`:id`, `:customer_id`, etc.) bind to fields of `mutate.entity` (`:id` at the end of a path or before an action segment binds to `id`; `:<entity>_id` binds to `id` for the target entity; other `:name` segments match `name` or `<name>_id`).
+- **`expect`**: `{ status, echo, body }` (optional; defaults to `201` + `echo: true` for `POST`, `204` for `DELETE`, `200` + `echo: true` for `PUT`/`PATCH`):
+  - `status`: integer HTTP status `200..599`.
+  - `echo: true`: echoes the created/updated row (or deleted row / request payload when no `mutate` is given). Mutually exclusive with `body` and with `204`/`205`/`304`.
+  - `body`: static JSON value returned verbatim.
+- **`mutate`**: `{ entity, action, set, where }` (optional; omit for a stateless response):
+  - `entity` (required): declared entity in `world`.
+  - `action`: `'create' | 'update' | 'delete'` (defaults to `create` for `POST`, `update` for `PUT`/`PATCH`, `delete` for `DELETE`).
+  - `set` (for `create` and `update`): map `<field>: <scalar | "$user.<field>">` of existing fields of `entity` (`id` cannot be set). Values in `set` override incoming request body fields.
+  - `where` (for `update` and `delete`): map `<field>: <scalar | [scalars] | "$user.<field>">` to select target rows alongside any bound path parameters (404 when no row matches).
+- **Determinism**: no `Math.random()` or wall clock is used. Each entity assigns sequential integer `id`s independently (`maxId + 1`), response object keys follow canonical order (entity schema fields first, then sorted extra keys) independent of request JSON key arrival order, and `GET` projections preserve deterministic sort order across mutations.
+- **Session & reset**: `serve` and MSW handlers keep mutations in memory across subsequent reads in the same session (`embed` and `counts` indexes are invalidated automatically). `POST /__atrezzo/reset` (in both `serve` and MSW handlers, plus `reset()` exported from `<scenario>.handlers.mjs`) restores the world and ID counters to their initial seeded state.
+- **Validation (scenario error, exit 3)**: rejects empty `writes`, route keys without an explicit `POST`/`PUT`/`PATCH`/`DELETE` method, duplicate write routes, unknown `mutate.entity`, unknown fields in `set`/`where`, `id` in `set`, unbound `:param` segments, `set` on `delete`, `where` on `create`, and `echo: true`/`body` with `204`. Scenarios without `writes` keep their exact behaviour and hash.
 
 ### Counted relations (PostgREST `select` and `head=true`)
 
@@ -536,7 +568,7 @@ Rules:
 - Fields: if there is a contract (OpenAPI/types), it rules; `atrezzo import` writes them for you. Without a contract, the ones the front end reads. Without `fields`, the built-in entities (`users`, `customers`, `orders`, `products`) bring their template.
 - Then: `atrezzo world <scenario.yaml>` and `POST /__atrezzo/reload` (or restart `serve`). The gap turns `resolved: true` as soon as the mock serves the route.
 - Nested routes (gap `GET /api/customers/:id/orders`): declare the path with a named parameter, `path: /api/customers/:customer_id/orders` (or `/api/customers/:id/orders`: a bare `:id` names the segment before it when it is the only parameter), on an entity that carries `customer_id` (`ref: customers`). If the row reads a list of children (`customer.orders[]`), add `embed: [orders]` to the parent's endpoint.
-- Writes (POST/PUT/PATCH/DELETE): not declared. `serve --on-miss stub` answers 200 `{}` for exploring.
+- Writes (`POST`/`PUT`/`PATCH`/`DELETE`): declare them under `writes:` to mutate the in-memory world; undeclared writes return 405/404 (`serve --on-miss stub` answers 200 `{}` for exploring).
 
 #### Discovering and filling gaps with a browser (`atrezzo harvest`)
 

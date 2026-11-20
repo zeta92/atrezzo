@@ -70,7 +70,7 @@ export function errorSummary(endpoints) {
 }
 
 function summary(state, available, generatedDir, misses, latency = 0) {
-  const d = state.dataset;
+  const d = state.engine.dataset;
   const out = {
     scenario: d.scenario, seed: d.seed, now: d.now, hash: d.hash,
     counts: Object.fromEntries(Object.entries(d.entities).map(([k, v]) => [k, v.length])),
@@ -80,6 +80,7 @@ function summary(state, available, generatedDir, misses, latency = 0) {
   };
   const errors = errorSummary(d.endpoints);
   if (Object.keys(errors).length) out.errors = errors; // only when declared
+  if (d.writes?.length) out.writes = d.writes.map((w) => `${w.method} ${w.path}`); // only when declared
   if (d.auth) out.auth = d.auth; // only when declared
   if (misses) out.misses = misses.summary();
   if (generatedDir) {
@@ -148,7 +149,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
       const body = !isMutation(entry.method) && (shape ?? guessShape(entry.path)) === 'collection' ? [] : {};
       return send(res, 200, body, { ...JSON_CT, 'x-atrezzo-stub': 'true', 'x-atrezzo-scenario': state.dataset.scenario });
     }
-    const why = status === 405 ? ' (atrezzo only projects reads)' : '';
+    const why = status === 405 ? ' (method not declared in scenario; add it under writes:)' : '';
     return send(res, status, {
       error: error ?? `${req.method} ${url.pathname} is not in the contract of scenario "${state.dataset.scenario}"${why}`,
       atrezzo: { miss: true, gap, times: entry.times, next: 'atrezzo misses', endpoints: state.dataset.endpoints.map((e) => e.path) },
@@ -190,9 +191,10 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         return send(res, 200, summary(state, available, generatedDir, misses, latency), JSON_CT);
       }
       if (url.pathname.startsWith('/__atrezzo/')) return send(res, 404, { error: `unknown control route ${url.pathname} (available: state, reset, reload, misses)` }, JSON_CT);
-      const r = state.engine.handle({ method: req.method, pathname: url.pathname, query: url.searchParams, headers: req.headers });
-      // A matched route with a non-GET method is a write: not in the contract either.
-      if (r && r.status === 405) return miss(req, res, url, 405, { allow: 'GET' });
+      const body = isMutation(req.method) ? await readBody(req) : undefined;
+      const r = state.engine.handle({ method: req.method, pathname: url.pathname, query: url.searchParams, headers: req.headers, body });
+      // A matched route with an undeclared method is a gap too (405).
+      if (r && r.status === 405) return miss(req, res, url, 405, { allow: r.headers?.allow ?? 'GET' });
       // Only contract answers wait: static files, control routes and gaps answer immediately.
       if (r) {
         const ms = latencyFor(url.pathname);
