@@ -91,12 +91,12 @@ A field in `fields` can override its drawn `default` when another field (or fiel
 
 ```yaml
 world:
-  boards:
+  groups:
     total: 10
     fields:
       name: string
-      is_archived: boolean
-      max_permission: { default: [2], when: { is_archived: true }, value: [0] }
+      locked: boolean
+      tier_level: { default: [2], when: { locked: true }, value: [0] }
 ```
 
 - `default` (required): any valid `fields` type (`string`, `integer`, `number`, `boolean`, `date`, `email`, `uuid`, `url`, or a non-empty list of scalar values). Drawn as usual before conditions are evaluated, so other fields and entities keep the values they had without the rule.
@@ -195,18 +195,18 @@ When an endpoint uses `shape: envelope`, `envelope` lets you name the keys of th
 
 ```yaml
 endpoints:
-  - path: /api/articles
-    entity: articles
+  - path: /api/records
+    entity: records
     pagination: { param_limit: limit, param_offset: offset, default_limit: 10 }
     shape: envelope
-    envelope: { items: articles, total: articlesCount }       # → { "articles": […], "articlesCount": 40 }
-  - path: /api/paged-articles
-    entity: articles
+    envelope: { items: records, total: recordCount }         # → { "records": […], "recordCount": 40 }
+  - path: /api/paged-records
+    entity: records
     pagination: { param_page: page, param_limit: per_page, default_limit: 10 }
     shape: envelope
-    envelope: { items: articles, total: articlesCount, page: page, per_page: per_page }
-  - path: /api/meta-articles
-    entity: articles
+    envelope: { items: records, total: recordCount, page: page, per_page: per_page }
+  - path: /api/meta-records
+    entity: records
     pagination: { param_page: page, param_limit: per_page, default_limit: 10 }
     shape: envelope
     envelope: { items: data, total: meta.total, page: meta.page }  # → { "data": […], "meta": { "total": 40, "page": 1 } }
@@ -231,8 +231,8 @@ endpoints:
   - path: /api/items
     entity: items
     sorts: { by: sort, fields: [id, name, created_at] }        # single param: ?sort=-created_at or ?sort=name
-  - path: /api/tasks
-    entity: tasks
+  - path: /api/entries
+    entity: entries
     sorts: { by: order, fields: [id, created_at] }             # PostgREST style: ?order=created_at.desc
 ```
 
@@ -268,7 +268,7 @@ endpoints:
 - **Semantics**: returns only the rows of the endpoint's entity whose foreign key (`source_id`) points to a row of `from` (`sources`) where every field in `where` matches (a list in `where` matches any of its values, e.g. `where: { tier: [core, extra] }`). Rows with `null` in that foreign key are excluded.
 - **No query parameter**: unlike `status: status` or `[status]`, a world-resolved filter does not expose a query parameter (sending `?source_id=1` is ignored and listed in `X-Atrezzo-Ignored`).
 - **Combines naturally**: runs together with path parameters, normal query filters (`?status=live`), `sort`/`sorts`, `pagination` (`X-Total-Count` counts the resolved + filtered rows before pagination), `shape: object`, and `head=true`.
-- **Short form unchanged**: `filters: [status, source_id]` and `filters: { status: status, ":pid": project_id }` keep their exact behaviour and scenario hashes.
+- **Short form unchanged**: `filters: [status, source_id]` and `filters: { status: status, ":cid": cabinet_id }` keep their exact behaviour and scenario hashes.
 - **Validation (scenario error)**: `from` must be a declared entity in `world`; the filter key must be a foreign key of the endpoint's entity pointing to `from` (via `ref:`); `where` must be a non-empty map whose keys are existing fields of `from` with scalar or non-empty scalar-list values compatible with each field's type.
 
 #### Seeded user (`auth` and `$user.<field>`)
@@ -278,72 +278,72 @@ When a screen boots by reading `/api/user` or `/api/me` (or lists the logged-in 
 ```yaml
 auth:
   user:
-    entity: authors
+    entity: accounts
     id: 2
 world:
-  authors: 4
-  articles: { total: 20, ref: authors, fields: { title: string, status: [draft, published] } }
+  accounts: 4
+  records: { total: 20, ref: accounts, fields: { title: string, status: [draft, published] } }
 endpoints:
   - path: /api/user
-    entity: authors
+    entity: accounts
     shape: object
-    filters: { id: "$user.id" }          # answers authors row #2 instead of row #1
-  - path: /api/my-articles
-    entity: articles
+    filters: { id: "$user.id" }          # answers accounts row #2 instead of row #1
+  - path: /api/my-records
+    entity: records
     filters:
-      author_id: "$user.id"              # only rows where author_id == currentUser.id
+      account_id: "$user.id"             # only rows where account_id == currentUser.id
       status: status                     # normal query filter: ?status=published
 ```
 
 - **Current user row**: the projection engine exposes the row as `currentUser` (`null` when `auth` is omitted). Any endpoint filter `{ <field>: "$user.<userField>" }` (or `$user.<userField>` inside a world-resolved filter's `where`) compares `<field>` against `currentUser[userField]` without requiring a query parameter.
-- **No query parameter**: like world-resolved filters, `$user.<field>` filters do not expose a query parameter (sending `?author_id=1` is ignored and listed in `X-Atrezzo-Ignored`). If `currentUser[userField]` is `null`, no rows match.
+- **No query parameter**: like world-resolved filters, `$user.<field>` filters do not expose a query parameter (sending `?account_id=1` is ignored and listed in `X-Atrezzo-Ignored`). If `currentUser[userField]` is `null`, no rows match.
 - **Validation (scenario error)**: `auth.user.entity` must be declared in `world`, and `auth.user.id` must be an integer `>= 1` within `1..total` of that entity. Using `$user.<field>` without `auth`, naming a field missing from `auth.user.entity`, or referencing a user field whose type is incompatible with the filtered field is also a scenario error.
 - **Without `auth`**: behaviour and scenario hashes are completely unchanged.
 
-#### Paths with parameters (`/projects/:project_id/views/:view_id/tasks`)
+#### Paths with parameters (`/cabinets/:cabinet_id/drawers/:drawer_id/items`)
 
 A detail screen with tabs asks for the children of one row through a nested route. Any segment of `path` can be a parameter `:name`; each one is an **equality filter on a field of the entity**:
 
 ```yaml
 world:
-  projects: 3
-  views: { total: 6, ref: projects }          # → project_id
-  tasks: { total: 40, ref: [projects, views] } # → project_id, view_id
+  cabinets: 3
+  drawers: { total: 6, ref: cabinets }          # → cabinet_id
+  items: { total: 40, ref: [cabinets, drawers] } # → cabinet_id, drawer_id
 endpoints:
-  - path: /api/v2/projects/:project_id/views/:view_id/tasks
-    entity: tasks                  # GET /api/v2/projects/1/views/4/tasks → tasks with project_id=1 and view_id=4
-  - path: /api/v2/projects/:id/views
-    entity: views                  # a bare :id, the path's only parameter, names the segment before it → project_id
-  - path: /api/v2/p/:pid/lists/:list/tasks
-    entity: tasks
-    filters: { ":pid": project_id, ":list": null, done: done }   # explicit binding; null = accept any value
+  - path: /api/cabinets/:cabinet_id/drawers/:drawer_id/items
+    entity: items                  # GET /api/cabinets/1/drawers/4/items → items with cabinet_id=1 and drawer_id=4
+  - path: /api/cabinets/:id/drawers
+    entity: drawers                # a bare :id, the path's only parameter, names the segment before it → cabinet_id
+  - path: /api/c/:cid/lists/:list/items
+    entity: items
+    filters: { ":cid": cabinet_id, ":list": null, done: done }   # explicit binding; null = accept any value
 ```
 
-- Binding, in this order: an explicit `filters: { ":name": field }` entry; else the field called `name`; else `<name>_id` (`:project` → `project_id`). A bare `:id` in the middle binds only to the singular of the segment before it + `_id` (`/projects/:id/views` → `project_id`), never to the row's own `id`, and only when it is the path's **single** parameter: with two or more (`/projects/:id/views/:view/tasks`) nothing is guessed, so name it (`:project_id`) or map it (`filters: { ":id": project_id }`). Nothing else is tried: a parameter that binds to no field makes the scenario invalid, and the error lists the names it looked for and the `filters` entry that would map it.
-- `filters` as a map: `":name": <field>` binds a parameter (`null` accepts any value without filtering, for a segment the world does not model, such as a view id the tasks do not carry); a plain key is a query filter and names its own field (`done: done`). The list form (`filters: [done]`) keeps working for paths without parameters, and for paths whose parameters bind by name.
+- Binding, in this order: an explicit `filters: { ":name": field }` entry; else the field called `name`; else `<name>_id` (`:cabinet` → `cabinet_id`). A bare `:id` in the middle binds only to the singular of the segment before it + `_id` (`/cabinets/:id/drawers` → `cabinet_id`), never to the row's own `id`, and only when it is the path's **single** parameter: with two or more (`/cabinets/:id/drawers/:drawer/items`) nothing is guessed, so name it (`:cabinet_id`) or map it (`filters: { ":id": cabinet_id }`). Nothing else is tried: a parameter that binds to no field makes the scenario invalid, and the error lists the names it looked for and the `filters` entry that would map it.
+- `filters` as a map: `":name": <field>` binds a parameter (`null` accepts any value without filtering, for a segment the world does not model, such as a drawer id the items do not carry); a plain key is a query filter and names its own field (`done: done`). The list form (`filters: [done]`) keeps working for paths without parameters, and for paths whose parameters bind by name.
 - A value no row has is an empty list (`200 []`), not a 404: the route exists. Query filters, `sort`, pagination and `shape` apply on top of the parameters.
-- **PostgREST operators are understood**, because supabase-js always sends them: `eq.`, `neq.`, `gt.`, `gte.`, `lt.`, `lte.`, `like.` / `ilike.` (`*` and `%` are wildcards), `is.` (`null`/`true`/`false`) and `in.(1,2)`. `?status=eq.issue` is the same as `?status=issue`; a comma list without a prefix stays an OR of equalities, and an unknown prefix is a literal value (`?status=bogus.issue` ⇒ `[]`), never a silent widening. This is what makes a `.eq()` from supabase-js match at all: before 0.9.5 `?expediente_id=eq.1` returned `[]`.
+- **PostgREST operators are understood**, because supabase-js always sends them: `eq.`, `neq.`, `gt.`, `gte.`, `lt.`, `lte.`, `like.` / `ilike.` (`*` and `%` are wildcards), `is.` (`null`/`true`/`false`) and `in.(1,2)`. `?status=eq.issue` is the same as `?status=issue`; a comma list without a prefix stays an OR of equalities, and an unknown prefix is a literal value (`?status=bogus.issue` ⇒ `[]`), never a silent widening. This is what makes a `.eq()` from supabase-js match at all: before 0.9.5 `?customer_id=eq.1` returned `[]`.
 - **`Accept: application/vnd.pgrst.object+json`** (what `.single()` sends) returns the row as an object whatever `shape` says, and answers `406 {code: "PGRST116"}` unless exactly one row survives the filters. Still declare the columns the client filters on in `filters` (atrezzo models the contract, not the whole table), including `id` when the client uses `.eq('id', …)`.
-- The detail route still comes with `detail: true`: `GET /api/v2/projects/1/views/4` answers view 4 only if its `project_id` is 1 (else 404). A trailing `/:id` is that detail route, so it cannot be declared.
-- When two endpoints fit a request, the one with the fewest parameters wins (`/api/projects/archived/tasks` before `/api/projects/:id/tasks`); list routes are tried before detail routes. Two paths that differ only in parameter names are duplicates.
+- The detail route still comes with `detail: true`: `GET /api/cabinets/1/drawers/4` answers drawer 4 only if its `cabinet_id` is 1 (else 404). A trailing `/:id` is that detail route, so it cannot be declared.
+- When two endpoints fit a request, the one with the fewest parameters wins (`/api/cabinets/archived/items` before `/api/cabinets/:id/items`); list routes are tried before detail routes. Two paths that differ only in parameter names are duplicates.
 - MSW registers the same `:name` path (the generated handlers run the same engine). Prism gets an OpenAPI path with `{name}` parameters and examples for the first row's values. WireMock does not pre-generate parameterised endpoints (the note says so); use `serve` or MSW for them.
 
 #### Embedded children (`embed`)
 
-`embed: [views]` adds to every returned row a `views` key with **the rows of `views` that point at it** (the reverse of `ref:`), as objects, in world order:
+`embed: [drawers]` adds to every returned row a `drawers` key with **the rows of `drawers` that point at it** (the reverse of `ref:`), as objects, in world order:
 
 ```yaml
 world:
-  projects: 3
-  views: { total: 6, ref: projects }
+  cabinets: 3
+  drawers: { total: 6, ref: cabinets }
 endpoints:
-  - path: /api/v2/projects
-    entity: projects
-    embed: [views]                 # → [{ "id": 1, "name": "…", "views": [{ "id": 4, "project_id": 1, … }] }, …]
+  - path: /api/cabinets
+    entity: cabinets
+    embed: [drawers]               # → [{ "id": 1, "name": "…", "drawers": [{ "id": 4, "cabinet_id": 1, … }] }, …]
 ```
 
-- Same relation as the embedded counts (`select=*,views(count)`), returning rows instead of `[{ count }]`. A row with no children gets `"views": []`.
-- Works on list rows, the detail route and `shape: object`, and combines with `include` and with path parameters: `/api/v2/projects/:id` answers the project with its `views`, and `/api/v2/projects/:project_id/views/:view_id/tasks` answers the tasks of one of them.
+- Same relation as the embedded counts (`select=*,drawers(count)`), returning rows instead of `[{ count }]`. A row with no children gets `"drawers": []`.
+- Works on list rows, the detail route and `shape: object`, and combines with `include` and with path parameters: `/api/cabinets/:id` answers the cabinet with its `drawers`, and `/api/cabinets/:cabinet_id/drawers/:drawer_id/items` answers the items of one of them.
 - The child entity must `ref:` the endpoint's entity (else the scenario is invalid and says which `ref:` to add); an embed name cannot be a field of the entity.
 
 **Nested** (children of children): an entry can be a map `{ entity, embed }`, and its rows carry their own embeds:
@@ -367,25 +367,25 @@ endpoints:
 
 #### Child counts (`counts`)
 
-When a parent row needs the number of child rows pointing to it (for example a kanban bucket's `count` or `tasks_count` when the child list is paginated or limited), declare `counts` on the **entity** (`world.<name>.counts`) or on an **endpoint** (`endpoints[i].counts`):
+When a parent row needs the number of child rows pointing to it (for example a group's `count` or `items_count` when the child list is paginated or limited), declare `counts` on the **entity** (`world.<name>.counts`) or on an **endpoint** (`endpoints[i].counts`):
 
 ```yaml
 world:
-  buckets: 4
-  tasks:
+  groups: 4
+  items:
     total: 20
-    ref: buckets
+    ref: groups
 endpoints:
-  - path: /api/buckets
-    entity: buckets
+  - path: /api/groups
+    entity: groups
     filters: [id]
     pagination: { param_limit: limit, param_offset: offset }
     counts:
-      tasks: { entity: tasks, on: bucket_id }   # → numeric `tasks_count` on each row
-      count: { entity: tasks, on: bucket_id }   # → numeric `count` on each row (declared name)
+      items: { entity: items, on: group_id }   # → numeric `items_count` on each row
+      count: { entity: items, on: group_id }   # → numeric `count` on each row (declared name)
 ```
 
-- **Field naming**: when the key equals the child `entity` name (`tasks: { entity: tasks, on: bucket_id }`), the row exposes `<entity>_count` (`tasks_count`); any other key (`count`, `open_tasks`, `tasks_count`) is exposed under that exact declared name.
+- **Field naming**: when the key equals the child `entity` name (`items: { entity: items, on: group_id }`), the row exposes `<entity>_count` (`items_count`); any other key (`count`, `open_items`, `items_count`) is exposed under that exact declared name.
 - **Entity or endpoint**: declaring `counts` on `world.<entity>` applies to every endpoint projecting that entity; declaring `counts` on an endpoint adds to (or overrides by output field name) the entity's counts.
 - **World-computed and deterministic**: counts are computed over **all** rows of `entity` in `world` whose `on` foreign key equals the parent row's `id` (`null` foreign keys are skipped; empty child sets or parents with no matching children yield `0`). Counts ignore endpoint `pagination` / `limit` and endpoint filters on the rows—every surviving row after the endpoint's filters, path parameters, `sort`/`sorts`, `shape: object`, `shape: envelope`, and `/:id` detail routes carries its exact world count without mutating `dataset.entities`.
 - **Validation (scenario error)**: `entity` must be declared in `world`, `on` must be an existing foreign key of `entity` pointing to the parent entity, output field names must be unique and not collide with any field of the parent entity (or `include`/`embed` keys on the endpoint), and `counts` (on the entity or endpoint) cannot be combined with `pluck`. Without `counts`, behaviour and scenario hashes stay unchanged.
@@ -432,19 +432,19 @@ endpoints:
 
 #### Passthrough-and-patch (`passthrough` and `atrezzo record`)
 
-To reproduce rare edge states (a locked item, a closed or empty market) without modeling a whole world for that payload, freeze a real response with `atrezzo record` and override specific fields with `patch`:
+To reproduce rare edge states (a locked row, a disabled state) without modeling a whole world for that payload, freeze a real response with `atrezzo record` and override specific fields with `patch`:
 
 ```bash
-atrezzo record https://api.example.com/api/market --scenario atrezzo/scenarios/market.yaml --endpoint /api/market --header "Authorization: Bearer $TOKEN"
+atrezzo record https://api.example.com/api/batch --scenario atrezzo/scenarios/batch.yaml --endpoint /api/batch --header "Authorization: Bearer $TOKEN"
 ```
 
 ```yaml
 endpoints:
-  - path: /api/market
+  - path: /api/batch
     passthrough:
-      fixture: api-market           # reads atrezzo/fixtures/api-market.json
+      fixture: api-batch            # reads atrezzo/fixtures/api-batch.json
       patch:
-        "market.open": false        # dot-path override (objects and numeric array indices)
+        "batch.open": false         # dot-path override (objects and numeric array indices)
         "items.0.locked": true
 ```
 
@@ -490,8 +490,8 @@ endpoints:
     entity: info
     shape: object
     latency: 800                  # the app's boot request arrives late, as against the real API
-  - path: /api/v2/projects
-    entity: projects              # waits whatever `serve --latency` says (0 by default)
+  - path: /api/v2/cabinets
+    entity: cabinets              # waits whatever `serve --latency` says (0 by default)
 ```
 
 - Integer milliseconds, `0`–`60000`. Applies to answers of contract endpoints (including their 400/404s); static files (`--static`), `/__atrezzo/*` control routes and gaps for undeclared routes answer immediately, so a slow mock does not make the harness crawl.
@@ -539,15 +539,15 @@ writes:
 
 ### Streams (`streams`)
 
-When a screen connects to a Server-Sent Events (SSE) feed after loading REST data (live prices, market ticks, status updates), declare a root `streams` map in the scenario:
+When a screen connects to a Server-Sent Events (SSE) feed after loading REST data (status ticks, progress events), declare a root `streams` map in the scenario:
 
 ```yaml
 streams:
-  "/api/prices":
+  "/api/ticks":
     interval: 1000
     events:
-      - { symbol: "BTC", price: 62100 }
-      - { symbol: "BTC", price: 62250 }
+      - { seq: 1, status: "running" }
+      - { seq: 2, status: "done" }
     loop: true
 ```
 
@@ -560,16 +560,16 @@ streams:
 
 ### Counted relations (PostgREST `select` and `head=true`)
 
-A relation is declared once, with `ref:` on the child (`documentos: { total: 6, ref: expedientes }` ⇒ every document carries `expediente_id`). Two PostgREST shapes read it:
+A relation is declared once, with `ref:` on the child (`items: { total: 6, ref: cabinets }` ⇒ every item carries `cabinet_id`). Two PostgREST shapes read it:
 
-- **Embedded count**: `GET /rest/v1/expedientes?select=*,documentos(count)` adds `"documentos": [{ "count": n }]` to every returned row (list and detail), where `n` is the number of `documentos` rows in the same world whose `expediente_id` is that row's `id`. Several at once (`select=*,documentos(count),plazos(count)`) and aliased (`select=*,total:documentos(count)` ⇒ `"total": [{ "count": n }]`) work too. The count always matches `GET /rest/v1/documentos?expediente_id=<id>` on an endpoint that declares that filter.
+- **Embedded count**: `GET /rest/v1/cabinets?select=*,items(count)` adds `"items": [{ "count": n }]` to every returned row (list and detail), where `n` is the number of `items` rows in the same world whose `cabinet_id` is that row's `id`. Several at once (`select=*,items(count),tags(count)`) and aliased (`select=*,total:items(count)` ⇒ `"total": [{ "count": n }]`) work too. The count always matches `GET /rest/v1/items?cabinet_id=<id>` on an endpoint that declares that filter.
 - **Count only**: `?head=true` (with or without `Prefer: count=exact`), or a `HEAD` request with `Prefer: count=exact`, answers `200` with an empty body and `Content-Range: 0-<n-1>/<n>`, where `n` counts the rows that pass the endpoint's filters (pagination does not apply). No rows ⇒ `Content-Range: 0-0/0`.
 
-Not supported: only the exact `child(count)` item is a count; any other embed (`documentos(id,nombre)`, `documentos(*)`, `customer:customers(*)`) and column lists (`select=id,name`) are ignored, rows keep their shape and `select` shows up in `X-Atrezzo-Ignored`. A name that is no entity, or an entity that does not `ref:` this endpoint's entity, adds nothing. Filters keep the engine's equality syntax (`?expediente_id=2`); PostgREST operators such as `eq.2` are not parsed. The MSW handlers register `GET` routes only, so there a count goes through `head=true`, not a `HEAD` request.
+Not supported: only the exact `child(count)` item is a count; any other embed (`items(id,name)`, `items(*)`, `customer:customers(*)`) and column lists (`select=id,name`) are ignored, rows keep their shape and `select` shows up in `X-Atrezzo-Ignored`. A name that is no entity, or an entity that does not `ref:` this endpoint's entity, adds nothing. Filters keep the engine's equality syntax (`?cabinet_id=2`); PostgREST operators such as `eq.2` are not parsed. The MSW handlers register `GET` routes only, so there a count goes through `head=true`, not a `HEAD` request.
 
 ### Static files and the SPA fallback (`serve --static <dir>`)
 
-`serve --static dist` serves the built front end next to the projections. A single-page app routes on the client, so a deep link such as `/copilot` has no file in `dist/`: for those, `serve` answers `200` with `dist/index.html` and the app's router takes over. The fallback applies only when **all** of these hold:
+`serve --static dist` serves the built front end next to the projections. A single-page app routes on the client, so a deep link such as `/orders/42` has no file in `dist/`: for those, `serve` answers `200` with `dist/index.html` and the app's router takes over. The fallback applies only when **all** of these hold:
 
 - `--static` was given (or `mock.static` in the config) and the directory has an `index.html`;
 - the method is `GET` (or `HEAD`); `POST`, `PUT`, `PATCH` and `DELETE` never fall back;
