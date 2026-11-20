@@ -105,7 +105,7 @@ Ignored (3):
   POST /pets: mutation not supported: atrezzo only projects reads (GET)
   GET /health: 200 without schema (no content)
   GET /pets/{petId}/photo: binary/non-JSON response (image/png)
-Written: scenarios/shop.yaml (valid scenario)
+Written: atrezzo/scenarios/shop.yaml (valid scenario)
 ```
 
 ### A missing route becomes a task
