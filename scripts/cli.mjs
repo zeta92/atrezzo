@@ -61,7 +61,7 @@ Commands:
   import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
       Infers a scenario from an OpenAPI spec (no argument: uses workspace.contract) and writes
       <scenariosDir>/<name>.yaml with a report: endpoints, envelopes, TODOs and ignored routes.
-  verify <flow.yaml> [--url http://127.0.0.1:4010] [--driver http|playwright] [--header "Name: value"]… [--diagnose]
+  verify <flow.yaml> [--url http://127.0.0.1:4010] [--driver http|playwright] [--header "Name: value"]… [--click-timeout <ms>] [--diagnose]
          [--strict-console] [--no-reset] [--json]
       Runs the flow against the mock (or against the real app if the flow has no scenario) and compares.
       --strict-console fails a step on browser console.error (requires --driver playwright; without it, console.error is shown as WARNING).
@@ -269,7 +269,13 @@ async function cmdVerify({ pos, flags }) {
   const items = (flags.header ?? []).flatMap((h) => (h === '@-' ? headerLines(readFileSync(0, 'utf8')) : [h]));
   if (flags.header?.includes('@-') && !items.length) throw new AtrezzoError('--header @-: stdin had no "Name: value" line');
   const headers = parseHeaderArgs(items);
-  const result = await runVerify(flow, { url, driver, headers, diagnose: !!flags.diagnose, strictConsole: !!flags['strict-console'], reset: !flags['no-reset'], cwd: cfg._dir });
+  let clickTimeout;
+  if (flags['click-timeout'] !== undefined) {
+    const n = Number(flags['click-timeout']);
+    if (!Number.isInteger(n) || n <= 0) throw new AtrezzoError('--click-timeout must be a positive integer (milliseconds)');
+    clickTimeout = n;
+  }
+  const result = await runVerify(flow, { url, driver, headers, clickTimeout, diagnose: !!flags.diagnose, strictConsole: !!flags['strict-console'], reset: !flags['no-reset'], cwd: cfg._dir });
   out(flags.json ? JSON.stringify(result, null, 2) : formatReport(result));
   return result.exitCode;
 }

@@ -198,6 +198,49 @@ function matchesRedirectTarget(got, expected) {
 const CONSOLE_CLIP = 300;
 const clip = (s, n = CONSOLE_CLIP) => (s.length > n ? s.slice(0, n) : s);
 
+export const DEFAULT_CLICK_TIMEOUT = 5_000;
+const formatTimeout = (ms) => (ms % 1000 === 0 ? `${ms / 1000} s` : `${ms} ms`);
+
+async function performClick(page, selector, timeout) {
+  const deadline = Date.now() + timeout;
+  const loc = typeof page.locator === 'function' ? page.locator(selector) : null;
+  const target = loc && typeof loc.first === 'function' ? loc.first() : loc;
+  if (target && typeof target.waitFor === 'function') {
+    await target.waitFor({ state: 'attached', timeout });
+  } else if (typeof page.waitForSelector === 'function') {
+    await page.waitForSelector(selector, { state: 'attached', timeout });
+  }
+  const remaining = Math.max(1, deadline - Date.now());
+  if (target && typeof target.click === 'function') {
+    await target.click({ timeout: remaining });
+  } else if (typeof page.click === 'function') {
+    await page.click(selector, { timeout: remaining });
+  } else {
+    throw new Error('playwright page has neither locator().click() nor click()');
+  }
+}
+
+async function runStepClicks(page, step, timeout) {
+  for (const selector of step.click ?? []) {
+    try {
+      await performClick(page, selector, timeout);
+    } catch (err) {
+      const msg = (err?.message ?? String(err)).split('\n')[0];
+      const isTimeout = err?.name === 'TimeoutError' || /timeout/i.test(msg);
+      return {
+        selector,
+        timeout,
+        isTimeout,
+        message: msg,
+        note: isTimeout
+          ? `click "${selector}" did not appear within ${formatTimeout(timeout)}`
+          : `click "${selector}" failed: ${clip(msg)}`,
+      };
+    }
+  }
+  return null;
+}
+
 function formatPageError(err) {
   if (typeof err === 'string') return err;
   if (err && typeof err === 'object') {
@@ -294,9 +337,12 @@ async function openStep(pw, url, step, headers, storageScript) {
  *           fetchImpl?: typeof fetch, pageFactory?: (opts: {viewport: object|null}) => Promise<{page:any, context?:any, close:()=>Promise<void>}>, cwd?: string }} opts
  */
 export async function runVerify(flow, opts) {
-  const { url, driver = 'http', diagnose: wantDiag = false, strictConsole = false, fetchImpl = fetch, cwd = process.cwd() } = opts;
+  const { url, driver = 'http', diagnose: wantDiag = false, strictConsole = false, clickTimeout: optClickTimeout, fetchImpl = fetch, cwd = process.cwd() } = opts;
   if (strictConsole && driver !== 'playwright') {
     throw new AtrezzoError('--strict-console requires --driver playwright (the http driver has no browser console)', { exitCode: EXIT.INVALID });
+  }
+  if (optClickTimeout !== undefined && (!Number.isInteger(optClickTimeout) || optClickTimeout <= 0)) {
+    throw new AtrezzoError('--click-timeout must be a positive integer (milliseconds)', { exitCode: EXIT.INVALID });
   }
   const reset = (opts.reset ?? true) && !!flow.scenario; // without a scenario there is no mock to reset
   const flowHeaders = flow.headers ?? {};
@@ -305,6 +351,8 @@ export async function runVerify(flow, opts) {
   const flowStorage = flow.storage ?? {};
   const anyStorage = [flowStorage, ...flow.steps.map((st) => st.storage)].some(hasStorage);
   if (anyStorage && driver !== 'playwright') warnings.push('storage: is ignored with the http driver (there is no browser to seed); use --driver playwright');
+  const anyClick = flow.steps.some((st) => st.click?.length);
+  if (anyClick && driver !== 'playwright') warnings.push('click: is ignored with the http driver (there is no browser to click in); use --driver playwright');
   const seeder = createSeeder();
 
   try {
@@ -340,6 +388,7 @@ export async function runVerify(flow, opts) {
         }
       }
       let nav = { fail: null, redirect: null, waitForTimeout: false };
+      let clickFail = null;
       let listeners = null;
       if (pw) {
         if (!step.visit) {
@@ -359,6 +408,10 @@ export async function runVerify(flow, opts) {
         if (pw) {
           const storage = mergeStorage(flowStorage, step.storage);
           nav = await openStep(pw, url, step, headers, seeder.next(new URL(joinUrl(url, step.visit)).origin, storage));
+          if (!nav.fail && step.click?.length) {
+            const clickTimeout = step.clickTimeout ?? optClickTimeout ?? flow.clickTimeout ?? DEFAULT_CLICK_TIMEOUT;
+            clickFail = await runStepClicks(pw.page, step, clickTimeout);
+          }
         }
         for (const e of step.expect) {
           const row = { screen: step.screen, expect: e, status: 'N/V', obtained: null, note: '' };
@@ -392,8 +445,8 @@ export async function runVerify(flow, opts) {
           ctx.obtained = row.obtained;
           // A declared error is what the scenario asked for: counted as 0 rows, and said so on a KO.
           if (ctx.response && declaredError(ctx.response) && !pw && !passes(e, row.obtained)) row.note = `${e.data.request} answered the error the scenario declares (${ctx.response.status}): 0 rows`;
-          row.status = !nav.fail && !selectorFail && passes(e, row.obtained) ? 'OK' : 'KO';
-          if (selectorFail && !nav.fail) {
+          row.status = !nav.fail && !clickFail && !selectorFail && passes(e, row.obtained) ? 'OK' : 'KO';
+          if (selectorFail && !nav.fail && !clickFail) {
             if (selectorFailRow === null) { selectorFailRow = rows.length + 1; row.note = selectorFail; } else row.note = `same cause as #${selectorFailRow}`;
             if (wantDiag && selectorFailRow === rows.length + 1) {
               row.hypotheses = [{ type: 'navigation', confidence: 'high', evidence: `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.` }];
@@ -418,9 +471,10 @@ export async function runVerify(flow, opts) {
         }
         stepResults.push({ screen: step.screen, visit: step.visit, ...(nav.redirect ? { redirect: nav.redirect } : {}), console: consoleList });
 
-        // If wait_for timed out because an uncaught pageerror crashed the screen, surface page-error instead of navigation.
+        // If wait_for or click timed out because an uncaught pageerror crashed the screen, surface page-error instead.
         const effectiveNavFail = nav.fail && !(nav.waitForTimeout && pageErrors.length) ? nav.fail : null;
-        const hasStepBlocker = Boolean(pageErrors.length || effectiveNavFail || (strictConsole && consoleErrors.length));
+        const effectiveClickFail = clickFail && !(clickFail.isTimeout && pageErrors.length) ? clickFail : null;
+        const hasStepBlocker = Boolean(pageErrors.length || effectiveNavFail || effectiveClickFail || (strictConsole && consoleErrors.length));
         if (hasStepBlocker) {
           if (rows.length === stepRowStart) {
             rows.push({ screen: step.screen, expect: { selector: '(page)', count: 0 }, status: 'KO', obtained: null, note: '' });
@@ -434,13 +488,17 @@ export async function runVerify(flow, opts) {
           const navEvidence = step.redirectsTo
             ? `expected redirect to "${step.redirectsTo}" for step "${step.screen}", but landed elsewhere; the scenario and selectors are not the cause. Fix navigation/guard before looking at anything else.`
             : `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.`;
+          const clickEvidence = effectiveClickFail
+            ? `click target "${effectiveClickFail.selector}" on "${step.screen}" did not appear or could not be clicked within ${formatTimeout(effectiveClickFail.timeout)} (${clip(effectiveClickFail.message)}). Check the selector or wait_for before asserting.`
+            : '';
 
           if (pageErrors.length) {
             const errNote = `uncaught page error${pageErrors.length > 1 ? ` (${pageErrors.length})` : ''}: ${clip(pageErrors[0])}`;
-            firstRow.note = effectiveNavFail ? `${effectiveNavFail}; ${errNote}` : errNote;
+            firstRow.note = effectiveNavFail ? `${effectiveNavFail}; ${errNote}` : effectiveClickFail ? `${effectiveClickFail.note}; ${errNote}` : errNote;
             if (wantDiag) {
               const hyps = [];
               if (effectiveNavFail) hyps.push({ type: 'navigation', confidence: 'high', evidence: navEvidence });
+              if (effectiveClickFail) hyps.push({ type: 'click-target-missing', confidence: 'high', evidence: clickEvidence });
               for (const msg of new Set(pageErrors)) {
                 hyps.push({ type: 'page-error', confidence: 'high', evidence: `uncaught page error on "${step.screen}": ${clip(msg)}` });
               }
@@ -449,6 +507,9 @@ export async function runVerify(flow, opts) {
           } else if (effectiveNavFail) {
             firstRow.note = effectiveNavFail;
             if (wantDiag) firstRow.hypotheses = [{ type: 'navigation', confidence: 'high', evidence: navEvidence }];
+          } else if (effectiveClickFail) {
+            firstRow.note = effectiveClickFail.note;
+            if (wantDiag) firstRow.hypotheses = [{ type: 'click-target-missing', confidence: 'high', evidence: clickEvidence }];
           } else {
             firstRow.note = `console.error (--strict-console)${consoleErrors.length > 1 ? ` (${consoleErrors.length})` : ''}: ${clip(consoleErrors[0])}`;
             if (wantDiag) {

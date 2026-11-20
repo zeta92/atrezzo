@@ -14,6 +14,7 @@ CLI: `node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs` (`atrezzo` below).
 4. Read the exit code: `0` green · `1` some assertion KO · `2` not verifiable (no mock, no playwright, assertion without `data`) · `3` invalid flow/scenario. **A 2 is never an OK**: say so.
 5. On KO: `atrezzo verify <flow.yaml> --diagnose` and reason about the hypotheses **before** touching the scenario:
    - `page-error` / `console-error`: an uncaught browser exception (always KO) or `console.error` (under `--strict-console`; otherwise a `WARNING`) happened on the screen; fix the client bug, do not touch the scenario.
+   - `click-target-missing`: a step's `click` target did not appear or could not be clicked before asserting; check the selector, `wait_for`, or `click_timeout`.
    - `render` / `client-side-filter`: the mock delivers what was expected; the failure is in the screen. Do not touch the scenario.
    - `pagination-mismatch`: the data exists outside the page; check the client's or the endpoint's `limit`/`offset`/`sort`.
    - `dedupe-by-id`, `null-field`: a client assumption; see `${CLAUDE_PLUGIN_ROOT}/references/assumptions.md`.

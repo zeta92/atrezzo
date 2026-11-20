@@ -1229,7 +1229,7 @@ export function loadFlow(file) {
   const doc = readYaml(file, 'flow');
   const issues = new Issues();
   if (!isObj(doc)) throw new AtrezzoError(`${file}: a flow must be a YAML map`);
-  issues.unknownKeys(doc, ['scenario', 'base_url', 'headers', 'storage', 'viewport', 'steps']);
+  issues.unknownKeys(doc, ['scenario', 'base_url', 'headers', 'storage', 'viewport', 'click_timeout', 'steps']);
   if (doc.scenario !== undefined && typeof doc.scenario !== 'string') issues.add('scenario', 'path to the scenario YAML (relative to the flow); omit it only to verify a real app without a mock');
   if (doc.base_url !== undefined && typeof doc.base_url !== 'string') issues.add('base_url', 'must be a URL');
   if (!Array.isArray(doc.steps) || !doc.steps.length) issues.add('steps', 'required; a list with at least one step');
@@ -1244,6 +1244,11 @@ export function loadFlow(file) {
       viewport = { width: doc.viewport.width, height: doc.viewport.height };
     }
   }
+  let clickTimeout = null;
+  if (doc.click_timeout !== undefined) {
+    if (!isInt(doc.click_timeout) || doc.click_timeout <= 0) issues.add('click_timeout', `must be a positive integer (milliseconds); got ${JSON.stringify(doc.click_timeout)}`);
+    else clickTimeout = doc.click_timeout;
+  }
   if (issues.list.length) throw new AtrezzoError(`${file}: invalid flow`, { issues: issues.list });
 
   const scenarioFile = doc.scenario === undefined ? null : resolve(dirname(file), doc.scenario);
@@ -1253,7 +1258,7 @@ export function loadFlow(file) {
   doc.steps.forEach((st, i) => {
     const f = `steps[${i}]`;
     if (!isObj(st)) { issues.add(f, 'must be a map'); return; }
-    issues.unknownKeys(st, ['screen', 'visit', 'wait_for', 'headers', 'storage', 'requests', 'expect', 'redirects_to', 'allow_redirect'], f);
+    issues.unknownKeys(st, ['screen', 'visit', 'wait_for', 'click', 'click_timeout', 'headers', 'storage', 'requests', 'expect', 'redirects_to', 'allow_redirect'], f);
     if (typeof st.screen !== 'string') issues.add(`${f}.screen`, 'required; the screen name');
     else if (path.length && !path.includes(st.screen)) issues.add(`${f}.screen`, `"${st.screen}" is not in the scenario path (${path.join(' → ')})`);
     let redirectsTo = null;
@@ -1272,6 +1277,26 @@ export function loadFlow(file) {
     if (st.redirects_to !== undefined && st.allow_redirect !== undefined) {
       issues.add(f, 'use "redirects_to" or "allow_redirect", not both');
     }
+    const click = [];
+    if (st.click !== undefined) {
+      if (typeof st.click === 'string') {
+        if (st.click.trim() === '') issues.add(`${f}.click`, 'must be a non-empty selector or list of selectors');
+        else click.push(st.click);
+      } else if (Array.isArray(st.click)) {
+        if (!st.click.length) issues.add(`${f}.click`, 'must be a non-empty selector or non-empty list of selectors');
+        else st.click.forEach((sel, j) => {
+          if (typeof sel !== 'string' || sel.trim() === '') issues.add(`${f}.click[${j}]`, 'must be a non-empty selector');
+          else click.push(sel);
+        });
+      } else {
+        issues.add(`${f}.click`, `must be a selector string or a list of selectors; got ${typeName(st.click)}`);
+      }
+    }
+    let stepClickTimeout = null;
+    if (st.click_timeout !== undefined) {
+      if (!isInt(st.click_timeout) || st.click_timeout <= 0) issues.add(`${f}.click_timeout`, `must be a positive integer (milliseconds); got ${JSON.stringify(st.click_timeout)}`);
+      else stepClickTimeout = st.click_timeout;
+    }
     const requests = {};
     if (st.requests !== undefined) {
       if (!isObj(st.requests)) issues.add(`${f}.requests`, 'must be a map name: "GET /path"');
@@ -1288,7 +1313,7 @@ export function loadFlow(file) {
     });
     const stepHeaders = parseHeaders(st.headers, `${f}.headers`, issues);
     const stepStorage = parseStorage(st.storage, `${f}.storage`, issues);
-    steps.push({ screen: st.screen, visit: st.visit ?? null, waitFor: st.wait_for ?? null, redirectsTo, allowRedirect, headers: stepHeaders, storage: stepStorage, requests, expect });
+    steps.push({ screen: st.screen, visit: st.visit ?? null, waitFor: st.wait_for ?? null, click, clickTimeout: stepClickTimeout, redirectsTo, allowRedirect, headers: stepHeaders, storage: stepStorage, requests, expect });
   });
 
   // Scenario-level expectations go to their screen (default: last of path, else last step).
@@ -1308,7 +1333,7 @@ export function loadFlow(file) {
     } else if (!names.includes(e.data.request)) issues.add(`steps[${i}].expect[${j}].data.request`, `"${e.data.request}" is not in the step requests (${names.join(', ') || 'none'})`);
   }));
   if (issues.list.length) throw new AtrezzoError(`${file}: invalid flow`, { issues: issues.list });
-  return { file, scenarioFile, scenario, baseUrl: doc.base_url ?? null, headers, storage, viewport, steps };
+  return { file, scenarioFile, scenario, baseUrl: doc.base_url ?? null, headers, storage, viewport, clickTimeout, steps };
 }
 
 export function scenarioNameFromFile(file) {

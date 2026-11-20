@@ -301,6 +301,10 @@ the two folders removes everything it wrote.
 <details>
 <summary><b>Changelog and upgrading from 0.3 or 0.4</b></summary>
 
+### 0.19.0
+
+**Pre-assertion click interactions on flow steps (`click`, `click_timeout`, `click-target-missing`).** A flow step can declare `click: "<selector>"` (including `text=…`) or an ordered list `click: [sel1, sel2]` under `--driver playwright` to open collapsibles, tabs, or disclosures on the same step before `expect` assertions are measured. Each target waits to exist up to a configurable timeout (default `5000` ms via `click_timeout` on step/flow or `verify --click-timeout`) before performing a real Playwright click; clicks do not create extra steps, and a missing target fails the step (`KO`) with the `click-target-missing` hypothesis under `--diagnose` (`click:` is ignored with a `WARNING` under `--driver http`). Documented in `references/scenario.md` and `skills/verify/SKILL.md`, covered in `tests/verify.test.mjs`.
+
 ### 0.18.0
 
 **Browser console and uncaught exception capture in `verify` (`pageerror`, `console.error`, `--strict-console`).** Under `--driver playwright`, `verify` now collects `pageerror` (uncaught exceptions and unhandled rejections) and `console.error` throughout each step's load and assertion checks. An uncaught `pageerror` always marks the step `KO`—even if selector counts match (so a blank-screen crash like `RangeError: Invalid array length` or an error toast never passes as `OK`)—and under `--diagnose` emits a `page-error` hypothesis with the message clipped to 300 characters. `console.error` entries are reported as `WARNING` lines without breaking passing steps unless `--strict-console` is passed (which requires `--driver playwright`, is rejected with exit `3` under `--driver http`, and marks the step `KO` with a `console-error` hypothesis). With `--json`, each Playwright step includes `console: [{ level, text }]`. Documented in `references/scenario.md` and `skills/verify/SKILL.md`, covered in `tests/verify.test.mjs`.
