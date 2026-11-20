@@ -194,6 +194,14 @@ function cmdWorld({ pos, flags }) {
     if (ep.error) bits.push(`error: ${ep.error.status}`);
     out(`  GET ${ep.path}${ep.detail ? ` (+ ${ep.path}/:id)` : ''}  ${bits.join(' · ')}`);
   }
+  for (const w of scenario.writes ?? []) {
+    const bits = [`→ ${w.expect.status}${w.expect.echo ? ' (echo)' : ''}`];
+    if (w.mutate) {
+      bits.push(`${w.mutate.action} ${w.mutate.entity}`);
+      if (w.mutate.set) bits.push(`set: ${Object.keys(w.mutate.set).join(',')}`);
+    }
+    out(`  ${w.method} ${w.path}  ${bits.join(' · ')}`);
+  }
   out('Written:');
   for (const f of Object.values(files)) out(`  ${relative(process.cwd(), f) || f}`);
   for (const e of emitted) {
@@ -243,6 +251,11 @@ async function cmdServe({ flags }) {
     if (ep.latency !== undefined && ep.latency !== latency) notes.push(`latency ${ep.latency} ms`);
     if (ep.error) notes.push(`declared error ${ep.error.status}`);
     out(`  GET ${ep.path}${notes.length ? `  (${notes.join(' · ')})` : ''}`);
+  }
+  for (const w of d.writes ?? []) {
+    const notes = [`→ ${w.expect.status}`];
+    if (w.mutate) notes.push(`${w.mutate.action} ${w.mutate.entity}`);
+    out(`  ${w.method} ${w.path}  (${notes.join(' · ')})`);
   }
   const errors = d.endpoints.filter((e) => e.error);
   if (errors.length) out(`  errors: ${errors.length} ${errors.length === 1 ? 'endpoint answers' : 'endpoints answer'} the error the scenario declares, whatever the world holds (${errors.map((e) => `${e.path} → ${e.error.status}`).join(', ')})`);

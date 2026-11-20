@@ -1169,9 +1169,252 @@ function normalizeAuth(raw, world, issues) {
   return entityOk && idOk ? { user: { entity, id } } : null;
 }
 
+// ---------- writes ----------
+
+const WRITE_METHODS = ['POST', 'PUT', 'PATCH', 'DELETE'];
+const WRITE_ACTIONS = ['create', 'update', 'delete'];
+const NO_BODY_STATUSES = new Set([204, 205, 304]);
+
+function writePathParams(path, field, issues) {
+  const names = [];
+  for (const seg of path.split('/')) {
+    if (!seg.includes(':')) continue;
+    const name = seg.slice(1);
+    if (!seg.startsWith(':') || !PARAM_NAME.test(name)) {
+      issues.add(field, `"${seg}": a parameter is a whole segment ":name" (letters, digits, "_")`);
+      return null;
+    }
+    if (names.includes(name)) {
+      issues.add(field, `parameter ":${name}" appears twice`);
+      return null;
+    }
+    names.push(name);
+  }
+  return names;
+}
+
+function writeParamField(name, path, spec) {
+  const fields = entityFields(spec);
+  const segs = path.split('/');
+  if (name === 'id') {
+    const idx = segs.indexOf(':id');
+    if (idx === segs.length - 1) return 'id';
+    const prev = segs[idx - 1];
+    if (prev && !prev.startsWith(':') && prev.toLowerCase() !== spec.name) {
+      const fk = templateFor(prev.toLowerCase()).fk;
+      if (fields.includes(fk)) return fk;
+    }
+    return 'id';
+  }
+  if (fields.includes(name)) return name;
+  const singularFk = `${templateFor(spec.name).singular}_id`;
+  if (name === singularFk || name === `${spec.name}_id`) return 'id';
+  if (fields.includes(`${name}_id`)) return `${name}_id`;
+  return null;
+}
+
+function normalizeWrites(rawWrites, world, auth, authDeclared, issues) {
+  if (rawWrites === undefined) return [];
+  if (!isObj(rawWrites) || !Object.keys(rawWrites).length) {
+    issues.add('writes', 'must be a non-empty map "<METHOD> /path": { expect, mutate }');
+    return [];
+  }
+  const byName = Object.fromEntries(world.map((s) => [s.name, s]));
+  const seen = new Set();
+  const out = [];
+  for (const [rawKey, rawRule] of Object.entries(rawWrites)) {
+    const f = `writes[${rawKey}]`;
+    const keyMatch = /^(\S+)\s+(\S.*)$/.exec(rawKey.trim());
+    if (!keyMatch) {
+      issues.add(f, 'must include an explicit HTTP method (POST, PUT, PATCH, DELETE) and path, e.g. "POST /api/orders"');
+      continue;
+    }
+    const method = keyMatch[1];
+    const rawPath = keyMatch[2].trim();
+    if (!WRITE_METHODS.includes(method)) {
+      issues.add(f, `method "${method}" is not supported in writes; use ${WRITE_METHODS.join(', ')}`);
+      continue;
+    }
+    if (!rawPath.startsWith('/')) {
+      issues.add(f, `path ${JSON.stringify(rawPath)} must start with "/"`);
+      continue;
+    }
+    if (/[?#\s]/.test(rawPath)) {
+      issues.add(f, `path ${JSON.stringify(rawPath)} must not contain whitespace, query or fragment`);
+      continue;
+    }
+    const path = rawPath.replace(/\/+$/, '') || '/';
+    const paramNames = writePathParams(path, f, issues);
+    const shapeKey = `${method} ${path.replace(/\/:[^/]+/g, '/:')}`;
+    if (seen.has(shapeKey)) {
+      issues.add(f, `duplicate write route "${method} ${path}"`);
+      continue;
+    }
+    seen.add(shapeKey);
+
+    if (!isObj(rawRule)) {
+      issues.add(f, `must be a map { expect, mutate }; got ${typeName(rawRule)}`);
+      continue;
+    }
+    issues.unknownKeys(rawRule, ['expect', 'mutate'], f);
+    if (rawRule.expect === undefined && rawRule.mutate === undefined) {
+      issues.add(f, 'must declare "expect" and/or "mutate"');
+      continue;
+    }
+
+    let expect;
+    if (rawRule.expect === undefined) {
+      expect = {
+        status: method === 'POST' ? 201 : method === 'DELETE' ? 204 : 200,
+        ...(method !== 'DELETE' ? { echo: true } : {}),
+      };
+    } else if (!isObj(rawRule.expect)) {
+      issues.add(`${f}.expect`, `must be a map { status, echo, body }; got ${typeName(rawRule.expect)}`);
+      expect = { status: 200 };
+    } else {
+      issues.unknownKeys(rawRule.expect, ['status', 'echo', 'body'], `${f}.expect`);
+      let echo = false;
+      if (rawRule.expect.echo !== undefined) {
+        if (typeof rawRule.expect.echo !== 'boolean') issues.add(`${f}.expect.echo`, 'must be true or false');
+        else echo = rawRule.expect.echo;
+      }
+      const hasBody = rawRule.expect.body !== undefined;
+      if (echo && hasBody) issues.add(`${f}.expect`, 'use "echo: true" or "body", not both');
+      let status;
+      if (rawRule.expect.status !== undefined) {
+        if (!isInt(rawRule.expect.status) || rawRule.expect.status < 200 || rawRule.expect.status > 599) {
+          issues.add(`${f}.expect.status`, `must be an integer HTTP status between 200 and 599; got ${JSON.stringify(rawRule.expect.status)}`);
+          status = 200;
+        } else {
+          status = rawRule.expect.status;
+        }
+      } else {
+        status = method === 'POST' ? 201 : (method === 'DELETE' && !echo && !hasBody) ? 204 : 200;
+      }
+      if (NO_BODY_STATUSES.has(status) && (echo || (hasBody && rawRule.expect.body !== null))) {
+        issues.add(`${f}.expect`, `status ${status} cannot have a response body`);
+      }
+      expect = { status };
+      if (echo) expect.echo = true;
+      if (hasBody) expect.body = rawRule.expect.body;
+    }
+
+    let mutate = null;
+    const params = [];
+    if (rawRule.mutate !== undefined) {
+      const mf = `${f}.mutate`;
+      if (!isObj(rawRule.mutate)) {
+        issues.add(mf, `must be a map { entity, action, set, where }; got ${typeName(rawRule.mutate)}`);
+      } else {
+        issues.unknownKeys(rawRule.mutate, ['entity', 'action', 'set', 'where'], mf);
+        const entityName = rawRule.mutate.entity;
+        let spec = null;
+        if (typeof entityName !== 'string' || !entityName) {
+          issues.add(`${mf}.entity`, `required; a declared world entity (declared: ${Object.keys(byName).join(', ') || 'none'})`);
+        } else if (!Object.hasOwn(byName, entityName)) {
+          issues.add(`${mf}.entity`, `"${entityName}" is not declared in world (declared: ${Object.keys(byName).join(', ') || 'none'})`);
+        } else {
+          spec = byName[entityName];
+        }
+
+        let action = method === 'POST' ? 'create' : method === 'DELETE' ? 'delete' : 'update';
+        if (rawRule.mutate.action !== undefined) {
+          if (!WRITE_ACTIONS.includes(rawRule.mutate.action)) {
+            issues.add(`${mf}.action`, `must be ${WRITE_ACTIONS.map((a) => `"${a}"`).join(', ')}; got ${JSON.stringify(rawRule.mutate.action)}`);
+          } else {
+            action = rawRule.mutate.action;
+          }
+        }
+
+        const fields = spec ? entityFields(spec) : [];
+        if (spec && paramNames) {
+          for (const pname of paramNames) {
+            const boundField = writeParamField(pname, path, spec);
+            if (!boundField) {
+              issues.add(f, `parameter ":${pname}" does not match any field of "${spec.name}" (fields: ${fields.join(', ')})`);
+            } else {
+              params.push({ name: pname, field: boundField });
+            }
+          }
+        }
+
+        let set;
+        if (rawRule.mutate.set !== undefined) {
+          const sf = `${mf}.set`;
+          if (action === 'delete') {
+            issues.add(sf, '"set" cannot be used with delete');
+          } else if (!isObj(rawRule.mutate.set) || !Object.keys(rawRule.mutate.set).length) {
+            issues.add(sf, 'must be a non-empty map field: value');
+          } else {
+            set = {};
+            for (const [sk, sv] of Object.entries(rawRule.mutate.set)) {
+              const sff = `${sf}.${sk}`;
+              if (spec && !fields.includes(sk)) {
+                issues.add(sff, `field "${sk}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
+              } else if (sk === 'id') {
+                issues.add(sff, '"id" is managed by atrezzo and cannot be set in mutate.set');
+              } else if (typeof sv === 'string' && sv.startsWith('$')) {
+                const userField = parseUserToken(sv, sff, byName, auth, authDeclared, issues, spec ? sk : null, spec);
+                if (userField) set[sk] = sv;
+              } else if (!isScalar(sv)) {
+                issues.add(sff, 'must be a scalar value or "$user.<field>"');
+              } else {
+                set[sk] = sv;
+              }
+            }
+          }
+        }
+
+        let where;
+        if (rawRule.mutate.where !== undefined) {
+          const wf = `${mf}.where`;
+          if (action === 'create') {
+            issues.add(wf, '"where" cannot be used with create');
+          } else if (!isObj(rawRule.mutate.where) || !Object.keys(rawRule.mutate.where).length) {
+            issues.add(wf, 'must be a non-empty map field: value');
+          } else {
+            where = {};
+            for (const [wk, wv] of Object.entries(rawRule.mutate.where)) {
+              const wff = `${wf}.${wk}`;
+              if (spec && !fields.includes(wk)) {
+                issues.add(wff, `field "${wk}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
+                continue;
+              }
+              const parsed = parseScalarOrList(wv, wff, issues);
+              if (parsed === undefined) continue;
+              const candidates = Array.isArray(parsed) ? parsed : [parsed];
+              let ok = true;
+              for (const v of candidates) {
+                if (typeof v === 'string' && v.startsWith('$')) {
+                  if (!parseUserToken(v, wff, byName, auth, authDeclared, issues, spec ? wk : null, spec)) ok = false;
+                }
+              }
+              if (ok) where[wk] = parsed;
+            }
+          }
+        }
+
+        if (spec) {
+          mutate = { entity: spec.name, action };
+          if (set) mutate.set = set;
+          if (where) mutate.where = where;
+        }
+      }
+    } else if (paramNames) {
+      for (const pname of paramNames) params.push({ name: pname, field: null });
+    }
+
+    const norm = { method, path, expect };
+    if (params.length) norm.params = params;
+    if (mutate) norm.mutate = mutate;
+    out.push(norm);
+  }
+  return out;
+}
+
 // ---------- scenario ----------
 
-const SCENARIO_KEYS = ['name', 'description', 'seed', 'now', 'auth', 'world', 'endpoints', 'entry', 'path', 'expect'];
+const SCENARIO_KEYS = ['name', 'description', 'seed', 'now', 'auth', 'world', 'endpoints', 'writes', 'entry', 'path', 'expect'];
 
 export function normalizeScenario(doc, file = '<scenario>') {
   const issues = new Issues();
@@ -1188,6 +1431,7 @@ export function normalizeScenario(doc, file = '<scenario>') {
   const world = normalizeWorld(doc.world, issues);
   const auth = normalizeAuth(doc.auth, world, issues);
   const endpoints = normalizeEndpoints(doc.endpoints, world, auth, doc.auth !== undefined, issues);
+  const writes = normalizeWrites(doc.writes, world, auth, doc.auth !== undefined, issues);
 
   let path = [];
   if (doc.path !== undefined) {
@@ -1215,6 +1459,7 @@ export function normalizeScenario(doc, file = '<scenario>') {
   if (issues.list.length) throw new AtrezzoError(`${file}: invalid scenario`, { issues: issues.list });
   const out = { name: doc.name, description: doc.description ?? null, seed: doc.seed, now, world, endpoints, entry, path, expect };
   if (auth) out.auth = auth; // only when declared: keeps scenario hashes stable
+  if (writes.length) out.writes = writes; // same: absent unless declared
   return out;
 }
 

@@ -36,9 +36,28 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     '  if (res.body === null) return new HttpResponse(null, { status: res.status, headers: res.headers }); // count only',
     '  return HttpResponse.json(res.body, { status: res.status, headers: res.headers });',
     '}',
-    '',
-    'export const handlers = [',
   ];
+  if (dataset.writes?.length) {
+    lines.push(
+      '',
+      '/** Applies a declared write against the in-memory world. */',
+      'async function mutate({ request }) {',
+      '  const url = new URL(request.url);',
+      '  const text = await request.text();',
+      '  let body = {};',
+      '  if (text) {',
+      '    try { body = JSON.parse(text); } catch {',
+      "      return HttpResponse.json({ error: 'invalid JSON body' }, { status: 400, headers: { 'x-atrezzo-scenario': dataset.scenario } });",
+      '    }',
+      '  }',
+      '  const res = engine.handle({ method: request.method, pathname: url.pathname, query: url.searchParams, headers: request.headers, body });',
+      '  if (!res) return undefined;',
+      '  if (res.body === null) return new HttpResponse(null, { status: res.status, headers: res.headers });',
+      '  return HttpResponse.json(res.body, { status: res.status, headers: res.headers });',
+      '}',
+    );
+  }
+  lines.push('', 'export const handlers = [');
   for (const ep of dataset.endpoints) {
     const notes = [`${ep.entity}`];
     if (ep.filters.length) notes.push(`filters: ${ep.filters.join(', ')}`);
@@ -59,7 +78,17 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     // MSW and the engine share the ":name" syntax; the detail segment must not reuse a parameter's name.
     if (ep.detail) lines.push(`  http.get('*${ep.path}/:${ep.params?.some((x) => x.name === 'id') ? 'row_id' : 'id'}', project),`);
   }
-  lines.push('];', '', 'export { dataset };', '');
+  if (dataset.writes?.length) {
+    const orderedWrites = [...dataset.writes].sort((a, b) => (a.params?.length ?? 0) - (b.params?.length ?? 0));
+    for (const w of orderedWrites) {
+      const notes = [`status ${w.expect.status}${w.expect.echo ? ' · echo' : ''}`];
+      if (w.mutate) notes.push(`${w.mutate.action} ${w.mutate.entity}`);
+      lines.push(`  // ${w.method} ${w.path} → ${notes.join(' · ')}`);
+      lines.push(`  http.${w.method.toLowerCase()}('*${w.path}', mutate),`);
+    }
+    lines.push("  http.post('*/__atrezzo/reset', () => { engine.reset(); return HttpResponse.json({ scenario: dataset.scenario, reset: true }, { status: 200 }); }),");
+  }
+  lines.push('];', '', 'export function reset() { engine.reset(); }', '', 'export { dataset };', '');
   return lines.join('\n');
 }
 

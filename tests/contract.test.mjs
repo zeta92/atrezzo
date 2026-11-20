@@ -1574,3 +1574,295 @@ endpoints:
     entity: buckets
 `), /world\.buckets\.counts\.tasks\.on": field "missing_fk" does not exist in "tasks"/);
 });
+
+// ---------- Business writes (`writes: { "METHOD /path": { expect, mutate } }`) ----------
+
+const WRITES_SCENARIO = `name: writes-orders
+seed: 7712
+now: 2025-03-01T09:00:00Z
+world:
+  customers: 3
+  orders:
+    total: 5
+    distribution: { paid: 3, pending: 1, issue: 1 }
+    amount: { min: 20, max: 500, currency: EUR }
+endpoints:
+  - path: /api/orders
+    entity: orders
+    filters: [status, customer_id]
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: id
+    include: [customers]
+  - path: /api/customers
+    entity: customers
+    counts:
+      orders: { entity: orders, on: customer_id }
+writes:
+  "POST /api/orders":
+    expect: { status: 201, echo: true }
+    mutate: { entity: orders, set: { status: "nuevo" } }
+  "POST /api/customers/:customer_id/orders":
+    expect: { status: 201, echo: true }
+    mutate: { entity: orders, set: { status: "nuevo" } }
+  "PATCH /api/orders/:id":
+    expect: { status: 200, echo: true }
+    mutate: { entity: orders, set: { status: "enviado" } }
+  "PUT /api/orders/:id":
+    expect: { status: 200, echo: true }
+    mutate: { entity: orders }
+  "DELETE /api/orders/:id":
+    expect: { status: 204 }
+    mutate: { entity: orders }
+  "POST /api/orders/:id/cancel":
+    expect: { status: 200, body: { cancelled: true } }
+    mutate: { entity: orders, action: update, set: { status: "cancelled" } }
+  "POST /api/customers":
+    expect: { status: 201, echo: true }
+    mutate: { entity: customers }
+  "POST /api/echo-only":
+    expect: { status: 200, echo: true }
+`;
+
+test('writes: POST creates, PATCH/PUT updates, DELETE removes, and reset restores initial world', () => {
+  const norm = normalizeScenario(parseYaml(WRITES_SCENARIO, 'w.yaml'), 'w.yaml');
+  const ds = generateWorld(norm);
+  const eng = createEngine(ds);
+
+  // Scenarios without writes keep their exact normalized form and hash
+  const plainNorm = normalizeScenario(parseYaml(SCENARIO, 's.yaml'), 's.yaml');
+  assert.equal(plainNorm.writes, undefined);
+  assert.equal(scenarioHash(plainNorm), dataset.hash);
+
+  // POST creates a new row with next id (6) and set overrides (status: "nuevo")
+  const created = eng.handle({
+    method: 'POST',
+    pathname: '/api/orders',
+    body: { customer_id: 2, amount: 149.5, status: 'paid' },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.id, 6);
+  assert.equal(created.body.customer_id, 2);
+  assert.equal(created.body.amount, 149.5);
+  assert.equal(created.body.status, 'nuevo');
+
+  // Subsequent GET reads see the newly created row (list, filter, detail, counts, include)
+  const listNuevo = eng.handle({ method: 'GET', pathname: '/api/orders', query: { status: 'nuevo' } });
+  assert.equal(listNuevo.status, 200);
+  assert.equal(listNuevo.body.length, 1);
+  assert.equal(listNuevo.body[0].id, 6);
+  assert.equal(listNuevo.body[0].customer.id, 2);
+  const detail6 = eng.handle({ method: 'GET', pathname: '/api/orders/6' });
+  assert.equal(detail6.status, 200);
+  assert.equal(detail6.body.status, 'nuevo');
+  assert.equal(eng.handle({ method: 'GET', pathname: '/api/orders' }).headers['x-total-count'], '6');
+
+  // Customer count index was invalidated and reflects the new order
+  const c2Before = ds.entities.orders.filter((o) => o.customer_id === 2).length;
+  const cust2 = eng.handle({ method: 'GET', pathname: '/api/customers/2' });
+  assert.equal(cust2.body.orders_count, c2Before + 1);
+
+  // Nested POST binds :customer_id from path as integer
+  const nestedCreated = eng.handle({ method: 'POST', pathname: '/api/customers/3/orders', body: { amount: 88 } });
+  assert.equal(nestedCreated.status, 201);
+  assert.equal(nestedCreated.body.id, 7);
+  assert.equal(nestedCreated.body.customer_id, 3);
+  assert.equal(nestedCreated.body.status, 'nuevo');
+
+  // PATCH changes the targeted row in memory and subsequent GET reflects it
+  const patched = eng.handle({ method: 'PATCH', pathname: '/api/orders/6', body: { amount: 200 } });
+  assert.equal(patched.status, 200);
+  assert.equal(patched.body.id, 6);
+  assert.equal(patched.body.amount, 200);
+  assert.equal(patched.body.status, 'enviado');
+  assert.equal(eng.handle({ method: 'GET', pathname: '/api/orders/6' }).body.status, 'enviado');
+  assert.equal(eng.handle({ method: 'GET', pathname: '/api/orders/6' }).body.amount, 200);
+
+  // PUT updates row while preserving existing fields
+  const putRes = eng.handle({ method: 'PUT', pathname: '/api/orders/1', body: { status: 'review', amount: 310 } });
+  assert.equal(putRes.status, 200);
+  assert.equal(putRes.body.id, 1);
+  assert.equal(putRes.body.status, 'review');
+  assert.equal(putRes.body.reference, ds.entities.orders[0].reference);
+
+  // Custom RPC-style POST with action: update and static body
+  const cancelRes = eng.handle({ method: 'POST', pathname: '/api/orders/2/cancel' });
+  assert.equal(cancelRes.status, 200);
+  assert.deepEqual(cancelRes.body, { cancelled: true });
+  assert.equal(eng.handle({ method: 'GET', pathname: '/api/orders/2' }).body.status, 'cancelled');
+
+  // DELETE removes the row; subsequent GET returns 404; second DELETE returns 404
+  const delRes = eng.handle({ method: 'DELETE', pathname: '/api/orders/6' });
+  assert.equal(delRes.status, 204);
+  assert.equal(delRes.body, null);
+  assert.equal(eng.handle({ method: 'GET', pathname: '/api/orders/6' }).status, 404);
+  assert.equal(eng.handle({ method: 'DELETE', pathname: '/api/orders/6' }).status, 404);
+  assert.equal(eng.handle({ method: 'GET', pathname: '/api/orders' }).headers['x-total-count'], '6');
+
+  // Missing row on PATCH/PUT returns 404
+  assert.equal(eng.handle({ method: 'PATCH', pathname: '/api/orders/999', body: { amount: 1 } }).status, 404);
+
+  // Undeclared write method on existing path returns 405 with accurate Allow header
+  const disallowed = eng.handle({ method: 'DELETE', pathname: '/api/orders' });
+  assert.equal(disallowed.status, 405);
+  assert.equal(disallowed.headers.allow, 'GET, POST');
+
+  // reset() restores the exact initial world and id counters without mutating input dataset
+  eng.reset();
+  assert.equal(eng.handle({ method: 'GET', pathname: '/api/orders' }).headers['x-total-count'], '5');
+  assert.equal(eng.handle({ method: 'GET', pathname: '/api/orders/6' }).status, 404);
+  assert.equal(eng.handle({ method: 'GET', pathname: '/api/orders/1' }).body.status, ds.entities.orders[0].status);
+  assert.equal(eng.handle({ method: 'GET', pathname: '/api/customers/2' }).body.orders_count, c2Before);
+  assert.equal(eng.handle({ method: 'POST', pathname: '/api/orders', body: { customer_id: 1 } }).body.id, 6);
+  assert.equal(ds.entities.orders.length, 5);
+});
+
+test('writes: determinism — response body does not depend on key arrival order or cross-entity write order', () => {
+  const ds = generateWorld(normalizeScenario(parseYaml(WRITES_SCENARIO, 'w.yaml'), 'w.yaml'));
+  const e1 = createEngine(ds);
+  const e2 = createEngine(ds);
+
+  // Different key arrival order in request body produces byte-for-byte identical JSON
+  const r1 = e1.handle({ method: 'POST', pathname: '/api/orders', body: { amount: 55, customer_id: 1, reference: 'ORD-NEW', extra_z: 1, extra_a: 2 } });
+  const r2 = e2.handle({ method: 'POST', pathname: '/api/orders', body: { extra_a: 2, reference: 'ORD-NEW', extra_z: 1, customer_id: 1, amount: 55 } });
+  assert.equal(JSON.stringify(r1.body), JSON.stringify(r2.body));
+  assert.deepEqual(Object.keys(r1.body), ['id', 'reference', 'customer_id', 'status', 'amount', 'customer']);
+  assert.equal('extra_a' in r1.body, false);
+  assert.equal('extra_z' in r1.body, false);
+
+  // Echo-only write sorts keys deterministically regardless of arrival order
+  const eo1 = e1.handle({ method: 'POST', pathname: '/api/echo-only', body: { z: 1, a: { d: 4, c: 3 } } });
+  const eo2 = e2.handle({ method: 'POST', pathname: '/api/echo-only', body: { a: { c: 3, d: 4 }, z: 1 } });
+  assert.equal(JSON.stringify(eo1.body), JSON.stringify(eo2.body));
+
+  // Cross-entity arrival order: creating a customer before vs after an order yields the same order response body
+  e1.reset();
+  e2.reset();
+  const orderFirst = e1.handle({ method: 'POST', pathname: '/api/orders', body: { customer_id: 1, amount: 42 } });
+  e1.handle({ method: 'POST', pathname: '/api/customers', body: { name: 'Acme' } });
+
+  e2.handle({ method: 'POST', pathname: '/api/customers', body: { name: 'Acme' } });
+  const orderSecond = e2.handle({ method: 'POST', pathname: '/api/orders', body: { customer_id: 1, amount: 42 } });
+  assert.equal(JSON.stringify(orderFirst.body), JSON.stringify(orderSecond.body));
+
+  // Different arrival order of PATCHes on distinct rows keeps GET sort deterministic and response bodies identical
+  e1.reset();
+  e2.reset();
+  const p1A = e1.handle({ method: 'PATCH', pathname: '/api/orders/1', body: { amount: 111 } });
+  const p1B = e1.handle({ method: 'PATCH', pathname: '/api/orders/2', body: { amount: 222 } });
+  const p2B = e2.handle({ method: 'PATCH', pathname: '/api/orders/2', body: { amount: 222 } });
+  const p2A = e2.handle({ method: 'PATCH', pathname: '/api/orders/1', body: { amount: 111 } });
+  assert.equal(JSON.stringify(p1A.body), JSON.stringify(p2A.body));
+  assert.equal(JSON.stringify(p1B.body), JSON.stringify(p2B.body));
+  assert.equal(
+    JSON.stringify(e1.handle({ method: 'GET', pathname: '/api/orders' }).body),
+    JSON.stringify(e2.handle({ method: 'GET', pathname: '/api/orders' }).body),
+  );
+});
+
+test('writes: unknown request fields are dropped and echo: true matches subsequent GET projection', () => {
+  const ds = generateWorld(normalizeScenario(parseYaml(WRITES_SCENARIO, 'w.yaml'), 'w.yaml'));
+  const eng = createEngine(ds);
+
+  const created = eng.handle({
+    method: 'POST',
+    pathname: '/api/orders',
+    body: { customer_id: 2, amount: 149.5, unknown_field: 'should-not-leak', extra: { nested: 1 } },
+  });
+  assert.equal(created.status, 201);
+  assert.equal('unknown_field' in created.body, false);
+  assert.equal('extra' in created.body, false);
+  const fetchedCreated = eng.handle({ method: 'GET', pathname: `/api/orders/${created.body.id}` });
+  assert.equal(fetchedCreated.status, 200);
+  assert.deepEqual(created.body, fetchedCreated.body);
+  assert.equal(JSON.stringify(created.body), JSON.stringify(fetchedCreated.body));
+  assert.equal('unknown_field' in eng.dataset.entities.orders.at(-1), false);
+
+  const patched = eng.handle({
+    method: 'PATCH',
+    pathname: `/api/orders/${created.body.id}`,
+    body: { amount: 250, unknown_patch_field: true },
+  });
+  assert.equal(patched.status, 200);
+  assert.equal('unknown_patch_field' in patched.body, false);
+  const fetchedPatched = eng.handle({ method: 'GET', pathname: `/api/orders/${created.body.id}` });
+  assert.deepEqual(patched.body, fetchedPatched.body);
+  assert.equal(JSON.stringify(patched.body), JSON.stringify(fetchedPatched.body));
+
+  const putRes = eng.handle({
+    method: 'PUT',
+    pathname: '/api/orders/1',
+    body: { amount: 333, unknown_put_field: 'nope' },
+  });
+  assert.equal(putRes.status, 200);
+  assert.equal('unknown_put_field' in putRes.body, false);
+  const fetchedPut = eng.handle({ method: 'GET', pathname: '/api/orders/1' });
+  assert.deepEqual(putRes.body, fetchedPut.body);
+  assert.equal(JSON.stringify(putRes.body), JSON.stringify(fetchedPut.body));
+
+  const createdCustomer = eng.handle({
+    method: 'POST',
+    pathname: '/api/customers',
+    body: { name: 'Beta Co', bogus: 42 },
+  });
+  assert.equal(createdCustomer.status, 201);
+  assert.equal('bogus' in createdCustomer.body, false);
+  const fetchedCustomer = eng.handle({ method: 'GET', pathname: `/api/customers/${createdCustomer.body.id}` });
+  assert.deepEqual(createdCustomer.body, fetchedCustomer.body);
+  assert.equal(JSON.stringify(createdCustomer.body), JSON.stringify(fetchedCustomer.body));
+});
+
+test('writes: validation rejects missing method, unsupported method, unknown entity, unknown fields, and invalid expect/mutate', () => {
+  const parseErr = (writesBlock, extraWorld = '') => {
+    const yaml = `name: bad-writes
+seed: 1
+world:
+  customers: 2
+  orders:
+    total: 3
+    ref: customers
+    fields: { title: string, status: [open, closed] }
+${extraWorld}endpoints:
+  - path: /api/orders
+    entity: orders
+writes:
+${writesBlock}`;
+    try {
+      normalizeScenario(parseYaml(yaml, 'bad-writes.yaml'), 'bad-writes.yaml');
+    } catch (e) {
+      assert.ok(e instanceof AtrezzoError);
+      assert.equal(e.exitCode, 3);
+      return e.message;
+    }
+    assert.fail(`expected scenario validation error for:\n${writesBlock}`);
+  };
+
+  assert.match(parseErr('  "/api/orders":\n    expect: { status: 201 }\n'), /must include an explicit HTTP method \(POST, PUT, PATCH, DELETE\)/);
+  assert.match(parseErr('  "GET /api/orders":\n    expect: { status: 200 }\n'), /method "GET" is not supported in writes; use POST, PUT, PATCH, DELETE/);
+  assert.match(parseErr('  "post /api/orders":\n    expect: { status: 201 }\n'), /method "post" is not supported in writes/);
+  assert.match(parseErr('  "POST api/orders":\n    expect: { status: 201 }\n'), /must start with "\/"/);
+  assert.match(parseErr('  "POST /api/orders?x=1":\n    expect: { status: 201 }\n'), /must not contain whitespace, query or fragment/);
+  assert.match(parseErr('  "PATCH /api/orders/:id":\n    expect: { status: 200 }\n  "PATCH /api/orders/:order_id":\n    expect: { status: 200 }\n'), /duplicate write route/);
+  assert.match(parseErr('  "POST /api/orders":\n    expect: { status: 201 }\n    mutate: { entity: ghosts, set: { status: "nuevo" } }\n'), /mutate\.entity": "ghosts" is not declared in world/);
+  assert.match(parseErr('  "POST /api/orders":\n    expect: { status: 201 }\n    mutate: { set: { status: "nuevo" } }\n'), /mutate\.entity": required; a declared world entity/);
+  assert.match(parseErr('  "POST /api/orders":\n    expect: { status: 201 }\n    mutate: { entity: orders, set: { missing_field: "x" } }\n'), /mutate\.set\.missing_field": field "missing_field" does not exist in "orders"/);
+  assert.match(parseErr('  "POST /api/orders":\n    expect: { status: 201 }\n    mutate: { entity: orders, set: { id: 99 } }\n'), /mutate\.set\.id": "id" is managed by atrezzo/);
+  assert.match(parseErr('  "POST /api/orders":\n    expect: { status: 201 }\n    mutate: { entity: orders, set: { status: { nested: 1 } } }\n'), /mutate\.set\.status": must be a scalar value/);
+  assert.match(parseErr('  "PATCH /api/orders/:ghost_id":\n    expect: { status: 200 }\n    mutate: { entity: orders, set: { status: "nuevo" } }\n'), /parameter ":ghost_id" does not match any field of "orders"/);
+  assert.match(parseErr('  "DELETE /api/orders/:id":\n    expect: { status: 204 }\n    mutate: { entity: orders, set: { status: "x" } }\n'), /mutate\.set": "set" cannot be used with delete/);
+  assert.match(parseErr('  "POST /api/orders":\n    expect: { status: 201 }\n    mutate: { entity: orders, where: { status: open } }\n'), /mutate\.where": "where" cannot be used with create/);
+  assert.match(parseErr('  "DELETE /api/orders":\n    expect: { status: 204 }\n    mutate: { entity: orders, where: { bogus: 1 } }\n'), /mutate\.where\.bogus": field "bogus" does not exist in "orders"/);
+  assert.match(parseErr('  "POST /api/orders":\n    expect: { status: 201, echo: true, body: { ok: true } }\n'), /use "echo: true" or "body", not both/);
+  assert.match(parseErr('  "DELETE /api/orders/:id":\n    expect: { status: 204, echo: true }\n    mutate: { entity: orders }\n'), /status 204 cannot have a response body/);
+  assert.match(parseErr('  "POST /api/orders":\n    expect: { status: 999 }\n'), /expect\.status": must be an integer HTTP status between 200 and 599/);
+  assert.match(parseErr('  "POST /api/orders": {}\n'), /must declare "expect" and\/or "mutate"/);
+
+  // Empty writes map or missing auth user
+  assert.throws(
+    () => normalizeScenario(parseYaml('name: e\nseed: 1\nworld:\n  orders: 2\nendpoints:\n  - path: /api/orders\n    entity: orders\nwrites: {}\n', 'e.yaml'), 'e.yaml'),
+    (e) => e instanceof AtrezzoError && /field "writes": must be a non-empty map/.test(e.message),
+  );
+  assert.throws(
+    () => normalizeScenario(parseYaml('name: e\nseed: 1\nworld:\n  orders: 2\nendpoints:\n  - path: /api/orders\n    entity: orders\nwrites:\n  "POST /api/orders":\n    expect: { status: 201 }\n    mutate: { entity: orders, set: { status: "$user.name" } }\n', 'e.yaml'), 'e.yaml'),
+    (e) => e instanceof AtrezzoError && /requires a top-level "auth: \{ user: \{ entity, id \} \}"/.test(e.message),
+  );
+});
