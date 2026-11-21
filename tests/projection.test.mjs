@@ -224,6 +224,19 @@ ${order}endpoints:
     entity: slots
 `;
 
+const TEAMS = (seed, order = '    values_order: { cycle: { by: team_id } }\n') => `name: teams
+seed: ${seed}
+world:
+  teams: 3
+  members:
+    total: 15
+    ref: teams
+    fields: { role: [owner, reader, guest], name: string }
+${order}endpoints:
+  - path: /api/members
+    entity: members
+`;
+
 test('values_order: cycle hands out every list in the written order, the same on two seeds', () => {
   for (const seed of [1, 987654]) {
     const rows = generateWorld(parse(SLOTS(seed))).entities.slots;
@@ -239,6 +252,38 @@ test('without values_order (or with random) the lists stay drawn at random, and 
   assert.deepEqual(drawn.map((r) => [r.title, r.open]), cycled.map((r) => [r.title, r.open]), 'only the listed fields change');
   const random = parse(SLOTS(1, '    values_order: random\n'));
   assert.equal(scenarioHash(random), scenarioHash(parse(SLOTS(1, ''))), 'the default changes nothing, not even the hash');
+});
+
+const rolesPerTeam = (seed, order) => {
+  const rows = generateWorld(parse(TEAMS(seed, order))).entities.members;
+  const groups = new Map();
+  for (const r of rows) { const g = groups.get(r.team_id) ?? []; g.push(r.role); groups.set(r.team_id, g); }
+  return groups;
+};
+const cycleOf = (n) => Array.from({ length: n }, (_, i) => ['owner', 'reader', 'guest'][i % 3]);
+
+test('values_order: { cycle: { by: <field> } } restarts the sequence for every group', () => {
+  for (const seed of [1, 987654]) {
+    const groups = rolesPerTeam(seed);
+    assert.equal(groups.size, 3, 'three teams');
+    assert.ok([...groups.values()].every((g) => g.length >= 2), 'every team has at least two members');
+    for (const [team, roles] of groups) assert.deepEqual(roles, cycleOf(roles.length), `team ${team}, seed ${seed}`);
+  }
+});
+
+test('values_order: the flat cycle does not restart per group, and the hash differs', () => {
+  const flat = rolesPerTeam(1, '    values_order: cycle\n');
+  assert.ok([...flat.values()].some((roles) => roles[0] !== 'owner'), 'some team starts mid-sequence without by');
+  assert.notEqual(scenarioHash(parse(TEAMS(1))), scenarioHash(parse(TEAMS(1, '    values_order: cycle\n'))));
+});
+
+test('values_order: a bad "by" or an unknown key under cycle is invalid', () => {
+  assert.match(issues(TEAMS(1, '    values_order: { cycle: { by: nope } }\n')),
+    /world\.members\.values_order\.cycle\.by": field does not exist in "members"/);
+  assert.match(issues(TEAMS(1, '    values_order: { cycle: { sort: id } }\n')),
+    /world\.members\.values_order\.cycle\.sort": unknown field \(allowed: by\)/);
+  assert.match(issues(TEAMS(1, '    values_order: { random: {} }\n')),
+    /world\.members\.values_order": must be "random" or "cycle" or a map like \{ cycle: \{ by: <field> \} \}/);
 });
 
 test('values_order without a field with a list of values, or with an unknown value, is invalid', () => {

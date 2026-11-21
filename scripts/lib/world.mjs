@@ -219,7 +219,11 @@ function generateEntity(spec, scenario, counts, built) {
   const amountField = t.amountField || 'amount';
   const frng = spec.fields ? createRng(scenario.seed, `fields:${spec.name}`) : null;
   // `values_order: cycle`: row i takes values[i % n], in the written order, whatever the seed.
+  // With `cycle: { by: <field> }` the sequence restarts for every value of that field: each group
+  // (a parent's children, a status…) gets its own cursor, so 15 members in 3 teams come out 5/5/5.
   const cycled = spec.valuesOrder === 'cycle' ? valueListFields(spec) : [];
+  const cycleBy = spec.valuesOrderBy ?? null;
+  const cursors = new Map();
   const rows = [];
   for (let i = 0; i < n; i++) {
     const id = i + 1;
@@ -248,7 +252,16 @@ function generateEntity(spec, scenario, counts, built) {
       else row[f] = f in base ? base[f] : null;
     }
     // `cycle` and `seed_first`: after the draws, so the other fields keep the values they have without them.
-    for (const f of cycled) { const list = firstValueList(spec, f); row[f] = list[i % list.length]; }
+    // The cursor is per group when `by` is declared, so each group starts again at the first value.
+    if (cycled.length) {
+      let k = i;
+      if (cycleBy) {
+        const key = String(row[cycleBy]);
+        k = cursors.get(key) ?? 0;
+        cursors.set(key, k + 1);
+      }
+      for (const f of cycled) { const list = firstValueList(spec, f); row[f] = list[k % list.length]; }
+    }
     for (const f of spec.seedFirst ?? []) row[f] = firstValueList(spec, f)[0];
     rows.push(row);
   }

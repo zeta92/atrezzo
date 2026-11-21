@@ -358,7 +358,7 @@ The capabilities below shipped across the releases from 0.11 to 0.21.
 
 ### 0.10.0
 
-**Four things a response could not say.** `embed` entries nest (`- entity: items` + `embed: [tags]`, up to 4 levels; a cycle is a scenario error naming its path); `pluck: <field>` answers that field of each row as a string (`["1","2","3"]`) with filters, sort, pagination, `envelope` and `detail`; `values_order: cycle` hands out each list of values in the written order on every seed; `error: { status, body }` makes an endpoint always answer that error (reported by `serve`, read by `verify` as a real answer). Scenarios without them keep their hash; see `references/scenario.md`, covered in `tests/projection.test.mjs`.
+**Four things a response could not say.** `embed` entries nest (`- entity: items` + `embed: [tags]`, up to 4 levels; a cycle is a scenario error naming its path); `pluck: <field>` answers that field of each row as a string (`["1","2","3"]`) with filters, sort, pagination, `envelope` and `detail`; `values_order: cycle` hands out each list of values in the written order on every seed (`{ cycle: { by: <field> } }` restarts the sequence per group, e.g. one per parent); `error: { status, body }` makes an endpoint always answer that error (reported by `serve`, read by `verify` as a real answer). Scenarios without them keep their hash; see `references/scenario.md`, covered in `tests/projection.test.mjs`.
 
 ### 0.9.6
 
