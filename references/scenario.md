@@ -184,8 +184,24 @@ world:
 ```
 
 - Applies to every field of the entity with a written list (`values:` or an enum in `fields`); booleans, foreign keys and the `distribution` field keep their own rules. `random` (the default) changes nothing, not even the scenario hash.
-- The values are drawn first and then replaced, so the other fields keep the values they have without it. `seed_first` (applied after) and `nulls` still win on the fields they name.
-- Validation: `cycle` or `random`; an entity with no field with a list of values is an error.
+
+##### `values_order: { cycle: { by: <field> } }`: the sequence restarts for every group
+
+Plain `cycle` counts over the whole entity: row *i* of 15 gets `values[i % n]`, so the 6 members of the second team continue where the first team left off and a screen that lists them per team shows 6/3/6 with the roles out of order. Naming a field gives **each value of that field its own cursor**, starting again at the first value:
+
+```yaml
+world:
+  teams: 3
+  members:
+    total: 15
+    ref: teams
+    fields: { role: [owner, reader, guest], name: string }
+    values_order: { cycle: { by: team_id } }   # cada equipo: owner, reader, guest, owner…
+```
+
+- `by` must be a field of the entity (a foreign key counts); rows whose `by` value is missing or `null` group together. `{ cycle: {} }` is the flat cycle.
+- Everything else is unchanged: the same list order, the same rows on every seed, `seed_first`/`nulls` still win, and the other fields keep the values they had. The grouped form does change the scenario hash (it is a different world from the flat one).
+- Validation: `cycle` or `random`, or `{ cycle: { by: <field> } }` with an existing field; an entity with no field with a list of values is an error.
 - With `pluck` (below), `values_order: cycle` gives an endpoint that answers a known list of ids in order: `pluck: external_id` ⇒ `["70001", …]`.
 
 Built-in templates and their fields:

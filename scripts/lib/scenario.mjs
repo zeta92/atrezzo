@@ -172,16 +172,47 @@ function normalizeSeedFirst(spec, raw, f, issues) {
 }
 
 /**
- * `values_order: cycle | random`. Only `cycle` changes the normalized spec (so a scenario that omits the
- * key, or writes the default, keeps its hash); either value needs a field with a list of values.
+ * `values_order: cycle | random`, or `{ cycle: { by: <field> } }` to restart the sequence for every
+ * value of that field (a stream per parent). Only `cycle` changes the normalized spec (so a scenario
+ * that omits the key, or writes the default, keeps its hash); either form needs a field with a list
+ * of values.
  */
 function normalizeValuesOrder(spec, raw, f, issues) {
-  if (!VALUES_ORDERS.includes(raw)) { issues.add(f, `must be ${VALUES_ORDERS.map((v) => `"${v}"`).join(' or ')}; got ${JSON.stringify(raw)}`); return; }
+  let by;
+  if (isObj(raw)) {
+    const keys = Object.keys(raw);
+    if (keys.length !== 1 || keys[0] !== 'cycle') {
+      issues.add(f, `must be ${VALUES_ORDERS.map((v) => `"${v}"`).join(' or ')} or a map like { cycle: { by: <field> } }; got ${JSON.stringify(raw)}`);
+      return;
+    }
+    const opts = raw.cycle;
+    if (opts !== null && opts !== true && !isObj(opts)) {
+      issues.add(`${f}.cycle`, `must be a map like { by: <field> }; got ${JSON.stringify(opts)}`);
+      return;
+    }
+    if (isObj(opts)) {
+      issues.unknownKeys(opts, ['by'], `${f}.cycle`);
+      if (opts.by !== undefined) {
+        if (typeof opts.by !== 'string' || !opts.by) { issues.add(`${f}.cycle.by`, 'must be the name of a field'); return; }
+        if (!entityFields(spec).includes(opts.by)) {
+          issues.add(`${f}.cycle.by`, `field does not exist in "${spec.name}" (fields: ${entityFields(spec).join(', ')})`);
+          return;
+        }
+        by = opts.by;
+      }
+    }
+  } else if (!VALUES_ORDERS.includes(raw)) {
+    issues.add(f, `must be ${VALUES_ORDERS.map((v) => `"${v}"`).join(' or ')}; got ${JSON.stringify(raw)}`);
+    return;
+  }
   if (!valueListFields(spec).length) {
     issues.add(f, `"${spec.name}" has no field with a list of values (values: or an enum in fields:); values_order decides how those lists are drawn`);
     return;
   }
-  if (raw === 'cycle') spec.valuesOrder = 'cycle';
+  if (raw !== 'random') {
+    spec.valuesOrder = 'cycle';
+    if (by) spec.valuesOrderBy = by;
+  }
 }
 
 /** Types accepted in `fields` (a list of values = enum). */
