@@ -217,6 +217,10 @@ function formatEnvelope(ep, page, total, limit, offset, pageNum) {
   if (ep.envelope.total !== undefined) setEnvelopeKey(body, ep.envelope.total, total);
   if (ep.envelope.page !== undefined) setEnvelopeKey(body, ep.envelope.page, pageNum);
   if (ep.envelope.per_page !== undefined) setEnvelopeKey(body, ep.envelope.per_page, limit);
+  if (ep.envelope.total_pages !== undefined) {
+    // Derived, never drawn: ceil(total / page size); an unpaginated answer is one page (or none).
+    setEnvelopeKey(body, ep.envelope.total_pages, limit > 0 ? Math.ceil(total / limit) : (total > 0 ? 1 : 0));
+  }
   return body;
 }
 

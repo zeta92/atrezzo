@@ -743,7 +743,7 @@ function paramField(name, path, count, fields) {
 
 /** array: a JSON list · envelope: { data, total, limit, offset } (or custom keys via `envelope`) · object: the first row as a JSON object. */
 export const SHAPES = ['array', 'envelope', 'object'];
-const ENVELOPE_KEYS = ['items', 'total', 'page', 'per_page'];
+const ENVELOPE_KEYS = ['items', 'total', 'page', 'per_page', 'total_pages'];
 const FORBIDDEN_ENVELOPE_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
 
 function parseEnvelope(raw, rawShape, hasPick, f, issues) {
@@ -777,7 +777,7 @@ function parseEnvelope(raw, rawShape, hasPick, f, issues) {
   const hasItemsKey = Object.hasOwn(raw, 'items');
   const out = { items: parsed.items ?? 'data' };
   const used = hasItemsKey && parsed.items === undefined ? [] : [['items', out.items, parsed.items !== undefined]];
-  for (const k of ['total', 'page', 'per_page']) {
+  for (const k of ['total', 'page', 'per_page', 'total_pages']) {
     if (parsed[k] === undefined) continue;
     const val = parsed[k];
     const dup = used.find(([, uv]) => uv === val);

@@ -1124,7 +1124,7 @@ ${epExtra}`;
   assert.match(parseErr('    shape: envelope\n    pick: articles\n    envelope: { items: articles, total: articlesCount }\n'), /cannot combine "pick" with "envelope"/);
   assert.match(parseErr('    shape: envelope\n    envelope: {}\n'), /envelope": must be a non-empty map/);
   assert.match(parseErr('    shape: envelope\n    envelope: articles\n'), /envelope": must be a non-empty map/);
-  assert.match(parseErr('    shape: envelope\n    envelope: { items: articles, offset: skip }\n'), /envelope\.offset": unknown field \(allowed: items, total, page, per_page\)/);
+  assert.match(parseErr('    shape: envelope\n    envelope: { items: articles, offset: skip }\n'), /envelope\.offset": unknown field \(allowed: items, total, page, per_page, total_pages\)/);
   assert.match(parseErr('    shape: envelope\n    envelope: { items: "", total: articlesCount }\n'), /envelope\.items": must be a non-empty key name/);
   assert.match(parseErr('    shape: envelope\n    envelope: { items: "   ", total: articlesCount }\n'), /envelope\.items": must be a non-empty key name/);
   assert.match(parseErr('    shape: envelope\n    envelope: { items: articles, total: null }\n'), /envelope\.total": must be a non-empty key name/);
@@ -2297,4 +2297,35 @@ endpoints:
   assert.equal(missingDetail.status, 404);
   assert.equal(missingDetail.body.article, undefined);
   assert.match(missingDetail.body.error, /articles 999 does not exist/);
+});
+
+test('envelope: total_pages is derived from the total and the page size', () => {
+  const yaml = `name: total-pages
+seed: 7
+world:
+  lineas: { total: 60, fields: { nombre: string } }
+endpoints:
+  - path: /api/lineas
+    entity: lineas
+    pagination: { param_page: page, param_limit: per_page, default_limit: 25 }
+    sort: id
+    shape: envelope
+    envelope: { items: rows, total: total, page: page, total_pages: pages }
+  - path: /api/lineas-sin-paginar
+    entity: lineas
+    shape: envelope
+    envelope: { items: rows, total: total, total_pages: pages }
+`;
+  const sc = normalizeScenario(parseYaml(yaml, 'tp.yaml'), 'tp.yaml');
+  const engine = createEngine(generateWorld(sc));
+  const get = (p) => {
+    const u = new URL(p, 'http://x');
+    return engine.handle({ method: 'GET', pathname: u.pathname, query: u.searchParams });
+  };
+  const p1 = get('/api/lineas');
+  assert.deepEqual([p1.body.total, p1.body.page, p1.body.pages, p1.body.rows.length], [60, 1, 3, 25]);
+  const p3 = get('/api/lineas?page=3');
+  assert.deepEqual([p3.body.page, p3.body.pages, p3.body.rows.length], [3, 3, 10]);
+  const sinPaginar = get('/api/lineas-sin-paginar');
+  assert.deepEqual([sinPaginar.body.total, sinPaginar.body.pages], [60, 1], 'sin paginación es una página');
 });
