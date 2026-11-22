@@ -79,6 +79,18 @@ export function doctor(dir) {
         try {
           const sc = loadScenario(join(sdir, f), { fixturesDir: join(dir, cfg.fixturesDir) });
           const ds = generateWorld(sc);
+          for (const ep of sc.endpoints ?? []) {
+            const rows = ds.entities?.[ep.entity] ?? [];
+            if (rows.length < 2) continue;
+            for (const p of ep.params ?? []) {
+              if (!p.field) continue;
+              const distinct = new Set(rows.map((r) => r?.[p.field] ?? null));
+              if (distinct.size === 1) {
+                add('warn', `${sc.name}: endpoint "${ep.path}" binds ":${p.name}" to "${p.field}" with a single value across ${rows.length} rows`,
+                  `the parameter cannot select one row (every row answers): give "${p.field}" several distinct values (values: [...]) or drop the parameter`);
+              }
+            }
+          }
           const gen = join(dir, cfg.generatedDir, `${sc.name}.json`);
           let state = 'not generated';
           if (existsSync(gen)) state = JSON.parse(readFileSync(gen, 'utf8')).hash === ds.hash ? 'generated, up to date' : 'generated, STALE (atrezzo world)';
