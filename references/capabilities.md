@@ -16,11 +16,11 @@ Generado por `scripts/lib/capabilities.mjs` (`node scripts/cli.mjs capabilities 
 | `relations` · relaciones (`include`, `embed`, `counts`, `pluck`) | ✅ | ⚠ | ✅ | ✅ |
 | `nested-routes` · rutas anidadas con varios parámetros | ✅ | ⚠ | ◐ | ◐ |
 | `world-filters` · filtros de mundo y `$user` | ✅ | ⚠ | ✅ | ✅ |
-| `writes` · escrituras y `reset` (`writes`) | ◐ | ⚠ | ✖ | ✖ |
+| `writes` · escrituras y `reset` (`writes`) | ✅ | ⚠ | ✖ | ✖ |
 | `rpc` · funciones `rpc` | ✅ | ⚠ | ✖ | ✖ |
 | `streams` · SSE (`streams`) | ✖ | ⚠ | ✖ | ✖ |
 | `passthrough-error` · `passthrough` y `error` | ✅ | ✅ | ✅ | ✅ |
-| `latency` · latencia (`latency`) | ⚠ | ⚠ | ⚠ | ⚠ |
+| `latency` · latencia (`latency`) | ✅ | ⚠ | ⚠ | ⚠ |
 | `diagnostic-headers` · cabeceras de diagnóstico (`X-Total-Count`, `X-Atrezzo-*`) | ✅ | ✖ | ◐ | ◐ |
 
 ## Por qué cada celda no es ✅
@@ -47,18 +47,16 @@ Generado por `scripts/lib/capabilities.mjs` (`node scripts/cli.mjs capabilities 
 - **nested-routes × prism** (parcial): el patrón del spec no distingue los dos parámetros
 - **nested-routes × wiremock** (parcial): el mapping solo fija el primer segmento; el resto da 404
 - **world-filters × supabase** (distinto): el filtro por usuario lo pone RLS, no el escenario
-- **writes × msw** (parcial): los métodos declarados sí; uno no declarado se deja pasar a la red
 - **writes × supabase** (distinto): escribe de verdad en Postgres: el reset del mundo no lo deshace
 - **writes × prism** (no soportado (declarado)): no emite las rutas de escritura
 - **writes × wiremock** (no soportado (declarado)): no emite las rutas de escritura
 - **rpc × supabase** (distinto): la función tiene que existir en Postgres; el escenario no la crea
 - **rpc × prism** (no soportado (declarado)): no emite el endpoint
 - **rpc × wiremock** (no soportado (declarado)): no emite el endpoint
-- **streams × msw** (no soportado (declarado)): no hay handler de stream: el flujo no ve los eventos
+- **streams × msw** (no soportado (declarado)): un 501 explícito en la ruta del stream: el flujo ve el aviso, no los eventos
 - **streams × supabase** (distinto): no hay SSE en PostgREST
 - **streams × prism** (no soportado (declarado)): no emite el endpoint
 - **streams × wiremock** (no soportado (declarado)): no emite el endpoint
-- **latency × msw** (distinto): la latencia vive en `serve`: los handlers responden al instante
 - **latency × supabase** (distinto): la latencia la pone Postgres
 - **latency × prism** (distinto): no aplica `latency`
 - **latency × wiremock** (distinto): tiene `fixedDelayMilliseconds` pero el artefacto no lo usa

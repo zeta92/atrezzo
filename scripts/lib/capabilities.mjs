@@ -138,9 +138,8 @@ export const CAPABILITIES = [
     id: 'writes',
     label: 'escrituras y `reset` (`writes`)',
     present: (s) => (s.writes ?? []).length > 0,
-    states: { msw: 'partial', supabase: 'different', prism: 'declined', wiremock: 'declined' },
+    states: { msw: 'same', supabase: 'different', prism: 'declined', wiremock: 'declined' },
     notes: {
-      msw: 'los métodos declarados sí; uno no declarado se deja pasar a la red',
       supabase: 'escribe de verdad en Postgres: el reset del mundo no lo deshace',
       prism: 'no emite las rutas de escritura',
       wiremock: 'no emite las rutas de escritura'
@@ -163,7 +162,7 @@ export const CAPABILITIES = [
     present: (s) => (s.streams ?? []).length > 0,
     states: { msw: 'declined', supabase: 'different', prism: 'declined', wiremock: 'declined' },
     notes: {
-      msw: 'no hay handler de stream: el flujo no ve los eventos',
+      msw: 'un 501 explícito en la ruta del stream: el flujo ve el aviso, no los eventos',
       supabase: 'no hay SSE en PostgREST',
       prism: 'no emite el endpoint',
       wiremock: 'no emite el endpoint'
@@ -180,9 +179,8 @@ export const CAPABILITIES = [
     id: 'latency',
     label: 'latencia (`latency`)',
     present: (s) => anyEndpoint(s, (ep) => ep.latency !== undefined),
-    states: { msw: 'different', supabase: 'different', prism: 'different', wiremock: 'different' },
+    states: { msw: 'same', supabase: 'different', prism: 'different', wiremock: 'different' },
     notes: {
-      msw: 'la latencia vive en `serve`: los handlers responden al instante',
       supabase: 'la latencia la pone Postgres',
       prism: 'no aplica `latency`',
       wiremock: 'tiene `fixedDelayMilliseconds` pero el artefacto no lo usa'

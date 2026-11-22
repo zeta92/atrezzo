@@ -111,12 +111,15 @@ test('serve: a declared function only answers POST', async () => {
 const MSW_STUB = `
 export const http = {
   get: (path, resolver) => ({ method: 'GET', path, resolver }),
+  head: (path, resolver) => ({ method: 'HEAD', path, resolver }),
+  all: (path, resolver) => ({ method: 'ALL', path, resolver }),
   post: (path, resolver) => ({ method: 'POST', path, resolver }),
 };
 export const HttpResponse = Object.assign(
   function HttpResponse(body, init) { return { body, ...init }; },
   { json: (body, init) => ({ body, ...init }) },
 );
+export const delay = async () => {};
 `;
 
 test('MSW handlers answer the same functions as serve', async () => {
