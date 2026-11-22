@@ -55,7 +55,7 @@ test('pnpm monorepo: apps/web is the front end, services/api the backend; MSW in
   const { mkdirSync, writeFileSync } = await import('node:fs');
   mkdirSync(join(dir, 'apps/web/node_modules/msw'), { recursive: true });
   writeFileSync(join(dir, 'apps/web/node_modules/msw/package.json'), JSON.stringify({ name: 'msw', type: 'module', exports: './index.js' }));
-  writeFileSync(join(dir, 'apps/web/node_modules/msw/index.js'), 'export const http = { get: (p, r) => ({ p, r }) }; export const HttpResponse = { json: (b, i) => ({ b, ...i }) };\n');
+  writeFileSync(join(dir, 'apps/web/node_modules/msw/index.js'), 'export const http = { get: (p, r) => ({ p, r }), head: (p, r) => ({ p, r }), all: (p, r) => ({ p, r }) }; export const delay = async () => {}; export const HttpResponse = { json: (b, i) => ({ b, ...i }) };\n');
   const mod = await import(pathToFileURL(handlers).href);
   assert.equal(mod.dataset.entities.orders.length, 40);
   const idx = readFileSync(join(dir, 'apps/web/src/mocks/atrezzo/index.mjs'), 'utf8');

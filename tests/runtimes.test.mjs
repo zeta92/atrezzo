@@ -333,7 +333,12 @@ endpoints:
   mkdirSync(join(dir, 'node_modules/msw'), { recursive: true });
   writeFileSync(join(dir, 'node_modules/msw/package.json'), JSON.stringify({ name: 'msw', type: 'module', exports: './index.js' }));
   writeFileSync(join(dir, 'node_modules/msw/index.js'), `
-export const http = { get: (path, resolver) => ({ method: 'GET', path, resolver }) };
+export const http = {
+  get: (path, resolver) => ({ method: 'GET', path, resolver }),
+  head: (path, resolver) => ({ method: 'HEAD', path, resolver }),
+  all: (path, resolver) => ({ method: 'ALL', path, resolver }),
+};
+export const delay = async () => {};
 export const HttpResponse = Object.assign(
   function HttpResponse(body, init) { return { body, ...init }; },
   { json: (body, init) => ({ body, ...init }) },

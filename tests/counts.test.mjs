@@ -185,7 +185,12 @@ test('the generated MSW handlers inherit counts and count-only answers', async (
   mkdirSync(join(gen, 'node_modules/msw'), { recursive: true });
   writeFileSync(join(gen, 'node_modules/msw/package.json'), JSON.stringify({ name: 'msw', type: 'module', exports: './index.js' }));
   writeFileSync(join(gen, 'node_modules/msw/index.js'), `
-export const http = { get: (path, resolver) => ({ method: 'GET', path, resolver }) };
+export const http = {
+  get: (path, resolver) => ({ method: 'GET', path, resolver }),
+  head: (path, resolver) => ({ method: 'HEAD', path, resolver }),
+  all: (path, resolver) => ({ method: 'ALL', path, resolver }),
+};
+export const delay = async () => {};
 export class HttpResponse { constructor(body, init) { this.body = body; Object.assign(this, init); } static json(body, init) { return { body, ...init }; } }
 `);
   const mod = await import(pathToFileURL(join(gen, 'atrezzo/.generated/expedientes.handlers.mjs')).href);

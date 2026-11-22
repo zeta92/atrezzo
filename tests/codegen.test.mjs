@@ -9,6 +9,8 @@ import { ROOT, SCENARIO, tmpProject, cli } from './helpers.mjs';
 const MSW_STUB = `
 export const http = {
   get: (path, resolver) => ({ method: 'GET', path, resolver }),
+  head: (path, resolver) => ({ method: 'HEAD', path, resolver }),
+  all: (path, resolver) => ({ method: 'ALL', path, resolver }),
   post: (path, resolver) => ({ method: 'POST', path, resolver }),
   put: (path, resolver) => ({ method: 'PUT', path, resolver }),
   patch: (path, resolver) => ({ method: 'PATCH', path, resolver }),
@@ -18,6 +20,7 @@ export const HttpResponse = Object.assign(
   function HttpResponse(body, init) { return { body, ...init }; },
   { json: (body, init) => ({ body, ...init }) },
 );
+export const delay = async () => {};
 `;
 
 test('world writes JSON, MSW handlers and a runtime identical to the engine', () => {
@@ -49,7 +52,9 @@ test('the generated handlers project exactly like the engine', async () => {
   writeFileSync(join(dir, 'node_modules/msw/package.json'), JSON.stringify({ name: 'msw', type: 'module', exports: './index.js' }));
   writeFileSync(join(dir, 'node_modules/msw/index.js'), MSW_STUB);
   const mod = await import(pathToFileURL(join(dir, 'atrezzo/.generated/conciliacion.handlers.mjs')).href);
-  assert.deepEqual(mod.handlers.map((h) => h.path), ['*/api/orders', '*/api/orders/:id', '*/api/customers', '*/api/customers/:id']);
+  // GET y HEAD por ruta (HEAD es lo que pregunta supabase-js al pedir counts), y un 405 al final.
+  assert.deepEqual([...new Set(mod.handlers.map((h) => h.path))], ['*/api/orders', '*/api/orders/:id', '*/api/customers', '*/api/customers/:id']);
+  assert.deepEqual(mod.handlers.filter((h) => h.method === 'HEAD').map((h) => h.path), ['*/api/orders', '*/api/orders/:id', '*/api/customers', '*/api/customers/:id']);
   const res = mod.handlers[0].resolver({ request: new Request('http://localhost/api/orders?limit=3&status=paid') });
   assert.equal(res.status, 200);
   assert.equal(res.body.length, 3);
