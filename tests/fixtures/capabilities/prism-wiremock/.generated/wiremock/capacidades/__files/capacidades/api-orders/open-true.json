@@ -1,0 +1,42 @@
+{
+  "data": [
+    {
+      "id": 1,
+      "customer_id": 2,
+      "reference": "reference 1",
+      "amount": 747.09,
+      "paid": true
+    },
+    {
+      "id": 2,
+      "customer_id": 1,
+      "reference": "reference 2",
+      "amount": 956.36,
+      "paid": true
+    },
+    {
+      "id": 3,
+      "customer_id": 6,
+      "reference": "reference 3",
+      "amount": 452.54,
+      "paid": false
+    },
+    {
+      "id": 4,
+      "customer_id": 3,
+      "reference": "reference 4",
+      "amount": 130.98,
+      "paid": false
+    },
+    {
+      "id": 5,
+      "customer_id": 4,
+      "reference": "reference 5",
+      "amount": 697.44,
+      "paid": true
+    }
+  ],
+  "total": 12,
+  "page": 1,
+  "pages": 3
+}

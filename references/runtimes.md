@@ -135,7 +135,7 @@ await setupWorker(...handlers).start({
 
 Filling the gap is the same everywhere: entity + endpoint in the scenario (`/atrezzo:gap`) and `atrezzo world`, which regenerates handlers, OpenAPI, mappings or `seed.sql`.
 
-Latency, 5xx errors and timeouts are not part of the world: inject them in the runtime (MSW `delay()`/`HttpResponse.error()`, WireMock `fixedDelayMilliseconds`/`fault`), not in the scenario.
+`error:` and `latency:` **are** part of the scenario, but only the `builtin`/`serve` engine applies them: MSW needs `delay()` in the handler (the generated ones do not add it), WireMock has `fixedDelayMilliseconds` but the emitted mappings do not use it, and Prism ignores both. `atrezzo world` says so (`Degraded in <runtime>: latency`) and the full table is in [`capabilities.md`](capabilities.md).
 
 ## Monorepo and separate front end/backend
 

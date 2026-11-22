@@ -655,7 +655,7 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'scopes', 'include', 'embed', 'counts', 'shape', 'envelope', 'wrap', 'detail', 'pick', 'latency', 'pluck', 'error', 'passthrough'];
+export const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'scopes', 'include', 'embed', 'counts', 'shape', 'envelope', 'wrap', 'detail', 'pick', 'latency', 'pluck', 'error', 'passthrough'];
 
 /** Levels of `embed` below an endpoint's entity (the endpoint's own children are level 1). */
 export const MAX_EMBED_DEPTH = 4;
