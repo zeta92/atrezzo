@@ -1,0 +1,44 @@
+{
+  "rows": [
+    {
+      "screen": "article",
+      "expect": {
+        "selector": ".card .card-text",
+        "count": 5,
+        "label": "comments",
+        "data": {
+          "request": "comments",
+          "pick": "comments"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "world-mismatch",
+          "confidence": "medium",
+          "certainty": "likely",
+          "evidence": "the world has 0 matching items and =5 were expected: check world (total/distribution) or the assertion's \"where\" condition.",
+          "finding": "unpaginated, 0 items match; =5 were expected"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "article",
+      "visit": "/article/21b6be78-8754-4566-820d-a428f1ece189"
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [
+    "storage: is ignored with the http driver (there is no browser to seed); use --driver playwright"
+  ],
+  "scenario": "f5-comments-envelope",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

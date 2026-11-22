@@ -1,0 +1,32 @@
+{
+  "rows": [
+    {
+      "screen": "feed",
+      "expect": {
+        "selector": ".article-preview button.btn-primary",
+        "count": 5,
+        "label": "favourited after one click"
+      },
+      "status": "N/V",
+      "obtained": null,
+      "note": "no \"data\": the http driver cannot count a selector; add data.request or use --driver playwright"
+    }
+  ],
+  "steps": [
+    {
+      "screen": "feed",
+      "visit": "/"
+    }
+  ],
+  "exitCode": 2,
+  "warnings": [
+    "storage: is ignored with the http driver (there is no browser to seed); use --driver playwright",
+    "click: is ignored with the http driver (there is no browser to click in); use --driver playwright"
+  ],
+  "scenario": "f5-favorite-echo",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

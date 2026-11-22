@@ -1,0 +1,44 @@
+# Conduit home: global feed + popular tags, logged out.
+name: conduit
+description: Logged-out home page with the global feed and the tag sidebar.
+seed: 1
+now: 2026-11-01T09:00:00Z
+world:
+  tags:
+    total: 6
+    fields: { name: [dragons, training, welcome, react, redux, node] }
+    values_order: cycle
+  authors:
+    total: 4
+    fields:
+      username: [alice, bob, carol, dave]
+      bio: string
+      image: url
+      following: boolean
+    values_order: cycle
+  articles:
+    total: 23
+    ref: authors
+    fields:
+      slug: string
+      title: string
+      description: string
+      body: string
+      createdAt: date
+      updatedAt: date
+      favorited: boolean
+      favoritesCount: integer
+    values:
+      tagList: [[dragons, training], [welcome], [react, redux]]
+endpoints:
+  - path: /api/tags
+    entity: tags
+    pluck: name
+    pick: tags
+  - path: /api/articles
+    entity: articles
+    include: [authors]
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: -createdAt
+    shape: envelope
+    envelope: { items: articles, total: articlesCount }

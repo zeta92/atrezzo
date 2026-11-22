@@ -1,0 +1,45 @@
+{
+  "rows": [
+    {
+      "screen": "tag",
+      "expect": {
+        "selector": ".article-preview",
+        "count": 5,
+        "label": "articles tagged welcome",
+        "data": {
+          "request": "byTag",
+          "pick": "articles"
+        }
+      },
+      "status": "KO",
+      "obtained": 10,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "undeclared-filter",
+          "confidence": "medium",
+          "certainty": "possible",
+          "evidence": "the client sends parameters the contract does not declare as filters, so they were ignored: tag. If the client expects the server to filter, add them to endpoints[].filters.",
+          "finding": "the mock ignored tag (x-atrezzo-ignored header)"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "tag",
+      "visit": "/"
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [
+    "storage: is ignored with the http driver (there is no browser to seed); use --driver playwright",
+    "click: is ignored with the http driver (there is no browser to click in); use --driver playwright"
+  ],
+  "scenario": "f5-tag-filter",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

@@ -1,0 +1,17 @@
+# F5 injected cause: feed-page-style. Assertions describe the intended state.
+scenario: ../../scenarios/f5-feed-page-style.yaml
+base_url: http://127.0.0.1:4010
+storage:
+  local: { jwt: "fake-token-for-the-mock" }
+steps:
+  - screen: feed-page-2
+    visit: /
+    wait_for: ".pagination .page-item"
+    click: ".pagination .page-item >> nth=1"
+    requests:
+      feed2: GET /api/articles/feed?limit=10&offset=10
+    expect:
+      - selector: ".article-preview"
+        count: 6
+        label: second feed page (16 - 10)
+        data: { request: feed2, pick: articles }

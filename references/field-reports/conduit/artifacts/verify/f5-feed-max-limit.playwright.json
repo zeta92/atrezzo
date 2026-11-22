@@ -1,0 +1,49 @@
+{
+  "rows": [
+    {
+      "screen": "feed",
+      "expect": {
+        "selector": ".article-preview",
+        "count": 10,
+        "label": "feed rows",
+        "data": {
+          "request": "feed",
+          "pick": "articles"
+        }
+      },
+      "status": "KO",
+      "obtained": 5,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "pagination-mismatch",
+          "confidence": "high",
+          "certainty": "likely",
+          "evidence": "the response has 5 of 16 items; unpaginated, 16 match the condition, but this page has only 5. Check the client's limit/offset or the endpoint's sort.",
+          "finding": "the page carries 5 of 16 items"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "feed",
+      "visit": "/",
+      "console": []
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "f5-feed-max-limit",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {},
+  "storage": {
+    "local": [
+      "jwt"
+    ],
+    "session": []
+  }
+}

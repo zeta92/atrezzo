@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "stack": "other",
+  "scenariosDir": "atrezzo/scenarios",
+  "handlersDir": "atrezzo/handlers",
+  "generatedDir": "atrezzo/.generated",
+  "fixturesDir": "atrezzo/fixtures",
+  "runtime": "builtin",
+  "mock": {
+    "baseUrl": "http://127.0.0.1:4010",
+    "port": 4010,
+    "static": null
+  },
+  "verify": {
+    "driver": "http"
+  }
+}

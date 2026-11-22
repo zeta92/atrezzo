@@ -1,0 +1,48 @@
+{
+  "rows": [
+    {
+      "screen": "article",
+      "expect": {
+        "selector": ".card .card-text",
+        "count": 5,
+        "label": "comments",
+        "data": {
+          "request": "comments",
+          "pick": "comments"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "no-hypothesis",
+          "confidence": "low",
+          "certainty": "possible",
+          "evidence": "obtained 0, expected =5; no heuristic fits. Check the screen path and the selectors."
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "article",
+      "visit": "/article/21b6be78-8754-4566-820d-a428f1ece189",
+      "console": []
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "f5-comments-envelope",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {},
+  "storage": {
+    "local": [
+      "jwt"
+    ],
+    "session": []
+  }
+}

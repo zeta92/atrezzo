@@ -1,0 +1,65 @@
+{
+  "rows": [
+    {
+      "screen": "profile",
+      "expect": {
+        "selector": ".article-preview",
+        "count": 5,
+        "label": "carol's articles, first page",
+        "data": {
+          "request": "byAuthor",
+          "where": {
+            "author_id": 3
+          },
+          "pick": "articles"
+        }
+      },
+      "status": "KO",
+      "obtained": 2,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "undeclared-filter",
+          "confidence": "medium",
+          "certainty": "possible",
+          "evidence": "the client sends parameters the contract does not declare as filters, so they were ignored: author. If the client expects the server to filter, add them to endpoints[].filters.",
+          "finding": "the mock ignored author (x-atrezzo-ignored header)"
+        },
+        {
+          "type": "pagination-mismatch",
+          "confidence": "high",
+          "certainty": "likely",
+          "evidence": "the response has 5 of 23 items; unpaginated, 7 match the condition, but this page has only 2. Check the client's limit/offset or the endpoint's sort.",
+          "finding": "the page carries 5 of 23 items"
+        }
+      ]
+    },
+    {
+      "screen": "profile",
+      "expect": {
+        "selector": ".pagination .page-item",
+        "count": 2,
+        "label": "carol's pages (7 / 5)"
+      },
+      "status": "N/V",
+      "obtained": null,
+      "note": "no \"data\": the http driver cannot count a selector; add data.request or use --driver playwright"
+    }
+  ],
+  "steps": [
+    {
+      "screen": "profile",
+      "visit": "/@carol"
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [
+    "storage: is ignored with the http driver (there is no browser to seed); use --driver playwright"
+  ],
+  "scenario": "conduit-session",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

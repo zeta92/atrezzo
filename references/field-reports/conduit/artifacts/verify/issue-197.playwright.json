@@ -1,0 +1,49 @@
+{
+  "rows": [
+    {
+      "screen": "feed-page-2",
+      "expect": {
+        "selector": ".article-preview",
+        "count": 6,
+        "label": "second feed page (16 - 10)",
+        "data": {
+          "request": "feed2",
+          "pick": "articles"
+        }
+      },
+      "status": "KO",
+      "obtained": 10,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "render",
+          "confidence": "high",
+          "certainty": "confirmed",
+          "evidence": "the mock delivers exactly what was expected (6); the difference is in the screen, not the scenario. Do not regenerate the world.",
+          "finding": "the JSON carries the expected 6 and the DOM shows 10: the failure is in the screen"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "feed-page-2",
+      "visit": "/",
+      "console": []
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "conduit-session",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {},
+  "storage": {
+    "local": [
+      "jwt"
+    ],
+    "session": []
+  }
+}

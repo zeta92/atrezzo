@@ -1,0 +1,19 @@
+# Upstream issue #197 "Your Feed pagination broken, not adding offset".
+# Correct scenario (feed paginated by limit/offset, 16 articles): page 2 must show 6.
+# Expected result while the bug exists: KO (the app asks for offset=0 again and shows 10).
+scenario: ../../scenarios/conduit-session.yaml
+base_url: http://127.0.0.1:4010
+storage:
+  local: { jwt: "fake-token-for-the-mock" }
+steps:
+  - screen: feed-page-2
+    visit: /
+    wait_for: ".pagination .page-item"
+    click: ".pagination .page-item >> nth=1"
+    requests:
+      feed2: GET /api/articles/feed?limit=10&offset=10
+    expect:
+      - selector: ".article-preview"
+        count: 6
+        label: second feed page (16 - 10)
+        data: { request: feed2, pick: articles }

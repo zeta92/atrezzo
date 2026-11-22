@@ -1,0 +1,40 @@
+{
+  "rows": [
+    {
+      "screen": "home",
+      "expect": {
+        "selector": ".article-preview",
+        "count": 10,
+        "label": "feed rows",
+        "data": {
+          "request": "feed",
+          "pick": "articles"
+        }
+      },
+      "status": "OK",
+      "obtained": 10,
+      "note": ""
+    }
+  ],
+  "steps": [
+    {
+      "screen": "home",
+      "visit": "/",
+      "console": []
+    }
+  ],
+  "exitCode": 0,
+  "warnings": [],
+  "scenario": "f5-duplicate-slug",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {},
+  "storage": {
+    "local": [
+      "jwt"
+    ],
+    "session": []
+  }
+}

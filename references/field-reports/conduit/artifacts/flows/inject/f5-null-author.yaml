@@ -1,0 +1,14 @@
+# F5 injected cause: null-author. Assertions describe the intended state.
+scenario: ../../scenarios/f5-null-author.yaml
+base_url: http://127.0.0.1:4010
+steps:
+  - screen: home
+    visit: /
+    wait_for: ".article-preview"
+    requests:
+      articles: GET /api/articles?limit=10&offset=0
+    expect:
+      - selector: ".article-preview .preview-link"
+        count: 10
+        label: global feed rows
+        data: { request: articles, pick: articles }

@@ -1,0 +1,21 @@
+scenario: ../scenarios/conduit.yaml
+base_url: http://127.0.0.1:4010
+steps:
+  - screen: home
+    visit: /
+    wait_for: ".article-preview .preview-link"
+    requests:
+      tags: GET /api/tags
+      articles: GET /api/articles?limit=10&offset=0
+    expect:
+      - selector: ".article-preview"
+        count: 10
+        label: global feed rows
+        data: { request: articles, pick: articles }
+      - selector: ".sidebar .tag-pill"
+        count: 6
+        label: popular tags
+        data: { request: tags, pick: tags }
+      - selector: ".pagination .page-item"
+        count: 3
+        label: pages (23 articles / 10)

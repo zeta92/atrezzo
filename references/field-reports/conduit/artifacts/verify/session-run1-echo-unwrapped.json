@@ -1,0 +1,148 @@
+{
+  "rows": [
+    {
+      "screen": "feed",
+      "expect": {
+        "selector": ".article-preview",
+        "count": 10,
+        "label": "feed rows (authors alice follows)",
+        "data": {
+          "request": "feed",
+          "pick": "articles"
+        }
+      },
+      "status": "KO",
+      "obtained": 10,
+      "note": "uncaught page error: TypeError: Cannot read properties of undefined (reading 'slug')",
+      "hypotheses": [
+        {
+          "type": "page-error",
+          "confidence": "high",
+          "certainty": "confirmed",
+          "evidence": "uncaught page error on \"feed\": TypeError: Cannot read properties of undefined (reading 'slug')"
+        }
+      ]
+    },
+    {
+      "screen": "feed",
+      "expect": {
+        "selector": ".article-preview button.btn-primary",
+        "count": 5,
+        "label": "favorited after one click (4 + 1)"
+      },
+      "status": "KO",
+      "obtained": 4,
+      "note": "same cause as #1"
+    },
+    {
+      "screen": "feed",
+      "expect": {
+        "selector": ".pagination .page-item",
+        "count": 2,
+        "label": "feed pages (16 / 10)"
+      },
+      "status": "KO",
+      "obtained": 2,
+      "note": "same cause as #1"
+    },
+    {
+      "screen": "article",
+      "expect": {
+        "selector": ".card .card-text",
+        "count": 5,
+        "label": "comments",
+        "data": {
+          "request": "comments",
+          "pick": "comments"
+        }
+      },
+      "status": "OK",
+      "obtained": 5,
+      "note": ""
+    },
+    {
+      "screen": "article",
+      "expect": {
+        "selector": ".comment-form",
+        "count": 1,
+        "label": "comment form (logged in)"
+      },
+      "status": "OK",
+      "obtained": 1,
+      "note": ""
+    },
+    {
+      "screen": "profile",
+      "expect": {
+        "selector": ".article-preview",
+        "count": 5,
+        "label": "carol's articles, first page",
+        "data": {
+          "request": "byAuthor",
+          "where": {
+            "author_id": 3
+          },
+          "pick": "articles"
+        }
+      },
+      "status": "OK",
+      "obtained": 5,
+      "note": ""
+    },
+    {
+      "screen": "profile",
+      "expect": {
+        "selector": ".pagination .page-item",
+        "count": 2,
+        "label": "carol's pages (7 / 5)"
+      },
+      "status": "KO",
+      "obtained": 3,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "no-data",
+          "confidence": "low",
+          "certainty": "possible",
+          "evidence": "the assertion has no \"data\" to compare against the JSON; add data.request to tell a data failure from a screen failure."
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "feed",
+      "visit": "/",
+      "console": [
+        {
+          "level": "pageerror",
+          "text": "TypeError: Cannot read properties of undefined (reading 'slug')"
+        }
+      ]
+    },
+    {
+      "screen": "article",
+      "visit": "/article/21b6be78-8754-4566-820d-a428f1ece189",
+      "console": []
+    },
+    {
+      "screen": "profile",
+      "visit": "/@carol",
+      "console": []
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "conduit-session",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {},
+  "storage": {
+    "local": [
+      "jwt"
+    ],
+    "session": []
+  }
+}

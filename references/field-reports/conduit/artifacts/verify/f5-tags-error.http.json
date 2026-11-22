@@ -1,0 +1,44 @@
+{
+  "rows": [
+    {
+      "screen": "home",
+      "expect": {
+        "selector": ".sidebar .tag-pill",
+        "count": 6,
+        "label": "popular tags",
+        "data": {
+          "request": "tags",
+          "pick": "tags"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "tags answered the error the scenario declares (500): 0 rows",
+      "hypotheses": [
+        {
+          "type": "declared-error",
+          "confidence": "high",
+          "certainty": "confirmed",
+          "evidence": "the scenario declares error: { status: 500 } on this endpoint, so it answers 500 by design ({\"error\":\"500\"}) and no rows; a step that expects data cannot pass. Expect the error state on the screen, or drop error: from the endpoint.",
+          "finding": "the endpoint answered the declared error 500"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "home",
+      "visit": "/"
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [
+    "storage: is ignored with the http driver (there is no browser to seed); use --driver playwright"
+  ],
+  "scenario": "f5-tags-error",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

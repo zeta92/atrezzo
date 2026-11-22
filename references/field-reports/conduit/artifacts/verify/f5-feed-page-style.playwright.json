@@ -1,0 +1,49 @@
+{
+  "rows": [
+    {
+      "screen": "feed-page-2",
+      "expect": {
+        "selector": ".article-preview",
+        "count": 6,
+        "label": "second feed page (16 - 10)",
+        "data": {
+          "request": "feed2",
+          "pick": "articles"
+        }
+      },
+      "status": "KO",
+      "obtained": 10,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "undeclared-filter",
+          "confidence": "medium",
+          "certainty": "possible",
+          "evidence": "the client sends parameters the contract does not declare as filters, so they were ignored: offset. If the client expects the server to filter, add them to endpoints[].filters.",
+          "finding": "the mock ignored offset (x-atrezzo-ignored header)"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "feed-page-2",
+      "visit": "/",
+      "console": []
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "f5-feed-page-style",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {},
+  "storage": {
+    "local": [
+      "jwt"
+    ],
+    "session": []
+  }
+}
