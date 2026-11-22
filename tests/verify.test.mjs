@@ -984,3 +984,60 @@ test('CLI verify --driver playwright (real Chromium): missing click target gives
     await new Promise((resolve) => app.close(resolve));
   }
 });
+
+// ---------- clock ----------
+
+const CLOCK_FLOW = `scenario: s.yaml
+clock: { time: 2025-06-01T10:00:00Z }
+steps:
+  - screen: home
+    visit: /home
+    expect:
+      - selector: ".item"
+        count: 1
+  - screen: detalle
+    visit: /detalle
+    clock: { time: scenario }
+    expect:
+      - selector: ".item"
+        count: 1
+`;
+
+test('loadFlow: clock at flow and step level, with "scenario" resolving to scenario.now', () => {
+  const dir = tmpProject({
+    's.yaml': `name: reloj\nseed: 1\nnow: 2025-03-01T09:00:00Z\nworld:\n  items: 1\nendpoints:\n  - path: /api/items\n    entity: items\n`,
+    'f.yaml': CLOCK_FLOW
+  });
+  const flow = loadFlow(join(dir, 'f.yaml'));
+  assert.equal(flow.clock.time, '2025-06-01T10:00:00.000Z');
+  assert.equal(flow.steps[0].clock, null);
+  assert.equal(flow.steps[1].clock.time, '2025-03-01T09:00:00.000Z', 'scenario = el now del escenario');
+});
+
+test('loadFlow: an invalid clock is a flow error', () => {
+  const dir = tmpProject({
+    'f.yaml': 'steps:\n  - screen: home\n    visit: /home\n    clock: { time: ayer }\n'
+  });
+  assert.throws(() => loadFlow(join(dir, 'f.yaml')), /clock\.time": must be an ISO date\/time or "scenario"/);
+  const dir2 = tmpProject({ 'f.yaml': 'steps:\n  - screen: home\n    visit: /home\n    clock: { time: "2025-01-01T00:00:00Z", zona: UTC }\n' });
+  assert.throws(() => loadFlow(join(dir2, 'f.yaml')), /clock\.zona": unknown field/);
+});
+
+test('verify: installs the browser clock before navigating, once per page', async () => {
+  const dir = tmpProject({
+    'f.yaml': 'clock: { time: 2025-06-01T10:00:00Z }\nsteps:\n  - screen: home\n    visit: /home\n    expect:\n      - selector: ".item"\n        count: 1\n'
+  });
+  const installed = [];
+  const page = {
+    goto: async () => {},
+    waitForLoadState: async () => {},
+    waitForSelector: async () => {},
+    locator: () => ({ count: async () => 1 }),
+    clock: { install: async ({ time }) => { installed.push(new Date(time).toISOString()); }, setFixedTime: async () => {} }
+  };
+  await runVerify(loadFlow(join(dir, 'f.yaml')), {
+    url: 'http://mock', driver: 'playwright', cwd: dir, reset: false,
+    pageFactory: async () => ({ page, close: async () => {} })
+  });
+  assert.deepEqual(installed, ['2025-06-01T10:00:00.000Z'], 'install() antes de la primera navegación');
+});

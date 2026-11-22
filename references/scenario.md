@@ -806,6 +806,7 @@ scenario: scenarios/orders.yaml      # relative to the flow (optional: see "Real
 base_url: http://127.0.0.1:4010       # optional (otherwise --url or the config)
 viewport: { width: 1440, height: 1000 }  # optional, playwright only (default 1280x720)
 click_timeout: 5000                   # optional, playwright only: ms to wait per click target (default 5000)
+clock: { time: 2025-06-01T10:00:00Z }  # optional, playwright only: el reloj del navegador antes de navegar
 headers:                              # optional: sent on EVERY request of the flow
   X-Tenant: acme                      # only values safe to commit; a session goes in verify --header
 storage:                              # optional, playwright only: seeded before the page loads
@@ -820,6 +821,7 @@ steps:
     wait_for: "[data-testid=ready]"   # optional; waits for the element to exist (not to be visible)
     click: "[data-testid=expand]"     # optional, playwright only: selector (or list of selectors) clicked before expect
     click_timeout: 3000               # optional, playwright only: overrides flow click_timeout for this step
+    clock: { time: scenario }         # optional: overrides the flow clock; "scenario" = el now del escenario
     requests:                         # equivalent requests for the http driver
       orders: GET /api/orders?limit=12
       issues: GET /api/orders?status=issue
@@ -874,6 +876,14 @@ Under `--driver playwright`, `verify` listens for `pageerror` (uncaught runtime 
 - **Console errors (`console.error`)**: by default, `console.error` entries are emitted as `WARNING:` lines in the report without breaking a step whose assertions pass. Pass `--strict-console` (requires `--driver playwright`; rejected with exit `3` under `--driver http`) to fail (`KO`) any step that emits `console.error` (with a `console-error` hypothesis under `--diagnose`).
 - **`--json` output**: each Playwright step in `steps` includes `console: [{ level, text }]`, where `level` is `'pageerror'` for uncaught exceptions or `'error'` for `console.error` (or `[]` when none occurred).
 
+#### Reloj del navegador (`clock`)
+
+Un contador del tipo «quedan 3 días» o un plazo que vence a medianoche depende de `Date` en el navegador, y sin fijarlo el flujo cambia de resultado según el día en que se ejecute (y un test que pasa hoy falla el mes que viene). `clock: { time: <ISO> }` llama a `page.clock.install()` **antes** de la primera navegación, así que todo lo que la app mida con `Date`/`setTimeout` sale del reloj fijado.
+
+- Se declara en el flujo (vale para todos los pasos) o en un paso concreto (lo sobrescribe).
+- `time: scenario` usa el `now` del escenario: la fecha de los datos y la del navegador son la misma, que es lo que hace coherente «caduca en 3 días».
+- Con `--driver http` no hay navegador y la clave se ignora.
+- Playwright instala el reloj una sola vez por página; los pasos siguientes con otra hora usan `setFixedTime`.
 #### Pre-assertion interactions (`click` and `click_timeout`)
 
 When content lives inside a collapsed accordion, tab, or disclosure that must be opened before `expect` measures the DOM, declare `click` on the step (`--driver playwright` only):

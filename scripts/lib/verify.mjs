@@ -386,8 +386,10 @@ export async function runVerify(flow, opts) {
 
   const rows = [];
   const stepResults = [];
+  let clockInstalled = false;
   try {
     for (const step of flow.steps) {
+      const stepClock = step.clock ?? flow.clock;
       const headers = mergeHeaders(flowHeaders, runHeaders, step.headers);
       const fetchOpts = Object.keys(headers).length ? { headers } : undefined;
       const get = (u) => getJson(fetchImpl, u, fetchOpts);
@@ -420,6 +422,14 @@ export async function runVerify(flow, opts) {
       try {
         if (pw) {
           const storage = mergeStorage(flowStorage, step.storage);
+          if (stepClock?.time && pw.page?.clock) {
+            try {
+              if (!clockInstalled) { await pw.page.clock.install({ time: new Date(stepClock.time) }); clockInstalled = true; }
+              else if (typeof pw.page.clock.setFixedTime === 'function') await pw.page.clock.setFixedTime(new Date(stepClock.time));
+            } catch (e) {
+              throw new AtrezzoError(`could not install the browser clock at ${stepClock.time}: ${String(e.message).split('\n')[0]}`, { exitCode: EXIT.UNVERIFIABLE });
+            }
+          }
           nav = await openStep(pw, url, step, headers, seeder.next(new URL(joinUrl(url, step.visit)).origin, storage));
           if (!nav.fail && step.click?.length) {
             const clickTimeout = step.clickTimeout ?? optClickTimeout ?? flow.clickTimeout ?? DEFAULT_CLICK_TIMEOUT;
@@ -482,7 +492,7 @@ export async function runVerify(flow, opts) {
             warnings.push(`step "${step.screen}" console.error${n > 1 ? ` (×${n})` : ''}: ${clip(msg)}`);
           }
         }
-        stepResults.push({ screen: step.screen, visit: step.visit, ...(nav.redirect ? { redirect: nav.redirect } : {}), console: consoleList });
+        stepResults.push({ screen: step.screen, visit: step.visit, ...(nav.redirect ? { redirect: nav.redirect } : {}), ...(stepClock?.time ? { clock: stepClock.time } : {}), console: consoleList });
 
         // If wait_for or click timed out because an uncaught pageerror crashed the screen, surface page-error instead.
         const effectiveNavFail = nav.fail && !(nav.waitForTimeout && pageErrors.length) ? nav.fail : null;
