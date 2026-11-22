@@ -43,11 +43,17 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
   ];
   lines.push(
     '',
-    '/** Una ruta del contrato con un método que no lo está: 405, como en `serve`. Las rutas ajenas se dejan pasar. */',
-    'function methodNotAllowed({ request }) {',
-    '  const url = new URL(request.url);',
-    "  if (!engine.handle({ method: 'GET', pathname: url.pathname, query: new URLSearchParams(), headers: request.headers })) return undefined;",
-    "  return HttpResponse.json({ error: 'method not allowed: this route is not in the contract' }, { status: 405, headers: { allow: 'GET, HEAD' } });",
+    '/** CORS preflight: `serve` answers 204 to every OPTIONS with these headers, so the handlers do the same. */',
+    "const preflight = () => new HttpResponse(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE', 'access-control-allow-headers': 'content-type, authorization, prefer' } });",
+    '',
+    '/**',
+    ' * A contract route asked with a method the contract does not declare. Registered after every real',
+    ' * handler: the engine sees the real method and answers its own 405 (with the right `Allow`), the same',
+    ' * as `serve`; a route the engine does not know is left alone so MSW moves on.',
+    ' */',
+    'function methodNotAllowed(info) {',
+    "  if (info.request.method === 'OPTIONS') return preflight();",
+    '  return project(info);',
     '}',
   );
   if (hasLatency) {
@@ -77,7 +83,7 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
       '}',
     );
   }
-  const fallbacks = [];
+  const fallbacks = new Set();
   lines.push('', 'export const handlers = [');
   for (const ep of dataset.endpoints) {
     const notes = [ep.passthrough ? `passthrough: ${ep.passthrough.fixture}` : `${ep.entity}`];
@@ -107,11 +113,14 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
       lines.push(`  http.get('${detail}', ${handler}),`);
       lines.push(`  http.head('${detail}', ${handler}),`);
     }
-    // Lo que no está en el contrato responde 405 aquí y en `serve`: en MSW se dejaba pasar a la red.
-    fallbacks.push(`  http.all('*${ep.path}', methodNotAllowed),`);
+    // Undeclared methods answer 405 here as in `serve` (they used to escape to the network in MSW).
+    fallbacks.add(`*${ep.path}`);
+    if (ep.detail) fallbacks.add(`*${ep.path}/:${ep.params?.some((x) => x.name === 'id') ? 'row_id' : 'id'}`);
   }
+  for (const w of dataset.writes ?? []) fallbacks.add(`*${w.path}`);
+  if (dataset.rpc?.length) fallbacks.add('*/rpc/:fn');
   for (const st of dataset.streams ?? []) {
-    // El adaptador msw no puede emitir SSE: mejor un 501 explícito que un flujo que se cae en silencio.
+    // The msw adapter cannot emit SSE: an explicit 501 beats a flow that fails silently.
     lines.push(`  // streams ${st.path} → 501 (the msw adapter does not emit SSE)`);
     lines.push(`  http.get('*${st.path}', () => HttpResponse.json({ error: 'SSE streams are not supported by the msw adapter: use atrezzo serve' }, { status: 501, headers: { 'x-atrezzo-unsupported': 'streams' } })),`);
   }
@@ -131,9 +140,11 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     }
     lines.push("  http.post('*/__atrezzo/reset', () => { engine.reset(); return HttpResponse.json({ scenario: dataset.scenario, reset: true }, { status: 200 }); }),");
   }
-  if (fallbacks.length) {
-    lines.push('  // Methods the contract does not declare: 405, like `serve`.');
-    lines.push(...fallbacks);
+  if (fallbacks.size) {
+    // Last, so a declared write keeps winning: methods the contract does not declare answer 405 and
+    // OPTIONS answers 204, like `serve`.
+    lines.push('  // Methods the contract does not declare: 405 (OPTIONS: 204), like `serve`.');
+    for (const path of fallbacks) lines.push(`  http.all('${path}', methodNotAllowed),`);
   }
   lines.push('];', '', 'export function reset() { engine.reset(); }', '', 'export { dataset };', '');
   return lines.join('\n');

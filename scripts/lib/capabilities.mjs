@@ -1,207 +1,210 @@
-// Una sola tabla de lo que cada runtime reproduce y con cuánta fidelidad.
+// One table of what each runtime reproduces, and how faithfully.
 //
-// Todo lo que avisa al usuario (world, doctor, adapters) sale de aquí: si la
-// tabla y el código se separan, el aviso miente, que es peor que no avisar.
-// `builtin` es el oráculo y siempre está en `same`; las demás columnas dicen
-// dónde se separan y por qué. Los estados son:
+// Everything that warns the user (world, doctor, adapters) reads from here: if the
+// table and the code drift apart, the warning lies, which is worse than no warning.
+// `builtin` is the oracle and is always `same`; the other columns say where they
+// differ and why. The states are:
 //
-//   same      · se comporta igual que el motor
-//   partial   · cubre una parte y declina el resto de forma explícita
-//   declined  · no lo soporta, pero lo declara (501, aviso, o no se emite)
-//   different · se comporta de otra manera: el escenario no se reproduce
+//   same      · behaves like the engine
+//   partial   · covers part of it and explicitly declines the rest
+//   declined  · not supported, and the artifact says so (a 501 or a warning)
+//   different · behaves differently: the scenario is not reproduced
 //
-// `different` es el estado peligroso: es el que hacía falta nombrar.
+// `different` is the dangerous state: it is the one that needed a name.
 
 import { RUNTIMES } from './config.mjs';
 
 export const STATES = ['same', 'partial', 'declined', 'different'];
 
 export const STATE_LABEL = {
-  same: 'igual',
-  partial: 'parcial',
-  declined: 'no soportado (declarado)',
-  different: 'distinto'
+  same: 'same',
+  partial: 'partial',
+  declined: 'not supported (declared)',
+  different: 'different'
 };
 
 const anyEndpoint = (s, fn) => s.endpoints.some(fn);
 
 /**
- * Cada capacidad: cómo se detecta que el escenario la usa y qué hace cada
- * runtime con ella. `notes` solo existe para las columnas que no son `same`.
+ * Each capability: how to tell that the scenario uses it, and what each runtime
+ * does with it. `notes` only exist for the columns that are not `same`.
  */
 export const CAPABILITIES = [
   {
     id: 'filters',
-    label: 'filtros (igualdad, `a,b`, `null`)',
+    label: 'filters (equality, `a,b`, `null`)',
     present: (s) => anyEndpoint(s, (ep) => ep.filters?.length),
     states: { msw: 'same', supabase: 'different', prism: 'declined', wiremock: 'partial' },
     notes: {
-      supabase: 'PostgREST compara con su propio tipo: `null` y las listas no son iguales',
-      prism: 'no evalúa filtros: devuelve el ejemplo del spec',
-      wiremock: 'igualdad de un valor; varias combinaciones acaban en 501'
+      supabase: 'PostgREST compares with its own types: `null` and lists do not behave the same',
+      prism: 'does not evaluate filters: it returns the example from the spec',
+      wiremock: 'one value per filter; other combinations end in 501'
     }
   },
   {
     id: 'pgrst-operators',
-    label: 'operadores PostgREST (`eq.`, `in.()`, `ilike.`)',
-    // Se decide en la query del cliente (`?id=eq.3`), no en el escenario: no hay
-    // nada que detectar al generar, así que no puede salir en los avisos.
+    label: 'PostgREST operators (`eq.`, `in.()`, `ilike.`)',
+    // Decided by the client's query (`?id=eq.3`), not by the scenario: there is
+    // nothing to detect when generating, so it can never show up in the warnings.
     present: () => false,
     states: { msw: 'same', supabase: 'same', prism: 'declined', wiremock: 'partial' },
     notes: {
-      prism: 'no evalúa operadores',
-      wiremock: 'un operador por mapping; el resto acaba en 501'
+      prism: 'does not evaluate operators',
+      wiremock: 'one operator per mapping; the rest end in 501'
     }
   },
   {
     id: 'pagination',
-    label: 'paginación (`limit`/`offset`/`page`)',
+    label: 'pagination (`limit`/`offset`/`page`)',
     present: (s) => anyEndpoint(s, (ep) => ep.pagination),
     states: { msw: 'same', supabase: 'different', prism: 'declined', wiremock: 'partial' },
     notes: {
-      supabase: 'PostgREST pagina con `Range`; el `limit` de la query no es el mismo corte',
-      prism: 'ignora los parámetros de paginación',
-      wiremock: 'solo las páginas enumeradas en el flujo; el resto acaba en 501'
+      supabase: 'PostgREST pages with `Range`; the `limit` in the query is not the same cut',
+      prism: 'ignores the pagination parameters',
+      wiremock: 'only the pages listed in the flows; the rest end in 501'
     }
   },
   {
     id: 'sorts',
-    label: 'orden (`sort` y `sorts`)',
+    label: 'ordering (`sort` and `sorts`)',
     present: (s) => anyEndpoint(s, (ep) => ep.sorts || (ep.sort ?? []).length > 1),
     states: { msw: 'same', supabase: 'different', prism: 'different', wiremock: 'partial' },
     notes: {
-      supabase: 'PostgREST ordena en SQL: los nulos y el `nullsfirst` no caen donde caen aquí',
-      prism: 'declara el parámetro y lo ignora: el orden es el del ejemplo',
-      wiremock: 'solo las peticiones que aparecen en los flujos'
+      supabase: 'PostgREST sorts in SQL: nulls and `nullsfirst` do not land where they land here',
+      prism: 'declares the parameter and ignores it: the order is the example\'s',
+      wiremock: 'only the requests that appear in the flows'
     }
   },
   {
     id: 'scopes',
-    label: 'scopes (parámetro → filtro booleano)',
+    label: 'scopes (parameter → boolean filter)',
     present: (s) => anyEndpoint(s, (ep) => ep.scopes),
     states: { msw: 'same', supabase: 'different', prism: 'different', wiremock: 'partial' },
     notes: {
-      supabase: 'el filtro tiene que existir en la vista; si no, PostgREST responde con su error',
-      prism: 'no evalúa el parámetro',
-      wiremock: 'un valor por scope'
+      supabase: 'the filter has to exist in the view; otherwise PostgREST answers with its own error',
+      prism: 'does not evaluate the parameter',
+      wiremock: 'one value per scope'
     }
   },
   {
     id: 'envelope',
-    label: 'sobre (`envelope`, `pick`, `total_pages`)',
+    label: 'envelope (`envelope`, `pick`, `total_pages`)',
     present: (s) => anyEndpoint(s, (ep) => ep.envelope || ep.pick),
-    states: { msw: 'same', supabase: 'different', prism: 'same', wiremock: 'same' },
+    states: { msw: 'same', supabase: 'different', prism: 'different', wiremock: 'same' },
     notes: {
-      supabase: 'la forma la dicta PostgREST (array o `{data,count}`), no el sobre'
+      supabase: 'PostgREST decides the shape (an array or `{data,count}`), not the envelope',
+      prism: 'the OpenAPI schema does not declare `total_pages`: only the example carries it, so dynamic mode (`-d`) and schema validation leave it out'
     }
   },
   {
     id: 'singleton',
-    label: 'detalle y singleton (`shape: object`, `wrap`, `/:id`)',
+    label: 'detail and singleton (`shape: object`, `wrap`, `/:id`)',
     present: (s) => anyEndpoint(s, (ep) => ep.shape === 'object' || ep.wrap || ep.detail),
     states: { msw: 'same', supabase: 'different', prism: 'partial', wiremock: 'same' },
     notes: {
-      supabase: '`.single()` necesita `Accept: application/vnd.pgrst.object+json`',
-      prism: 'devuelve siempre la primera fila del ejemplo'
+      supabase: '`.single()` needs `Accept: application/vnd.pgrst.object+json`',
+      prism: 'always returns the first row of the example'
     }
   },
   {
     id: 'relations',
-    label: 'relaciones (`include`, `embed`, `counts`, `pluck`)',
-    present: (s) => anyEndpoint(s, (ep) => ep.embed || ep.counts?.length || ep.pluck),
+    label: 'relations (`include`, `embed`, `counts`, `pluck`)',
+    present: (s) => anyEndpoint(s, (ep) => ep.include?.length || ep.embed || ep.counts?.length || ep.pluck),
     states: { msw: 'same', supabase: 'different', prism: 'same', wiremock: 'same' },
     notes: {
-      supabase: 'el embed tiene que ser una FK real y la proyección se pide distinto'
+      supabase: 'the embed has to be a real foreign key, and the projection is requested differently'
     }
   },
   {
     id: 'nested-routes',
-    label: 'rutas anidadas con varios parámetros',
-    present: (s) => anyEndpoint(s, (ep) => (ep.path.match(/:/g) ?? []).length > 1),
-    states: { msw: 'same', supabase: 'different', prism: 'partial', wiremock: 'partial' },
+    label: 'routes with path parameters (`/api/customers/:customer_id/orders`)',
+    present: (s) => anyEndpoint(s, (ep) => ep.params?.length > 0),
+    states: { msw: 'same', supabase: 'different', prism: 'different', wiremock: 'different' },
     notes: {
-      supabase: 'cada segmento es una tabla o una vista',
-      prism: 'el patrón del spec no distingue los dos parámetros',
-      wiremock: 'el mapping solo fija el primer segmento; el resto da 404'
+      supabase: 'each segment is a table or a view',
+      prism: 'the example is the projection for the first row\'s values: any other parameter value gets the same rows',
+      wiremock: 'no mapping is generated for routes with path parameters unless they declare `error` or `passthrough` (only a note at generation time): they answer 404'
     }
   },
   {
     id: 'world-filters',
-    label: 'filtros de mundo y `$user`',
+    label: 'world filters and `$user`',
     present: (s) => anyEndpoint(s, (ep) => ep.worldFilters?.length || ep.userFilters?.length),
     states: { msw: 'same', supabase: 'different', prism: 'same', wiremock: 'same' },
     notes: {
-      supabase: 'el filtro por usuario lo pone RLS, no el escenario'
+      supabase: 'the per-user filter comes from RLS, not from the scenario'
     }
   },
   {
     id: 'writes',
-    label: 'escrituras y `reset` (`writes`)',
+    label: 'writes and `reset` (`writes`)',
     present: (s) => (s.writes ?? []).length > 0,
-    states: { msw: 'same', supabase: 'different', prism: 'declined', wiremock: 'declined' },
+    states: { msw: 'same', supabase: 'different', prism: 'different', wiremock: 'different' },
     notes: {
-      supabase: 'escribe de verdad en Postgres: el reset del mundo no lo deshace',
-      prism: 'no emite las rutas de escritura',
-      wiremock: 'no emite las rutas de escritura'
+      supabase: 'writes for real to Postgres: resetting the world does not undo them',
+      prism: 'the write routes are not emitted and there is no 501: they answer 404',
+      wiremock: 'the write routes are not emitted and there is no 501: they answer 404'
     }
   },
   {
     id: 'rpc',
-    label: 'funciones `rpc`',
+    label: '`rpc` functions',
     present: (s) => (s.rpc ?? []).length > 0,
-    states: { msw: 'same', supabase: 'different', prism: 'declined', wiremock: 'declined' },
+    states: { msw: 'same', supabase: 'different', prism: 'different', wiremock: 'different' },
     notes: {
-      supabase: 'la función tiene que existir en Postgres; el escenario no la crea',
-      prism: 'no emite el endpoint',
-      wiremock: 'no emite el endpoint'
+      supabase: 'the function has to exist in Postgres; the scenario does not create it',
+      prism: 'the endpoint is not emitted and there is no 501: it answers 404',
+      wiremock: 'the endpoint is not emitted and there is no 501: it answers 404'
     }
   },
   {
     id: 'streams',
     label: 'SSE (`streams`)',
     present: (s) => (s.streams ?? []).length > 0,
-    states: { msw: 'declined', supabase: 'different', prism: 'declined', wiremock: 'declined' },
+    states: { msw: 'declined', supabase: 'different', prism: 'different', wiremock: 'different' },
     notes: {
-      msw: 'un 501 explícito en la ruta del stream: el flujo ve el aviso, no los eventos',
-      supabase: 'no hay SSE en PostgREST',
-      prism: 'no emite el endpoint',
-      wiremock: 'no emite el endpoint'
+      msw: 'an explicit 501 on the stream route: the flow sees the warning, not the events',
+      supabase: 'PostgREST has no SSE',
+      prism: 'the endpoint is not emitted and there is no 501: it answers 404',
+      wiremock: 'the endpoint is not emitted and there is no 501: it answers 404'
     }
   },
   {
     id: 'passthrough-error',
-    label: '`passthrough` y `error`',
+    label: '`passthrough` and `error`',
     present: (s) => anyEndpoint(s, (ep) => ep.passthrough || ep.error),
-    states: { msw: 'same', supabase: 'same', prism: 'same', wiremock: 'same' },
-    notes: {}
+    states: { msw: 'same', supabase: 'different', prism: 'same', wiremock: 'same' },
+    notes: {
+      supabase: 'the adapter only emits SQL: neither the recorded fixture nor the declared error reaches PostgREST'
+    }
   },
   {
     id: 'latency',
-    label: 'latencia (`latency`)',
+    label: 'latency (`latency`)',
     present: (s) => anyEndpoint(s, (ep) => ep.latency !== undefined),
     states: { msw: 'same', supabase: 'different', prism: 'different', wiremock: 'different' },
     notes: {
-      supabase: 'la latencia la pone Postgres',
-      prism: 'no aplica `latency`',
-      wiremock: 'tiene `fixedDelayMilliseconds` pero el artefacto no lo usa'
+      supabase: 'the latency is whatever Postgres takes',
+      prism: 'does not apply `latency`',
+      wiremock: 'has `fixedDelayMilliseconds`, but the generated mappings do not use it'
     }
   },
   {
     id: 'diagnostic-headers',
-    label: 'cabeceras de diagnóstico (`X-Total-Count`, `X-Atrezzo-*`)',
+    label: 'diagnostic headers (`X-Total-Count`, `X-Atrezzo-*`)',
     present: (s) => s.endpoints.length > 0,
     states: { msw: 'same', supabase: 'declined', prism: 'partial', wiremock: 'partial' },
     notes: {
-      supabase: 'las cabeceras las pone PostgREST (`Content-Range`)',
-      prism: 'solo el total del ejemplo, sin `X-Atrezzo-Ignored`',
-      wiremock: 'total sí; `X-Atrezzo-Ignored` no'
+      supabase: 'PostgREST sets the headers (`Content-Range`)',
+      prism: 'only the example\'s total, no `X-Atrezzo-Ignored`',
+      wiremock: 'the total, yes; `X-Atrezzo-Ignored`, no'
     }
   }
 ];
 
 const BY_ID = new Map(CAPABILITIES.map((c) => [c.id, c]));
 
-/** El estado de una capacidad en un runtime: `same` | `partial` | `declined` | `different`. */
+/** The state of a capability in a runtime: `same` | `partial` | `declined` | `different`. */
 export function stateOf(id, runtime) {
   const cap = BY_ID.get(id);
   if (!cap) throw new Error(`unknown capability: ${id}`);
@@ -209,7 +212,7 @@ export function stateOf(id, runtime) {
   return cap.states[runtime] ?? 'declined';
 }
 
-/** Las capacidades que este escenario usa de verdad, con el estado de cada runtime. */
+/** The capabilities this scenario really uses, with the state in each runtime. */
 export function usedCapabilities(scenario) {
   return CAPABILITIES.filter((c) => {
     try { return Boolean(c.present(scenario)); } catch { return false; }
@@ -222,8 +225,8 @@ export function usedCapabilities(scenario) {
 }
 
 /**
- * Lo que hay que decirle a alguien que va a generar con `runtime`:
- * cada capacidad usada que no se reproduce igual, con su motivo.
+ * What to tell someone about to generate for `runtime`: every capability the
+ * scenario uses that is not reproduced the same way, with the reason.
  */
 export function degradations(scenario, runtime) {
   if (runtime === 'builtin') return [];
@@ -232,16 +235,16 @@ export function degradations(scenario, runtime) {
     .map((c) => ({ id: c.id, label: c.label, state: c.states[runtime], note: c.notes?.[runtime] ?? null }));
 }
 
-/** `writes, rpc, latency` — la lista corta que cabe en una línea de aviso. */
+/** `writes, rpc, latency`: the short list that fits in a one-line warning. */
 export function degradationList(scenario, runtime) {
   return degradations(scenario, runtime).map((d) => d.id);
 }
 
 
 /**
- * Qué capacidad cubre cada clave del DSL. `core` es lo que no puede faltar en
- * ningún runtime (la ruta y la entidad). Vive aquí para que una clave nueva en
- * `scenario.mjs` sin entrada rompa un test en vez de pasar desapercibida.
+ * Which capability covers each DSL key. `core` is what no runtime can lack (the
+ * path and the entity). It lives here so that a new key in `scenario.mjs` without
+ * an entry breaks a test instead of going unnoticed.
  */
 export const KEY_COVERAGE = {
   path: 'core',
@@ -265,19 +268,28 @@ export const KEY_COVERAGE = {
   passthrough: 'passthrough-error'
 };
 
-/** Claves del escenario que no son de endpoint y también tienen capacidad. */
+/** Every scenario-level key (`SCENARIO_KEYS`): its capability, or `core` when every runtime reproduces it. */
 export const SCENARIO_KEY_COVERAGE = {
+  name: 'core',
+  description: 'core',
+  seed: 'core',
+  now: 'core',
+  world: 'core',
+  endpoints: 'core',
+  entry: 'core',
+  path: 'core',
+  expect: 'core',
   writes: 'writes',
   rpc: 'rpc',
   streams: 'streams',
   auth: 'world-filters'
 };
 
-/** La tabla completa, en Markdown, para `references/capabilities.md`. */
+/** The full table, in Markdown, for `references/capabilities.md`. */
 export function renderCapabilities() {
   const runtimes = RUNTIMES.filter((r) => r !== 'builtin');
   const icon = { same: '✅', partial: '◐', declined: '✖', different: '⚠' };
-  const head = `| Capacidad | ${runtimes.join(' | ')} |`;
+  const head = `| Capability | ${runtimes.join(' | ')} |`;
   const sep = `|---|${runtimes.map(() => '---').join('|')}|`;
   const rows = CAPABILITIES.map((c) => {
     const cells = runtimes.map((r) => icon[stateOf(c.id, r)]);
@@ -291,19 +303,19 @@ export function renderCapabilities() {
     }
   }
   return [
-    '# Capacidades por runtime',
+    '# Capabilities by runtime',
     '',
-    'Generado por `scripts/lib/capabilities.mjs` (`node scripts/cli.mjs capabilities --write`). No editar a mano.',
+    'Generated by `scripts/lib/capabilities.mjs` (`node scripts/cli.mjs capabilities --write`). Do not edit by hand.',
     '',
-    '`builtin` es el motor y el oráculo: siempre `✅`. ✅ igual · ◐ parcial y declinado el resto · ✖ no soportado y declarado · ⚠ **distinto sin avisar** (es lo que hay que cerrar).',
+    '`builtin` is the engine and the oracle: always `✅`. ✅ same · ◐ partial, the rest declined · ✖ not supported, and declared · ⚠ **different without a warning** (what still has to be closed).',
     '',
-    'Las celdas de `msw` se comprueban en `tests/parity.test.mjs` (rápido, con un stub que ejecuta los handlers) y en `tests/parity-real.test.mjs` (`msw/node` real, `ATREZZO_PARITY=real`, nocturno). Una celda sin prueba es una promesa.',
+    'The `msw` cells are checked in `tests/parity.test.mjs` (fast, with a stub that runs the handlers) and in `tests/parity-real.test.mjs` (real `msw/node`, `ATREZZO_PARITY=real`, nightly). A cell without a test is a promise.',
     '',
     head,
     sep,
     ...rows,
     '',
-    '## Por qué cada celda no es ✅',
+    '## Why each cell is not ✅',
     '',
     ...notes,
     ''

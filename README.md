@@ -257,7 +257,7 @@ The scenario does not depend on where it is served. `world` always writes the wo
 | `msw` | `msw` in dependencies | handlers that run the same engine as `serve` (including `writes`, `rpc` and `passthrough`) in the browser or in Node tests | install `msw` or register the worker for you; serve SSE `streams`; record gaps |
 | `supabase` | `supabase/config.toml`, `@supabase/supabase-js`, `supabase/` | `schema.sql`, `seed.sql` with the world's ids, and an idempotent `reset.sh` that refuses a non-local database | simulate RLS or auth; filtering and pagination are PostgREST's, not atrezzo's |
 | `prism` | `@stoplight/prism-cli` (a spec alone is not enough) | an OpenAPI 3.1 file whose schemas and examples (`scenario`, filter examples, `passthrough`, `error`) come from the world | filter or paginate: any query gets the default example |
-| `wiremock` | a WireMock dependency, `mappings/` + `__files/`, or docker-compose | static mappings for enumerable combinations (each filter value, pages, exact flow requests), `passthrough`, `error`, and `/{id}` response templating | combined filters, path parameters, or unlisted pages: unlisted combinations get a **501** with the generated list, never a wrong page |
+| `wiremock` | a WireMock dependency, `mappings/` + `__files/`, or docker-compose | static mappings for enumerable combinations (each filter value, pages, exact flow requests), `passthrough`, `error`, and `/{id}` response templating | combined filters or unlisted pages get a **501** with the generated list, never a wrong page; routes with path parameters get no mapping at all (404) |
 
 Every cell of that table is a row of [`references/capabilities.md`](references/capabilities.md): the generated matrix that says, per capability and adapter, whether it is **the same** as the engine (✅), **partial** and declines the rest (◐), **not supported** and says so (✖) or **different** (⚠) — the dangerous one, because the scenario stops being reproducible.
 
@@ -478,7 +478,7 @@ scripts/lib/                 world, scenario, contract (engine), codegen, serve,
 scripts/lib/runtimes/        builtin, msw, supabase, prism, wiremock
 references/                  scenario.md (scenario spec) · assumptions.md (client assumptions) · runtimes.md (adapters, monorepo)
 examples/tienda/             runnable end-to-end example
-tests/                       node --test tests/  (354 tests)
+tests/                       node --test tests/*.test.mjs tests/edge/*.test.mjs  (417 tests)
 ```
 
 </details>
