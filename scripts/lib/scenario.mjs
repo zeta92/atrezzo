@@ -1824,7 +1824,7 @@ function normalizeRpc(rawRpc, writes, issues) {
 
 // ---------- scenario ----------
 
-const SCENARIO_KEYS = ['name', 'description', 'seed', 'now', 'auth', 'world', 'endpoints', 'writes', 'rpc', 'streams', 'entry', 'path', 'expect'];
+export const SCENARIO_KEYS = ['name', 'description', 'seed', 'now', 'auth', 'world', 'endpoints', 'writes', 'rpc', 'streams', 'entry', 'path', 'expect'];
 
 export function normalizeScenario(doc, file = '<scenario>') {
   const issues = new Issues();

@@ -1,9 +1,9 @@
-// La matriz de capacidades: cobertura del DSL, documento generado y avisos.
+// The capability matrix: DSL coverage, the generated document and the warnings.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ENDPOINT_KEYS, loadScenario } from '../scripts/lib/scenario.mjs';
+import { ENDPOINT_KEYS, SCENARIO_KEYS, loadScenario } from '../scripts/lib/scenario.mjs';
 import {
   CAPABILITIES, KEY_COVERAGE, SCENARIO_KEY_COVERAGE, STATES,
   degradations, renderCapabilities, stateOf, usedCapabilities
@@ -13,6 +13,13 @@ import { ROOT, cli, tmpProject } from './helpers.mjs';
 const FIXTURES = join(ROOT, 'tests', 'fixtures', 'capabilities');
 const FIXTURE_SCENARIO = join(FIXTURES, 'prism-wiremock', 'scenarios', 'capabilities.yaml');
 
+/** A throwaway copy of the committed prism-wiremock fixture, so CLI runs never dirty the repo. */
+function fixtureCopy() {
+  const dir = tmpProject();
+  cpSync(join(FIXTURES, 'prism-wiremock'), dir, { recursive: true });
+  return { dir, scenario: join(dir, 'scenarios', 'capabilities.yaml') };
+}
+
 test('capabilities: every scenario key has a capability (a new DSL key breaks this test)', () => {
   const ids = new Set(CAPABILITIES.map((c) => c.id));
   for (const k of ENDPOINT_KEYS) {
@@ -20,8 +27,13 @@ test('capabilities: every scenario key has a capability (a new DSL key breaks th
     const cap = KEY_COVERAGE[k];
     assert.ok(cap === 'core' || ids.has(cap), `endpoint key "${k}" points at unknown capability "${cap}"`);
   }
-  for (const [k, cap] of Object.entries(SCENARIO_KEY_COVERAGE)) {
-    assert.ok(ids.has(cap), `scenario key "${k}" points at unknown capability "${cap}"`);
+  for (const k of SCENARIO_KEYS) {
+    assert.ok(Object.hasOwn(SCENARIO_KEY_COVERAGE, k), `scenario key "${k}" has no entry in SCENARIO_KEY_COVERAGE`);
+    const cap = SCENARIO_KEY_COVERAGE[k];
+    assert.ok(cap === 'core' || ids.has(cap), `scenario key "${k}" points at unknown capability "${cap}"`);
+  }
+  for (const k of Object.keys(SCENARIO_KEY_COVERAGE)) {
+    assert.ok(SCENARIO_KEYS.includes(k), `SCENARIO_KEY_COVERAGE has "${k}", which is not a scenario key`);
   }
   for (const cap of CAPABILITIES) {
     for (const [rt, st] of Object.entries(cap.states)) {
@@ -53,8 +65,27 @@ test('capabilities: the fixture uses writes, rpc, streams and latency', () => {
   const prism = degradations(sc, 'prism').map((d) => d.id);
   assert.ok(prism.includes('writes') && prism.includes('rpc') && prism.includes('streams'));
   const note = degradations(sc, 'prism').find((d) => d.id === 'writes');
-  assert.match(note.note, /no emite las rutas de escritura/);
+  assert.match(note.note, /write routes are not emitted/);
+  assert.equal(note.state, 'different', 'no 501 is emitted: at run time it is a silent 404');
   assert.deepEqual(degradations(sc, 'builtin'), []);
+});
+
+test('capabilities: include, a single path parameter and error are detected', () => {
+  const dir = tmpProject({
+    's.yaml': [
+      'name: detect', 'seed: 1', 'world:', '  customers: 2', '  orders:', '    total: 4', '    ref: customers',
+      'endpoints:',
+      '  - path: /api/orders', '    entity: orders', '    include: [customers]',
+      '  - path: /api/customers/:customer_id/orders', '    entity: orders',
+      '  - path: /api/customers', '    entity: customers', '    error: { status: 503 }', ''
+    ].join('\n')
+  });
+  const sc = loadScenario(join(dir, 's.yaml'));
+  const used = usedCapabilities(sc).map((c) => c.id);
+  assert.ok(used.includes('relations'), `include counts as relations: ${used.join(', ')}`);
+  assert.ok(used.includes('nested-routes'), `one path parameter counts: ${used.join(', ')}`);
+  assert.ok(degradations(sc, 'supabase').some((d) => d.id === 'passthrough-error'), 'supabase does not emit error:');
+  assert.ok(degradations(sc, 'wiremock').some((d) => d.id === 'nested-routes' && d.state === 'different'));
 });
 
 test('capabilities: a scenario without the capabilities produces no warnings', () => {
@@ -68,13 +99,16 @@ test('capabilities: a scenario without the capabilities produces no warnings', (
   }
 });
 
-test('CLI world --strict: exit 3 when the runtime is degraded, 0 without the flag', () => {
-  const strict = cli(['world', FIXTURE_SCENARIO, '--dir', join(FIXTURES, 'prism-wiremock'), '--strict']);
+test('CLI world --strict: exit 3 when the runtime is degraded and nothing written, 0 without the flag', () => {
+  const { dir, scenario } = fixtureCopy();
+  const out = join(dir, 'strict-out');
+  const strict = cli(['world', scenario, '--dir', dir, '--out', out, '--strict']);
   assert.equal(strict.code, 3, strict.stderr);
   assert.match(strict.stderr, /not reproduced by prism, wiremock/);
   assert.match(strict.stderr, /prism: streams/);
+  assert.ok(!existsSync(out), 'a failing --strict must not write the generated tree');
 
-  const plain = cli(['world', FIXTURE_SCENARIO, '--dir', join(FIXTURES, 'prism-wiremock')]);
+  const plain = cli(['world', scenario, '--dir', dir]);
   assert.equal(plain.code, 0, plain.stderr);
   assert.match(plain.stdout, /Degraded in prism: writes/);
 });
@@ -90,7 +124,8 @@ test('CLI capabilities --check: 0 when the docs are current, 3 when they are not
 });
 
 test('CLI doctor: warns per capability the scenario uses and the runtime does not reproduce', () => {
-  const r = cli(['doctor', '--dir', join(FIXTURES, 'prism-wiremock')]);
+  const { dir } = fixtureCopy();
+  const r = cli(['doctor', '--dir', dir]);
   const all = r.stdout + r.stderr;
   assert.match(all, /capacidades × prism: writes/, all);
   assert.match(all, /capacidades × wiremock: rpc/, all);

@@ -518,21 +518,62 @@ export function createEngine(dataset) {
   }
 
   /**
-   * Las dos cosas que la integridad referencial promete y que solo se miraban al
-   * generar: un hijo no puede apuntar a un padre que no existe, y un padre con
-   * hijos no puede desaparecer por debajo de ellos.
+   * Referential integrity, enforced on writes and not only when the world is built:
+   * a child cannot point at a parent that does not exist, and a parent with children
+   * cannot be deleted out from under them.
    */
   const schemaOf = (name) => dataset.schema?.[name]?.refs ?? {};
+  // A foreign key may be null only if the generated world already has nulls in it (`nulls:`).
+  const nullableFks = (name) => new Set(Object.keys(schemaOf(name))
+    .filter((fk) => (initialEntities[name] ?? []).some((r) => r[fk] === null)));
+  /**
+   * Bring the foreign keys of a row to the type of the target's ids ("1" → 1 when ids are
+   * numbers), so the strict comparisons in includes, counts and the integrity check still match.
+   * On create, a missing key becomes null when the key is nullable; otherwise it is reported.
+   * Mutates `row`; returns the keys that are missing and cannot be null.
+   */
+  function normalizeForeignKeys(name, row, { create }) {
+    const missing = [];
+    const nullable = create ? nullableFks(name) : null;
+    for (const [fk, target] of Object.entries(schemaOf(name))) {
+      const value = row[fk];
+      if (value === undefined) {
+        if (!create) continue; // an update that does not touch the key keeps the stored value
+        if (nullable.has(fk)) row[fk] = null;
+        else missing.push({ fk, target });
+        continue;
+      }
+      if (value === null) continue;
+      const sample = (initialEntities[target] ?? []).find((r) => r.id !== null && r.id !== undefined);
+      const numericIds = sample ? typeof sample.id === 'number' : true;
+      if (numericIds && typeof value === 'string' && /^-?\d+$/.test(value)) row[fk] = Number.parseInt(value, 10);
+      else if (!numericIds && typeof value === 'number') row[fk] = String(value);
+    }
+    return missing;
+  }
   function badForeignKeys(name, row) {
     const bad = [];
     for (const [fk, target] of Object.entries(schemaOf(name))) {
       const value = row[fk];
-      if (value === undefined) continue; // no se toca: no es cosa de este write
-      if (value === null) continue;
+      if (value === undefined || value === null) continue;
       const targetRows = workingEntities[target] ?? [];
-      if (!targetRows.some((r) => String(r.id) === String(value))) bad.push({ fk, value, target });
+      if (!targetRows.some((r) => r.id === value)) bad.push({ fk, value, target });
     }
     return bad;
+  }
+  /** 422 for the first broken foreign key, or null when the row is fine. */
+  function foreignKeyError(name, row, { create }) {
+    const missing = normalizeForeignKeys(name, row, { create });
+    if (missing.length) {
+      const [m] = missing;
+      return json(422, { error: `${name}.${m.fk} is required: it points at ${m.target} and cannot be null (scenario "${dataset.scenario}")` });
+    }
+    const bad = badForeignKeys(name, row);
+    if (bad.length) {
+      const [b] = bad;
+      return json(422, { error: `${name}.${b.fk}=${JSON.stringify(b.value)} does not exist in ${b.target} (scenario "${dataset.scenario}")` });
+    }
+    return null;
   }
   function referencingChildren(name, id) {
     const out = [];
@@ -594,11 +635,8 @@ export function createEngine(dataset) {
         if (p.field !== null) raw[p.field] = coerceParam(p.field, params[p.name]);
       }
       for (const [k, v] of Object.entries(set ?? {})) raw[k] = resolveVal(v);
-      const bad = badForeignKeys(entity, raw);
-      if (bad.length) {
-        const [b] = bad;
-        return json(422, { error: `${entity}.${b.fk}=${JSON.stringify(b.value)} does not exist in ${b.target} (scenario "${dataset.scenario}")` });
-      }
+      const fkError = foreignKeyError(entity, raw, { create: true });
+      if (fkError) return fkError;
       const id = nextIds.get(entity) ?? 1;
       nextIds.set(entity, id + 1);
       raw.id = id;
@@ -636,11 +674,8 @@ export function createEngine(dataset) {
           if (k !== 'id') raw[k] = v;
         }
         for (const [k, v] of Object.entries(set ?? {})) raw[k] = resolveVal(v);
-        const bad = badForeignKeys(entity, raw);
-        if (bad.length) {
-          const [b] = bad;
-          return json(422, { error: `${entity}.${b.fk}=${JSON.stringify(b.value)} does not exist in ${b.target} (scenario "${dataset.scenario}")` });
-        }
+        const fkError = foreignKeyError(entity, raw, { create: false });
+        if (fkError) return fkError;
         const updated = buildRow(raw);
         rows[idx] = updated;
         updatedList.push(updated);

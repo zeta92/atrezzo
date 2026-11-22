@@ -32,10 +32,12 @@ Commands:
       Detects monorepo/front-back folders and the runtime (prints what it found, why, and the alternatives),
       then writes atrezzo.config.json. With two front ends or none, asks for --front/--backend (exit 2).
       --runtime takes several, comma-separated (msw,supabase). --install adds msw and yaml if missing.
-  world <scenario.yaml> [--out <dir>]
+  world <scenario.yaml> [--out <dir>] [--strict]
       Generates the world and always writes <generatedDir>/<scenario>.json and runtime.mjs (source of truth);
       then whatever each configured runtime needs: msw handlers · supabase seed.sql/reset.sh ·
       prism <scenario>.openapi.yaml · wiremock mappings/ + __files/ · builtin nothing else.
+      Prints "Degraded in <runtime>" for each capability the scenario uses that a configured runtime does
+      not reproduce. --strict turns that into exit 3, checked before anything is written.
   serve [--scenario <name>] [--port 4010] [--host 127.0.0.1] [--static <dir>] [--scenarios <dir>] [--runtime builtin]
         [--on-miss log|stub] [--latency <ms>]
       HTTP server with the projections (builtin/msw runtimes). With another runtime it prints how to
@@ -64,6 +66,9 @@ Commands:
       With --write, attaches \`passthrough: { fixture }\` to the endpoint in <file>.
   runtimes [--dir .]
       Lists the adapters, their score in this project, the reason and how to start each one.
+  capabilities [--write|--check] [--dir .]
+      Prints the table of what each runtime reproduces (scripts/lib/capabilities.mjs). --write writes it to
+      <dir>/references/capabilities.md; --check exits 3 when that file is missing or stale.
   import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
       Infers a scenario from an OpenAPI spec (no argument: uses workspace.contract) and writes
       <scenariosDir>/<name>.yaml with a report: endpoints, envelopes, TODOs and ignored routes.
@@ -165,9 +170,18 @@ function cmdWorld({ pos, flags }) {
   const dataset = generateWorld(scenario);
   const problems = checkIntegrity(dataset);
   if (problems.length) throw new AtrezzoError('Referential integrity broken (atrezzo bug, please report it)', { exitCode: EXIT.FAIL, issues: problems });
+  const ids = runtimeList(cfg);
+  // Checked before anything is written: a failing --strict must not leave a half-written tree.
+  const degraded = [];
+  for (const rt of ids.filter((r) => r !== 'builtin')) {
+    for (const d of degradations(scenario, rt)) degraded.push({ rt, ...d });
+  }
+  if (degraded.length && flags.strict) {
+    for (const d of degraded) out(`Degraded in ${d.rt}: ${d.id} (${STATE_LABEL[d.state]})${d.note ? ` — ${d.note}` : ''}`);
+    throw new AtrezzoError(`${degraded.length} capabilit${degraded.length === 1 ? 'y' : 'ies'} the scenario uses are not reproduced by ${[...new Set(degraded.map((d) => d.rt))].join(', ')}`, { exitCode: EXIT.INVALID, issues: degraded.map((d) => `${d.rt}: ${d.id} (${STATE_LABEL[d.state]})`) });
+  }
   const outDir = resolve(flags.out ?? join(cfg._dir, cfg.generatedDir));
   const files = writeGenerated(dataset, outDir, { handlers: false });
-  const ids = runtimeList(cfg);
   const emitCfg = { ...cfg, generatedDir: relative(cfg._dir, outDir) || '.' };
   const requests = ids.includes('wiremock') ? flowRequests(cfg._dir, join(cfg._dir, cfg.scenariosDir), resolve(pos[0])).requests : [];
   const emitted = emitRuntimes(ids, { dataset, scenario, config: emitCfg, dir: cfg._dir, requests });
@@ -210,15 +224,8 @@ function cmdWorld({ pos, flags }) {
     if (ep.error) bits.push(`error: ${ep.error.status}`);
     out(`  GET ${ep.path}${ep.detail ? ` (+ ${ep.path}/:id)` : ''}  ${bits.join(' · ')}`);
   }
-  const degraded = [];
-  for (const rt of ids.filter((r) => r !== 'builtin')) {
-    for (const d of degradations(scenario, rt)) degraded.push({ rt, ...d });
-  }
   if (degraded.length) {
     for (const d of degraded) out(`Degraded in ${d.rt}: ${d.id} (${STATE_LABEL[d.state]})${d.note ? ` — ${d.note}` : ''}`);
-    if (flags.strict) {
-      throw new AtrezzoError(`${degraded.length} capabilit${degraded.length === 1 ? 'y' : 'ies'} the scenario uses are not reproduced by ${[...new Set(degraded.map((d) => d.rt))].join(', ')}`, { exitCode: EXIT.INVALID, issues: degraded.map((d) => `${d.rt}: ${d.id} (${STATE_LABEL[d.state]})`) });
-    }
   }
   for (const w of scenario.writes ?? []) {
     const bits = [`→ ${w.expect.status}${w.expect.echo ? ' (echo)' : ''}`];
