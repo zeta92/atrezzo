@@ -517,6 +517,34 @@ export function createEngine(dataset) {
     return out;
   }
 
+  /**
+   * Las dos cosas que la integridad referencial promete y que solo se miraban al
+   * generar: un hijo no puede apuntar a un padre que no existe, y un padre con
+   * hijos no puede desaparecer por debajo de ellos.
+   */
+  const schemaOf = (name) => dataset.schema?.[name]?.refs ?? {};
+  function badForeignKeys(name, row) {
+    const bad = [];
+    for (const [fk, target] of Object.entries(schemaOf(name))) {
+      const value = row[fk];
+      if (value === undefined) continue; // no se toca: no es cosa de este write
+      if (value === null) continue;
+      const targetRows = workingEntities[target] ?? [];
+      if (!targetRows.some((r) => String(r.id) === String(value))) bad.push({ fk, value, target });
+    }
+    return bad;
+  }
+  function referencingChildren(name, id) {
+    const out = [];
+    for (const [child, meta] of Object.entries(dataset.schema ?? {})) {
+      for (const [fk, target] of Object.entries(meta.refs ?? {})) {
+        if (target !== name) continue;
+        const rowsOfChild = workingEntities[child] ?? [];
+        if (rowsOfChild.some((r) => String(r[fk]) === String(id))) out.push({ child, fk });
+      }
+    }
+    return out;
+  }
   function handleWrite(wMatch, pathname, body) {
     const { w, params } = wMatch;
     if (body !== undefined && body !== null && (typeof body !== 'object' || Array.isArray(body))) {
@@ -566,6 +594,11 @@ export function createEngine(dataset) {
         if (p.field !== null) raw[p.field] = coerceParam(p.field, params[p.name]);
       }
       for (const [k, v] of Object.entries(set ?? {})) raw[k] = resolveVal(v);
+      const bad = badForeignKeys(entity, raw);
+      if (bad.length) {
+        const [b] = bad;
+        return json(422, { error: `${entity}.${b.fk}=${JSON.stringify(b.value)} does not exist in ${b.target} (scenario "${dataset.scenario}")` });
+      }
       const id = nextIds.get(entity) ?? 1;
       nextIds.set(entity, id + 1);
       raw.id = id;
@@ -603,6 +636,11 @@ export function createEngine(dataset) {
           if (k !== 'id') raw[k] = v;
         }
         for (const [k, v] of Object.entries(set ?? {})) raw[k] = resolveVal(v);
+        const bad = badForeignKeys(entity, raw);
+        if (bad.length) {
+          const [b] = bad;
+          return json(422, { error: `${entity}.${b.fk}=${JSON.stringify(b.value)} does not exist in ${b.target} (scenario "${dataset.scenario}")` });
+        }
         const updated = buildRow(raw);
         rows[idx] = updated;
         updatedList.push(updated);
@@ -611,6 +649,14 @@ export function createEngine(dataset) {
       return respond(singleTarget && updatedList.length === 1 ? formatWriteRow(updatedList[0]) : updatedList.map(formatWriteRow));
     }
 
+    for (const idx of indices) {
+      const children = referencingChildren(entity, rows[idx].id);
+      if (children.length) {
+        const c = children[0];
+        const n = (workingEntities[c.child] ?? []).filter((r) => String(r[c.fk]) === String(rows[idx].id)).length;
+        return json(409, { error: `cannot delete ${entity}#${rows[idx].id}: ${n} row${n === 1 ? '' : 's'} of "${c.child}" point at it (${c.fk}); delete them first` });
+      }
+    }
     const deletedList = indices.map((idx) => formatWriteRow(rows[idx]));
     for (let j = indices.length - 1; j >= 0; j--) rows.splice(indices[j], 1);
     invalidateIndexes();

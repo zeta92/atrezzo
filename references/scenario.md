@@ -626,6 +626,7 @@ writes:
     mutate: { entity: orders }
 ```
 
+- **Integridad en las escrituras**: borrar una fila con hijos declarados en el mundo responde `409 { error: "cannot delete <entity>#<id>: N rows of "<child>" point at it (<fk>); delete them first" }`, y crear o modificar una fila con una FK que no existe responde `422 { error: "<entity>.<fk>=… does not exist in <target>" }`. No hay cascada implícita: si quieres el borrado en cascada, declara los DELETE de los hijos en el flujo.
 - **Route keys**: must be `"<METHOD> /path"` with an explicit HTTP method (`POST`, `PUT`, `PATCH`, `DELETE`) and a path starting with `/` (no query or fragment). Path parameters (`:id`, `:customer_id`, etc.) bind to fields of `mutate.entity` (`:id` at the end of a path or before an action segment binds to `id`; `:<entity>_id` binds to `id` for the target entity; other `:name` segments match `name` or `<name>_id`).
 - **`expect`**: `{ status, echo, body }` (optional; defaults to `201` + `echo: true` for `POST`, `204` for `DELETE`, `200` + `echo: true` for `PUT`/`PATCH`):
   - `status`: integer HTTP status `200..599`.
