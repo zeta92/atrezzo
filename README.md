@@ -146,7 +146,7 @@ A mock built endpoint by endpoint is a set of canned responses. They drift apart
 - **A world, not responses.** The scenario declares entities and their distribution. A seeded PRNG builds the world with one stream per entity. The same seed gives the same bytes. Generation never calls `Math.random()` or `Date.now()`, and a test checks this. Every foreign key points to a row that exists (or is null where the scenario asks for `nulls:`).
 - **Endpoints are projections.** An endpoint declares filters, pagination, sort order, joins, counts, and envelopes over the world. `serve` and the MSW handlers use the same engine. `world` copies it next to the data as `runtime.mjs`, and you commit and review it like any other code.
 - **The scenario carries its assertions.** `expect` says what the screen must show (`=12` rows, `3` badges) and which request feeds each count. That link lets `verify` tell a data problem from a rendering problem.
-- **Diagnosis, not regeneration.** A failed count produces typed hypotheses: `pagination-mismatch`, `client-side-filter`, `dedupe-by-id`, `undeclared-filter`, `null-field`, `navigation`, `page-error`, `console-error`, `click-target-missing`, and others. The skills forbid hand-writing data JSON: you change the scenario and regenerate.
+- **Diagnosis, not regeneration.** A failed count produces typed hypotheses: `pagination-mismatch`, `client-side-filter`, `dedupe-by-id`, `undeclared-filter`, `ignored-sort` (the client orders and the endpoint declares no `sorts:`), `null-field`, `navigation`, `page-error`, `console-error`, `click-target-missing`, and others. The skills forbid hand-writing data JSON: you change the scenario and regenerate.
 
 ### What scenarios and flows cover
 

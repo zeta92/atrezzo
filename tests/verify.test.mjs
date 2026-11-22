@@ -75,6 +75,42 @@ test('diagnose(): dedupe by id, null field and client-side filter', () => {
   assert.ok(cli.some((h) => h.type === 'render'));
 });
 
+test('diagnose(): an ignored order points at sorts:, an ignored column at filters:', () => {
+  const row = { expect: { selector: 'x', count: 3 } };
+  const sort = diagnose(row, {
+    obtained: 0,
+    response: { status: 200, headers: { 'x-atrezzo-ignored': 'order' } },
+    items: [{ id: 1 }, { id: 2 }, { id: 3 }],
+    matched: 3,
+    domCount: 0
+  });
+  const ignoredSort = sort.find((h) => h.type === 'ignored-sort');
+  assert.ok(ignoredSort, 'an ignored order is its own hypothesis');
+  assert.equal(ignoredSort.confidence, 'medium');
+  assert.match(ignoredSort.evidence, /sorts: \{ by: order/);
+  assert.ok(!sort.some((h) => h.type === 'undeclared-filter'), 'it must not send the user to filters');
+
+  const mixed = diagnose(row, {
+    obtained: 0,
+    response: { status: 200, headers: { 'x-atrezzo-ignored': 'order, status' } },
+    items: [{ id: 1 }],
+    matched: 1,
+    domCount: 0
+  });
+  assert.ok(mixed.some((h) => h.type === 'ignored-sort'));
+  assert.match(mixed.find((h) => h.type === 'undeclared-filter').evidence, /: status\./);
+
+  const filter = diagnose(row, {
+    obtained: 0,
+    response: { status: 200, headers: { 'x-atrezzo-ignored': 'status' } },
+    items: [{ id: 1 }],
+    matched: 1,
+    domCount: 0
+  });
+  assert.ok(filter.some((h) => h.type === 'undeclared-filter'));
+  assert.ok(!filter.some((h) => h.type === 'ignored-sort'));
+});
+
 function fakePage(counts) {
   const visited = [];
   return {
