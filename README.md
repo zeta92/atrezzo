@@ -249,7 +249,11 @@ The scenario does not depend on where it is served. `world` always writes the wo
 | `prism` | `@stoplight/prism-cli` (a spec alone is not enough) | an OpenAPI 3.1 file whose schemas and examples (`scenario`, filter examples, `passthrough`, `error`) come from the world | filter or paginate: any query gets the default example |
 | `wiremock` | a WireMock dependency, `mappings/` + `__files/`, or docker-compose | static mappings for enumerable combinations (each filter value, pages, exact flow requests), `passthrough`, `error`, and `/{id}` response templating | combined filters, path parameters, or unlisted pages: unlisted combinations get a **501** with the generated list, never a wrong page |
 
-See [`references/runtimes.md`](references/runtimes.md) for how `auto` scores each adapter, how each one handles missing routes, and their full limits.
+Every cell of that table is a row of [`references/capabilities.md`](references/capabilities.md): the generated matrix that says, per capability and adapter, whether it is **the same** as the engine (✅), **partial** and declines the rest (◐), **not supported** and says so (✖) or **different** (⚠) — the dangerous one, because the scenario stops being reproducible.
+
+`atrezzo world` prints `Degraded in <runtime>: <capability>` for every cell the scenario actually uses, and `atrezzo world <scenario> --strict` exits with 3 instead, for CI. The matrix is code (`scripts/lib/capabilities.mjs`): adding a key to the DSL without a capability row breaks `tests/capabilities.test.mjs`.
+
+See [`references/runtimes.md`](references/runtimes.md) for how `auto` scores each adapter and how each one handles missing routes.
 
 ### Monorepos and separate front end and backend
 
@@ -464,7 +468,7 @@ scripts/lib/                 world, scenario, contract (engine), codegen, serve,
 scripts/lib/runtimes/        builtin, msw, supabase, prism, wiremock
 references/                  scenario.md (scenario spec) · assumptions.md (client assumptions) · runtimes.md (adapters, monorepo)
 examples/tienda/             runnable end-to-end example
-tests/                       node --test tests/  (339 tests)
+tests/                       node --test tests/  (354 tests)
 ```
 
 </details>

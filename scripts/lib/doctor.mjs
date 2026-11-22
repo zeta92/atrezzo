@@ -2,11 +2,12 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
-import { CONFIG_FILE, loadConfig } from './config.mjs';
+import { CONFIG_FILE, loadConfig, runtimeList } from './config.mjs';
 import { loadScenario } from './scenario.mjs';
 import { generateWorld } from './world.mjs';
 import { missesFile, readMisses } from './misses.mjs';
 import { chromePath } from './env.mjs';
+import { degradations, STATE_LABEL } from './capabilities.mjs';
 
 function readPkg(dir) {
   const f = join(dir, 'package.json');
@@ -89,6 +90,11 @@ export function doctor(dir) {
                 add('warn', `${sc.name}: endpoint "${ep.path}" binds ":${p.name}" to "${p.field}" with a single value across ${rows.length} rows`,
                   `the parameter cannot select one row (every row answers): give "${p.field}" several distinct values (values: [...]) or drop the parameter`);
               }
+            }
+          }
+          for (const rt of runtimeList(cfg).filter((r) => r !== 'builtin')) {
+            for (const d of degradations(sc, rt)) {
+              add('warn', `${sc.name} × ${rt}: ${d.id}`, `${STATE_LABEL[d.state]}${d.note ? ` — ${d.note}` : ''}`);
             }
           }
           const gen = join(dir, cfg.generatedDir, `${sc.name}.json`);

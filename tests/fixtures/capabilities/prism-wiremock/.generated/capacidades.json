@@ -1,0 +1,280 @@
+{
+  "atrezzo": 1,
+  "scenario": "capacidades",
+  "seed": 42,
+  "now": "2025-03-01T09:00:00.000Z",
+  "hash": "cbf7bcc751dc42a4",
+  "schema": {
+    "customers": {
+      "singular": "customer",
+      "fk": "customer_id",
+      "fields": [
+        "id",
+        "name",
+        "email"
+      ],
+      "refs": {}
+    },
+    "orders": {
+      "singular": "order",
+      "fk": "order_id",
+      "fields": [
+        "id",
+        "customer_id",
+        "reference",
+        "amount",
+        "paid"
+      ],
+      "refs": {
+        "customer_id": "customers"
+      }
+    }
+  },
+  "endpoints": [
+    {
+      "path": "/api/orders",
+      "entity": "orders",
+      "filters": [
+        "paid"
+      ],
+      "pagination": {
+        "limit": "limit",
+        "offset": "offset",
+        "defaultLimit": 5,
+        "maxLimit": null,
+        "page": "page"
+      },
+      "sort": [
+        {
+          "field": "id",
+          "dir": "asc"
+        }
+      ],
+      "include": [],
+      "shape": "envelope",
+      "detail": false,
+      "sorts": {
+        "by": "sort",
+        "order": "order",
+        "fields": [
+          "amount",
+          "reference"
+        ]
+      },
+      "scopes": [
+        {
+          "param": "open",
+          "field": "paid",
+          "default": "exclude",
+          "when_true": "add",
+          "when_false": "only"
+        }
+      ],
+      "envelope": {
+        "items": "data",
+        "total": "total",
+        "page": "page",
+        "total_pages": "pages"
+      },
+      "latency": 120
+    }
+  ],
+  "entities": {
+    "customers": [
+      {
+        "id": 1,
+        "name": "Leo Keller",
+        "email": "ethan.brandt.1@example.com"
+      },
+      {
+        "id": 2,
+        "name": "Leo Doyle",
+        "email": "hugo.carter.2@example.com"
+      },
+      {
+        "id": 3,
+        "name": "Hugo Keller",
+        "email": "ava.vance.3@example.com"
+      },
+      {
+        "id": 4,
+        "name": "Ethan Rossi",
+        "email": "liam.weber.4@example.com"
+      },
+      {
+        "id": 5,
+        "name": "Iris Hale",
+        "email": "leo.brandt.5@example.com"
+      },
+      {
+        "id": 6,
+        "name": "Iris Rossi",
+        "email": "ethan.hale.6@example.com"
+      }
+    ],
+    "orders": [
+      {
+        "id": 1,
+        "customer_id": 2,
+        "reference": "reference 1",
+        "amount": 747.09,
+        "paid": true
+      },
+      {
+        "id": 2,
+        "customer_id": 1,
+        "reference": "reference 2",
+        "amount": 956.36,
+        "paid": true
+      },
+      {
+        "id": 3,
+        "customer_id": 6,
+        "reference": "reference 3",
+        "amount": 452.54,
+        "paid": false
+      },
+      {
+        "id": 4,
+        "customer_id": 3,
+        "reference": "reference 4",
+        "amount": 130.98,
+        "paid": false
+      },
+      {
+        "id": 5,
+        "customer_id": 4,
+        "reference": "reference 5",
+        "amount": 697.44,
+        "paid": true
+      },
+      {
+        "id": 6,
+        "customer_id": 3,
+        "reference": "reference 6",
+        "amount": 295.19,
+        "paid": true
+      },
+      {
+        "id": 7,
+        "customer_id": 4,
+        "reference": "reference 7",
+        "amount": 909.44,
+        "paid": false
+      },
+      {
+        "id": 8,
+        "customer_id": 5,
+        "reference": "reference 8",
+        "amount": 617.09,
+        "paid": true
+      },
+      {
+        "id": 9,
+        "customer_id": 1,
+        "reference": "reference 9",
+        "amount": 180.74,
+        "paid": true
+      },
+      {
+        "id": 10,
+        "customer_id": 5,
+        "reference": "reference 10",
+        "amount": 40.3,
+        "paid": false
+      },
+      {
+        "id": 11,
+        "customer_id": 3,
+        "reference": "reference 11",
+        "amount": 503.56,
+        "paid": false
+      },
+      {
+        "id": 12,
+        "customer_id": 4,
+        "reference": "reference 12",
+        "amount": 710.43,
+        "paid": true
+      }
+    ]
+  },
+  "writes": [
+    {
+      "method": "POST",
+      "path": "/api/orders",
+      "expect": {
+        "status": 201,
+        "echo": true
+      },
+      "mutate": {
+        "entity": "orders",
+        "action": "create",
+        "set": {
+          "paid": true
+        }
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/orders/:id",
+      "expect": {
+        "status": 200,
+        "echo": true
+      },
+      "params": [
+        {
+          "name": "id",
+          "field": "id"
+        }
+      ],
+      "mutate": {
+        "entity": "orders",
+        "action": "update",
+        "set": {
+          "paid": true
+        }
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/orders/:id",
+      "expect": {
+        "status": 204
+      },
+      "params": [
+        {
+          "name": "id",
+          "field": "id"
+        }
+      ],
+      "mutate": {
+        "entity": "orders",
+        "action": "delete"
+      }
+    }
+  ],
+  "streams": [
+    {
+      "path": "/api/events/orders",
+      "interval": 1000,
+      "events": [
+        {
+          "type": "paid"
+        }
+      ],
+      "loop": true
+    }
+  ],
+  "rpc": [
+    {
+      "fn": "marcar_pagado",
+      "expect": {
+        "status": 200
+      },
+      "body": {
+        "ok": true
+      }
+    }
+  ]
+}

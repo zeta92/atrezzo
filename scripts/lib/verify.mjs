@@ -140,7 +140,7 @@ export function diagnose(row, ctx) {
     const nullRows = ctx.items.filter((it) => Object.values(it ?? {}).some((v) => v === null)).length;
     if (nullRows > 0) {
       const strong = ctx.domCount !== undefined && ctx.domCount === ctx.matched - nullRows;
-      add('null-field', strong ? 'high' : 'low', `${nullRows} items with null fields (${Object.entries(nullFields).map(([k, n]) => `${k}: ${n}`).join(', ')}); if the client drops them or crashes rendering them, rows go missing. See references/suposiciones.md.`);
+      add('null-field', strong ? 'high' : 'low', `${nullRows} items with null fields (${Object.entries(nullFields).map(([k, n]) => `${k}: ${n}`).join(', ')}); if the client drops them or crashes rendering them, rows go missing. See references/assumptions.md.`);
     }
     if (ctx.domCount !== undefined && ctx.domCount < ctx.matched && dup === 0 && nullRows === 0) {
       add('client-side-filter', 'medium', `the JSON has ${ctx.matched} matching items, the DOM shows ${ctx.domCount}: the client filters or hides items. The scenario is right; look at the component.`);

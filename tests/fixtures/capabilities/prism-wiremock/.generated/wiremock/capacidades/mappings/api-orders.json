@@ -1,0 +1,365 @@
+{
+  "mappings": [
+    {
+      "name": "/api/orders? (no query)",
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/orders",
+        "queryParameters": {
+          "limit": {
+            "absent": true
+          },
+          "open": {
+            "absent": true
+          },
+          "order": {
+            "absent": true
+          },
+          "page": {
+            "absent": true
+          },
+          "paid": {
+            "absent": true
+          },
+          "sort": {
+            "absent": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "x-total-count": "5",
+          "x-atrezzo-scenario": "capacidades"
+        },
+        "bodyFileName": "capacidades/api-orders/default.json"
+      }
+    },
+    {
+      "name": "/api/orders?paid=false (filter paid)",
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/orders",
+        "queryParameters": {
+          "limit": {
+            "absent": true
+          },
+          "open": {
+            "absent": true
+          },
+          "order": {
+            "absent": true
+          },
+          "page": {
+            "absent": true
+          },
+          "paid": {
+            "equalTo": "false"
+          },
+          "sort": {
+            "absent": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "x-total-count": "5",
+          "x-atrezzo-scenario": "capacidades"
+        },
+        "bodyFileName": "capacidades/api-orders/paid-false.json"
+      }
+    },
+    {
+      "name": "/api/orders?paid=true (filter paid)",
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/orders",
+        "queryParameters": {
+          "limit": {
+            "absent": true
+          },
+          "open": {
+            "absent": true
+          },
+          "order": {
+            "absent": true
+          },
+          "page": {
+            "absent": true
+          },
+          "paid": {
+            "equalTo": "true"
+          },
+          "sort": {
+            "absent": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "x-total-count": "0",
+          "x-atrezzo-scenario": "capacidades"
+        },
+        "bodyFileName": "capacidades/api-orders/paid-true.json"
+      }
+    },
+    {
+      "name": "/api/orders?open=true (scope open)",
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/orders",
+        "queryParameters": {
+          "limit": {
+            "absent": true
+          },
+          "open": {
+            "equalTo": "true"
+          },
+          "order": {
+            "absent": true
+          },
+          "page": {
+            "absent": true
+          },
+          "paid": {
+            "absent": true
+          },
+          "sort": {
+            "absent": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "x-total-count": "12",
+          "x-atrezzo-scenario": "capacidades"
+        },
+        "bodyFileName": "capacidades/api-orders/open-true.json"
+      }
+    },
+    {
+      "name": "/api/orders?open=false (scope open)",
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/orders",
+        "queryParameters": {
+          "limit": {
+            "absent": true
+          },
+          "open": {
+            "equalTo": "false"
+          },
+          "order": {
+            "absent": true
+          },
+          "page": {
+            "absent": true
+          },
+          "paid": {
+            "absent": true
+          },
+          "sort": {
+            "absent": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "x-total-count": "5",
+          "x-atrezzo-scenario": "capacidades"
+        },
+        "bodyFileName": "capacidades/api-orders/open-false.json"
+      }
+    },
+    {
+      "name": "/api/orders?limit=5 (page of 5)",
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/orders",
+        "queryParameters": {
+          "limit": {
+            "equalTo": "5"
+          },
+          "open": {
+            "absent": true
+          },
+          "order": {
+            "absent": true
+          },
+          "page": {
+            "absent": true
+          },
+          "paid": {
+            "absent": true
+          },
+          "sort": {
+            "absent": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "x-total-count": "5",
+          "x-atrezzo-scenario": "capacidades"
+        },
+        "bodyFileName": "capacidades/api-orders/limit-5.json"
+      }
+    },
+    {
+      "name": "/api/orders?limit=5&page=1 (page of 5)",
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/orders",
+        "queryParameters": {
+          "limit": {
+            "equalTo": "5"
+          },
+          "open": {
+            "absent": true
+          },
+          "order": {
+            "absent": true
+          },
+          "page": {
+            "equalTo": "1"
+          },
+          "paid": {
+            "absent": true
+          },
+          "sort": {
+            "absent": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "x-total-count": "5",
+          "x-atrezzo-scenario": "capacidades"
+        },
+        "bodyFileName": "capacidades/api-orders/limit-5__page-1.json"
+      }
+    },
+    {
+      "name": "/api/orders?limit=5&page=2 (page of 5)",
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/orders",
+        "queryParameters": {
+          "limit": {
+            "equalTo": "5"
+          },
+          "open": {
+            "absent": true
+          },
+          "order": {
+            "absent": true
+          },
+          "page": {
+            "equalTo": "2"
+          },
+          "paid": {
+            "absent": true
+          },
+          "sort": {
+            "absent": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "x-total-count": "5",
+          "x-atrezzo-scenario": "capacidades"
+        },
+        "bodyFileName": "capacidades/api-orders/limit-5__page-2.json"
+      }
+    },
+    {
+      "name": "/api/orders?limit=5&page=3 (page of 5)",
+      "priority": 1,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/orders",
+        "queryParameters": {
+          "limit": {
+            "equalTo": "5"
+          },
+          "open": {
+            "absent": true
+          },
+          "order": {
+            "absent": true
+          },
+          "page": {
+            "equalTo": "3"
+          },
+          "paid": {
+            "absent": true
+          },
+          "sort": {
+            "absent": true
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json; charset=utf-8",
+          "x-total-count": "5",
+          "x-atrezzo-scenario": "capacidades"
+        },
+        "bodyFileName": "capacidades/api-orders/limit-5__page-3.json"
+      }
+    },
+    {
+      "name": "/api/orders · combination not pre-generated",
+      "priority": 9,
+      "request": {
+        "method": "GET",
+        "urlPath": "/api/orders"
+      },
+      "response": {
+        "status": 501,
+        "headers": {
+          "content-type": "application/json; charset=utf-8"
+        },
+        "jsonBody": {
+          "error": "atrezzo did not pre-generate this query combination for /api/orders. WireMock does not run the projection: use atrezzo serve, or add the request to a flow and run atrezzo world again.",
+          "generated": [
+            "(no query)",
+            "paid=false",
+            "paid=true",
+            "open=true",
+            "open=false",
+            "limit=5",
+            "limit=5&page=1",
+            "limit=5&page=2",
+            "limit=5&page=3"
+          ]
+        }
+      }
+    }
+  ]
+}

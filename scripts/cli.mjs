@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileS
 import { resolve, join, relative, dirname } from 'node:path';
 import { AtrezzoError, EXIT } from './lib/errors.mjs';
 import { loadConfig, runtimeList } from './lib/config.mjs';
+import { degradations, renderCapabilities, STATE_LABEL } from './lib/capabilities.mjs';
 import { loadScenario, loadFlow, MAX_LATENCY, embedLabel } from './lib/scenario.mjs';
 import { generateWorld, checkIntegrity } from './lib/world.mjs';
 import { writeGenerated } from './lib/codegen.mjs';
@@ -85,7 +86,7 @@ Commands:
 
 Exit codes: 0 OK · 1 assertion failed · 2 not verifiable (missing tool or mock) · 3 invalid input`;
 
-const BOOLEAN = new Set(['install', 'force', 'diagnose', 'strict-console', 'no-reset', 'json', 'help', 'clear', 'write']);
+const BOOLEAN = new Set(['install', 'force', 'diagnose', 'strict-console', 'no-reset', 'json', 'help', 'clear', 'write', 'strict', 'check']);
 const REPEATABLE = new Set(['header']);
 
 export function parseArgs(argv) {
@@ -209,6 +210,16 @@ function cmdWorld({ pos, flags }) {
     if (ep.error) bits.push(`error: ${ep.error.status}`);
     out(`  GET ${ep.path}${ep.detail ? ` (+ ${ep.path}/:id)` : ''}  ${bits.join(' · ')}`);
   }
+  const degraded = [];
+  for (const rt of ids.filter((r) => r !== 'builtin')) {
+    for (const d of degradations(scenario, rt)) degraded.push({ rt, ...d });
+  }
+  if (degraded.length) {
+    for (const d of degraded) out(`Degraded in ${d.rt}: ${d.id} (${STATE_LABEL[d.state]})${d.note ? ` — ${d.note}` : ''}`);
+    if (flags.strict) {
+      throw new AtrezzoError(`${degraded.length} capabilit${degraded.length === 1 ? 'y' : 'ies'} the scenario uses are not reproduced by ${[...new Set(degraded.map((d) => d.rt))].join(', ')}`, { exitCode: EXIT.INVALID, issues: degraded.map((d) => `${d.rt}: ${d.id} (${STATE_LABEL[d.state]})`) });
+    }
+  }
   for (const w of scenario.writes ?? []) {
     const bits = [`→ ${w.expect.status}${w.expect.echo ? ' (echo)' : ''}`];
     if (w.mutate) {
@@ -323,6 +334,28 @@ async function cmdVerify({ pos, flags }) {
   const result = await runVerify(flow, { url, driver, headers, clickTimeout, diagnose: !!flags.diagnose, strictConsole: !!flags['strict-console'], reset: !flags['no-reset'], cwd: cfg._dir });
   out(flags.json ? JSON.stringify(result, null, 2) : formatReport(result));
   return result.exitCode;
+}
+
+
+function cmdCapabilities({ flags }) {
+  const outDir = resolve(flags.dir ?? '.');
+  const target = join(outDir, 'references', 'capabilities.md');
+  const body = renderCapabilities();
+  if (flags.write) {
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, body);
+    out(`Wrote ${relative(process.cwd(), target) || target}`);
+    return EXIT.OK;
+  }
+  if (flags.check) {
+    if (!existsSync(target)) throw new AtrezzoError(`${relative(process.cwd(), target)} does not exist`, { exitCode: EXIT.INVALID, issues: ['run: atrezzo capabilities --write'] });
+    const onDisk = readFileSync(target, 'utf8');
+    if (onDisk !== body) throw new AtrezzoError(`${relative(process.cwd(), target)} is stale`, { exitCode: EXIT.INVALID, issues: ['run: atrezzo capabilities --write'] });
+    out('references/capabilities.md matches scripts/lib/capabilities.mjs');
+    return EXIT.OK;
+  }
+  out(body);
+  return EXIT.OK;
 }
 
 function cmdRuntimes({ flags }) {
@@ -467,7 +500,7 @@ async function cmdRecord({ pos, flags }) {
 export async function main(argv) {
   const args = parseArgs(argv);
   if (!args.cmd || args.flags.help || args.cmd === 'help') { out(HELP); return EXIT.OK; }
-  const cmds = { init: cmdInit, world: cmdWorld, serve: cmdServe, verify: cmdVerify, doctor: cmdDoctor, runtimes: cmdRuntimes, import: cmdImport, misses: cmdMisses, harvest: cmdHarvest, record: cmdRecord };
+  const cmds = { init: cmdInit, world: cmdWorld, serve: cmdServe, verify: cmdVerify, doctor: cmdDoctor, runtimes: cmdRuntimes, capabilities: cmdCapabilities, import: cmdImport, misses: cmdMisses, harvest: cmdHarvest, record: cmdRecord };
   const fn = cmds[args.cmd];
   if (!fn) throw new AtrezzoError(`Unknown command "${args.cmd}". Commands: ${Object.keys(cmds).join(', ')}`);
   return fn(args);
