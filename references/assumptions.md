@@ -53,3 +53,5 @@ atrezzo does not "fix" the assumption by making the mock never return `null`: th
 ## How `verify --diagnose` uses it
 
 The `null-field`, `dedupe-by-id`, `pagination-mismatch` and `client-side-filter` hypotheses are the cells of this matrix seen from the symptom (missing rows). When they show up, come back here and classify the field before changing anything.
+
+None of them is ever `confirmed`: the response shows the null, the repeated id or the cut page (that is the `finding`), but not what the client does with it. `null-field` and `dedupe-by-id` are `likely` only when the DOM count is exactly what the assumption predicts (rows minus the ones with nulls, or one row per distinct id); otherwise `possible`. `pagination-mismatch` and `client-side-filter` are `likely`. The `confidence` field is legacy; read `certainty`.
