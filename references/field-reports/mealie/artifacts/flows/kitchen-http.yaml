@@ -1,0 +1,60 @@
+scenario: ../scenarios/kitchen.yaml
+base_url: http://127.0.0.1:4010
+steps:
+  - screen: recipes-and-ingredients
+    visit: /g/home
+    requests:
+      recipes: GET /api/recipes?page=1&perPage=24
+      weeknight: GET /api/explore/groups/home/recipes?page=1&perPage=24&cookbook=weeknight
+    expect:
+      - selector: ".recipe-card-footer"
+        count: 12
+        label: recipes list (with embedded tags & ingredients)
+        data: { request: recipes }
+      - selector: ".recipe-card-footer"
+        count: 6
+        label: weeknight recipes filtered by cookbook
+        data: { request: weeknight }
+  - screen: groups-and-users
+    visit: /admin/manage/groups
+    requests:
+      groups: GET /api/admin/groups
+      users: GET /api/admin/users
+      group1_users: GET /api/admin/users?group_id=1
+    expect:
+      - selector: "table tbody tr"
+        count: 2
+        label: admin groups (with embedded users & households)
+        data: { request: groups }
+      - selector: "table tbody tr"
+        count: 6
+        label: admin users
+        data: { request: users }
+      - selector: "table tbody tr"
+        count: 3
+        label: users in group 1
+        data: { request: group1_users }
+  - screen: organizers-and-foods
+    visit: /group/data/foods
+    requests:
+      tags: GET /api/organizers/tags
+      foods: GET /api/foods
+      labels: GET /api/groups/labels
+      comments: GET /api/comments?recipe_id=1
+    expect:
+      - selector: ".tag-row"
+        count: 6
+        label: recipe tags
+        data: { request: tags }
+      - selector: ".food-row"
+        count: 8
+        label: ingredient foods (with included label)
+        data: { request: foods }
+      - selector: ".label-row"
+        count: 4
+        label: multi-purpose labels
+        data: { request: labels }
+      - selector: ".comment-row"
+        min: 1
+        label: comments on recipe 1
+        data: { request: comments }

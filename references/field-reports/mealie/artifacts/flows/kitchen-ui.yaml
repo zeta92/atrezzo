@@ -1,0 +1,39 @@
+scenario: ../scenarios/kitchen.yaml
+base_url: http://127.0.0.1:4010
+steps:
+  - screen: explorer
+    visit: /g/home
+    wait_for: ".recipe-card-footer"
+    requests:
+      recipes: GET /api/explore/groups/home/recipes?page=1&perPage=24&orderBy=created_at&orderDirection=desc
+    expect:
+      - selector: ".recipe-card-footer"
+        count: 12
+        label: all recipe cards
+        data: { request: recipes }
+      - selector: ".recipe-card-tags .v-chip"
+        min: 1
+        label: tag chips on recipe cards
+  - screen: cookbook
+    visit: /g/home/cookbooks/weeknight
+    wait_for: ".recipe-card-footer"
+    requests:
+      cookbook_recipes: GET /api/explore/groups/home/recipes?page=1&perPage=24&cookbook=weeknight
+    expect:
+      - selector: ".recipe-card-footer"
+        count: 6
+        label: weeknight cookbook recipes
+        data: { request: cookbook_recipes }
+  - screen: recipe-detail
+    visit: /g/home/r/pasta-carbonara
+    wait_for: ".d-print-none .ingredient-list-item"
+    requests:
+      recipe: GET /api/explore/groups/home/recipes/pasta-carbonara
+    expect:
+      - selector: ".d-print-none .ingredient-list-item"
+        count: 3
+        label: recipe ingredients
+        data: { request: recipe, pick: recipeIngredient }
+      - selector: ".d-print-none .v-card .v-chip"
+        min: 2
+        label: recipe organizer chips (categories & tags)

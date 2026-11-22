@@ -1,0 +1,13 @@
+scenario: ../scenarios/mealie-home.yaml
+base_url: http://127.0.0.1:4010
+steps:
+  - screen: explorer
+    visit: /g/home
+    wait_for: ".recipe-card-footer"
+    requests:
+      recipes: GET /api/explore/groups/home/recipes?page=1&perPage=24&orderBy=created_at&orderDirection=desc
+    expect:
+      - selector: ".recipe-card-footer"
+        count: 12
+        label: recipe cards
+        data: { request: recipes }

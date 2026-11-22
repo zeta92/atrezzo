@@ -1,0 +1,41 @@
+{
+  "rows": [
+    {
+      "screen": "explorer",
+      "expect": {
+        "selector": ".recipe-card-footer",
+        "count": 12,
+        "label": "all recipe cards",
+        "data": {
+          "request": "recipes"
+        }
+      },
+      "status": "KO",
+      "obtained": 5,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "world-mismatch",
+          "confidence": "medium",
+          "certainty": "likely",
+          "evidence": "the world has 5 matching items and =12 were expected: check world (total/distribution) or the assertion's \"where\" condition.",
+          "finding": "unpaginated, 5 items match; =12 were expected"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "explorer",
+      "visit": "/g/home"
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "inj-max-limit",
+  "seed": 42,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

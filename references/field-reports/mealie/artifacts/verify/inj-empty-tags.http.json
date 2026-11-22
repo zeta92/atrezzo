@@ -1,0 +1,41 @@
+{
+  "rows": [
+    {
+      "screen": "explorer",
+      "expect": {
+        "selector": ".recipe-card-tags .v-chip",
+        "count": 6,
+        "label": "tag chips when tags=0",
+        "data": {
+          "request": "tags"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "world-mismatch",
+          "confidence": "medium",
+          "certainty": "likely",
+          "evidence": "the world has 0 matching items and =6 were expected: check world (total/distribution) or the assertion's \"where\" condition.",
+          "finding": "unpaginated, 0 items match; =6 were expected"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "explorer",
+      "visit": "/g/home"
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "inj-empty-tags",
+  "seed": 42,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

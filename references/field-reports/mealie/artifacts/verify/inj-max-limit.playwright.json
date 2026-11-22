@@ -1,0 +1,41 @@
+{
+  "rows": [
+    {
+      "screen": "explorer",
+      "expect": {
+        "selector": ".recipe-card-footer",
+        "count": 12,
+        "label": "all recipe cards",
+        "data": {
+          "request": "recipes"
+        }
+      },
+      "status": "KO",
+      "obtained": 5,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "no-hypothesis",
+          "confidence": "low",
+          "certainty": "possible",
+          "evidence": "obtained 5, expected =12; no heuristic fits. Check the screen path and the selectors."
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "explorer",
+      "visit": "/g/home",
+      "console": []
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "inj-max-limit",
+  "seed": 42,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {}
+}

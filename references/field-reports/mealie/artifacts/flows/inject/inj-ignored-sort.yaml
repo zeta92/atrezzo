@@ -1,0 +1,12 @@
+scenario: ../../scenarios/inj-ignored-sort.yaml
+base_url: http://127.0.0.1:4010
+steps:
+  - screen: top-rated
+    visit: /g/home
+    requests:
+      recipes: GET /api/explore/groups/home/recipes?page=1&perPage=4&orderBy=rating&orderDirection=desc
+    expect:
+      - selector: ".recipe-card-footer"
+        count: 4
+        label: top 4 highest-rated recipes
+        data: { request: recipes, where: { rating: 5 } }

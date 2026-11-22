@@ -1,0 +1,152 @@
+{
+  "rows": [
+    {
+      "screen": "recipes-and-ingredients",
+      "expect": {
+        "selector": ".recipe-card-footer",
+        "count": 12,
+        "label": "recipes list (with embedded tags & ingredients)",
+        "data": {
+          "request": "recipes"
+        }
+      },
+      "status": "OK",
+      "obtained": 12,
+      "note": ""
+    },
+    {
+      "screen": "recipes-and-ingredients",
+      "expect": {
+        "selector": ".recipe-card-footer",
+        "count": 6,
+        "label": "weeknight recipes filtered by cookbook",
+        "data": {
+          "request": "weeknight"
+        }
+      },
+      "status": "OK",
+      "obtained": 6,
+      "note": ""
+    },
+    {
+      "screen": "groups-and-users",
+      "expect": {
+        "selector": "table tbody tr",
+        "count": 2,
+        "label": "admin groups (with embedded users & households)",
+        "data": {
+          "request": "groups"
+        }
+      },
+      "status": "OK",
+      "obtained": 2,
+      "note": ""
+    },
+    {
+      "screen": "groups-and-users",
+      "expect": {
+        "selector": "table tbody tr",
+        "count": 6,
+        "label": "admin users",
+        "data": {
+          "request": "users"
+        }
+      },
+      "status": "OK",
+      "obtained": 6,
+      "note": ""
+    },
+    {
+      "screen": "groups-and-users",
+      "expect": {
+        "selector": "table tbody tr",
+        "count": 3,
+        "label": "users in group 1",
+        "data": {
+          "request": "group1_users"
+        }
+      },
+      "status": "OK",
+      "obtained": 3,
+      "note": ""
+    },
+    {
+      "screen": "organizers-and-foods",
+      "expect": {
+        "selector": ".tag-row",
+        "count": 6,
+        "label": "recipe tags",
+        "data": {
+          "request": "tags"
+        }
+      },
+      "status": "OK",
+      "obtained": 6,
+      "note": ""
+    },
+    {
+      "screen": "organizers-and-foods",
+      "expect": {
+        "selector": ".food-row",
+        "count": 8,
+        "label": "ingredient foods (with included label)",
+        "data": {
+          "request": "foods"
+        }
+      },
+      "status": "OK",
+      "obtained": 8,
+      "note": ""
+    },
+    {
+      "screen": "organizers-and-foods",
+      "expect": {
+        "selector": ".label-row",
+        "count": 4,
+        "label": "multi-purpose labels",
+        "data": {
+          "request": "labels"
+        }
+      },
+      "status": "OK",
+      "obtained": 4,
+      "note": ""
+    },
+    {
+      "screen": "organizers-and-foods",
+      "expect": {
+        "selector": ".comment-row",
+        "min": 1,
+        "label": "comments on recipe 1",
+        "data": {
+          "request": "comments"
+        }
+      },
+      "status": "OK",
+      "obtained": 1,
+      "note": ""
+    }
+  ],
+  "steps": [
+    {
+      "screen": "recipes-and-ingredients",
+      "visit": "/g/home"
+    },
+    {
+      "screen": "groups-and-users",
+      "visit": "/admin/manage/groups"
+    },
+    {
+      "screen": "organizers-and-foods",
+      "visit": "/group/data/foods"
+    }
+  ],
+  "exitCode": 0,
+  "warnings": [],
+  "scenario": "kitchen",
+  "seed": 42,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

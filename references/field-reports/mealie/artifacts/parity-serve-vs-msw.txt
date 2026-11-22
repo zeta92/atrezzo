@@ -1,0 +1,32 @@
+(node:3001147) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+OK   [1] GET /api/app/about (200)
+OK   [2] GET /api/app/about/theme (200)
+OK   [3] GET /api/users/self ($user.id) (200)
+OK   [4] GET /api/groups/self ($user.group_id + embed) (200)
+OK   [5] GET /api/explore/groups/home/recipes?page=1&perPage=5&orderBy=name&orderDirection=asc (200)
+OK   [6] GET /api/explore/groups/home/recipes?page=2&perPage=5 (200)
+OK   [7] GET /api/explore/groups/home/recipes?cookbook=weeknight (200)
+OK   [8] GET /api/explore/groups/home/recipes/pasta-carbonara (passthrough+patch) (200)
+OK   [9] GET /api/explore/groups/home/recipes/tomato-soup (world object+embed) (200)
+OK   [10] GET /api/explore/groups/home/cookbooks/weeknight (200)
+OK   [11] GET /api/explore/groups/home/organizers/tags?page=1&perPage=-1 (ignored) (200)
+OK   [12] GET /api/recipes?page=1&perPage=-1 (400 error) (400)
+OK   [13] GET /api/recipes?page=1&perPage=4 (counts+embed) (200)
+OK   [14] GET /api/admin/groups (embed+counts) (200)
+OK   [15] GET /api/admin/users?group_id=1 (include) (200)
+OK   [16] GET /api/foods?label_id=1 (include) (200)
+OK   [17] HEAD /api/recipes (HEAD count) (200)
+DIFF [18] DELETE /api/foods/1 (undeclared write -> 405):
+  body: serve="{\"error\":\"DELETE /api/foods/1 is not in the contract of scenario \\\"kitchen\\\" (method not declared in scenario; add it under writes:)\",\"atrezzo\":{\"miss\":true,\"gap\":\"DELETE /api/foods/:id\",\"times\":1,\"next\":\"atrezzo misses\",\"endpoints\":[\"/api/app/about\",\"/api/app/about/theme\",\"/api/users/self\",\"/api/groups/self\",\"/api/explore/groups/:group_slug/recipes\",\"/api/explore/groups/home/recipes/pasta-carbonara\",\"/api/explore/groups/:group_slug/recipes/:slug\",\"/api/households/cookbooks\",\"/api/groups/households\",\"/api/groups/members\",\"/api/units\",\"/api/explore/groups/:group_slug/cookbooks\",\"/api/explore/groups/:group_slug/cookbooks/:slug\",\"/api/explore/groups/:group_slug/organizers/categories\",\"/api/explore/groups/:group_slug/organizers/tags\",\"/api/explore/groups/:group_slug/organizers/tools\",\"/api/explore/groups/:group_slug/foods\",\"/api/explore/groups/:group_slug/households\",\"/api/recipes\",\"/api/recipes/:slug\",\"/api/organizers/tags\",\"/api/foods\",\"/api/groups/labels\",\"/api/admin/groups\",\"/api/admin/users\",\"/api/comments\"],\"writes\":[\"POST /api/organizers/tags\",\"PUT /api/organizers/tags/:id\",\"DELETE /api/organizers/tags/:id\",\"POST /api/foods\",\"POST /api/recipes\",\"PATCH /api/recipes/:slug\",\"POST /api/admin/groups\",\"DELETE /api/admin/groups/:id\",\"POST /api/comments\"]}}" vs msw="{\"error\":\"DELETE /api/foods/1 is not in the contract (allowed: GET)\"}"
+OK   [19] POST /api/organizers/tags (create) (201)
+OK   [20] GET /api/organizers/tags (after create) (200)
+OK   [21] PUT /api/organizers/tags/7 (update) (200)
+OK   [22] DELETE /api/organizers/tags/7 (delete) (204)
+OK   [23] DELETE /api/admin/groups/1 (FK conflict -> 409) (409)
+OK   [24] POST /api/foods (bad FK -> 422) (422)
+OK   [25] POST /api/comments ($user.id set) (201)
+OK   [26] PATCH /api/recipes/pasta-carbonara (slug update) (200)
+OK   [27] GET /api/recipes/pasta-carbonara (after patch + comment) (200)
+
+Total: 27 requests, 1 differences

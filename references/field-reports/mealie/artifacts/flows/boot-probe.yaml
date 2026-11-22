@@ -1,0 +1,11 @@
+scenario: ../scenarios/api.yaml
+base_url: http://127.0.0.1:4010
+steps:
+  - screen: home
+    visit: /
+    allow_redirect: true
+    wait_for: ".v-application"
+    expect:
+      - selector: ".v-card"
+        min: 1
+        label: recipe cards

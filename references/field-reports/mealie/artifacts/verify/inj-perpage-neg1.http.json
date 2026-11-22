@@ -1,0 +1,41 @@
+{
+  "rows": [
+    {
+      "screen": "tags",
+      "expect": {
+        "selector": ".tag-row",
+        "count": 6,
+        "label": "tags with perPage=-1",
+        "data": {
+          "request": "tags"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "non-200-response",
+          "confidence": "high",
+          "certainty": "confirmed",
+          "evidence": "the request returned 400: {\"error\":\"\\\"perPage\\\" must be an integer >= 0; got \\\"-1\\\"\"}",
+          "finding": "the request returned 400"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "tags",
+      "visit": "/g/home"
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "inj-perpage-neg1",
+  "seed": 42,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

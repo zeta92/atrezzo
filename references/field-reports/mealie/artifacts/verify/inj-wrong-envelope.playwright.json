@@ -1,0 +1,49 @@
+{
+  "rows": [
+    {
+      "screen": "explorer",
+      "expect": {
+        "selector": ".recipe-card-footer",
+        "count": 12,
+        "label": "recipe cards with wrong envelope key",
+        "data": {
+          "request": "recipes",
+          "pick": "items"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "no-hypothesis",
+          "confidence": "low",
+          "certainty": "possible",
+          "evidence": "obtained 0, expected =12; no heuristic fits. Check the screen path and the selectors."
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "explorer",
+      "visit": "/g/home",
+      "console": [
+        {
+          "level": "error",
+          "text": "TypeError: Cannot read properties of undefined (reading 'length')\n    at Re (http://127.0.0.1:4010/_nuxt/DyPj12An.js:1:7210)\n    at async http://127.0.0.1:4010/_nuxt/DyPj12An.js:1:6911"
+        }
+      ]
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [
+    "step \"explorer\" console.error: TypeError: Cannot read properties of undefined (reading 'length')\n    at Re (http://127.0.0.1:4010/_nuxt/DyPj12An.js:1:7210)\n    at async http://127.0.0.1:4010/_nuxt/DyPj12An.js:1:6911"
+  ],
+  "scenario": "inj-wrong-envelope",
+  "seed": 42,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {}
+}

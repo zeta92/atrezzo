@@ -1,0 +1,58 @@
+{
+  "rows": [
+    {
+      "screen": "top-rated",
+      "expect": {
+        "selector": ".recipe-card-footer",
+        "count": 4,
+        "label": "top 4 highest-rated recipes",
+        "data": {
+          "request": "recipes",
+          "where": {
+            "rating": 5
+          }
+        }
+      },
+      "status": "KO",
+      "obtained": 2,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "ignored-sort",
+          "confidence": "medium",
+          "certainty": "possible",
+          "evidence": "the client orders by `orderBy` and the endpoint declares neither sorts: nor a sort: that matches, so the order was ignored. Add sorts: { by: orderBy, fields: [<columns>] } (or sort: { by: ... }) to endpoints[]; declaring a filter named orderBy would not fix the order.",
+          "finding": "the mock ignored orderBy (x-atrezzo-ignored header)"
+        },
+        {
+          "type": "undeclared-filter",
+          "confidence": "medium",
+          "certainty": "possible",
+          "evidence": "the client sends parameters the contract does not declare as filters, so they were ignored: orderDirection. If the client expects the server to filter, add them to endpoints[].filters.",
+          "finding": "the mock ignored orderDirection (x-atrezzo-ignored header)"
+        },
+        {
+          "type": "pagination-mismatch",
+          "confidence": "high",
+          "certainty": "likely",
+          "evidence": "the response has 4 of 12 items; unpaginated, 6 match the condition, but this page has only 2. Check the client's limit/offset or the endpoint's sort.",
+          "finding": "the page carries 4 of 12 items"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "top-rated",
+      "visit": "/g/home"
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "inj-ignored-sort",
+  "seed": 42,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}
