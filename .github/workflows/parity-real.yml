@@ -1,0 +1,24 @@
+name: parity (msw real)
+
+# La suite principal usa un stub de `msw` para no tener dependencias. Esta corre
+# los handlers generados sobre `msw/node` de verdad, comparándolos con `serve`.
+# Nocturna y manual: no bloquea PRs porque instala msw desde el registro.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  msw:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # El repo no tiene package.json ni dependencias: el test instala msw 2 en
+      # un proyecto temporal y resuelve `msw/node` desde ahí.
+      - name: parity builtin ↔ msw (real)
+        run: ATREZZO_PARITY=real node --test tests/parity-real.test.mjs

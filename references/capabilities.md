@@ -4,6 +4,8 @@ Generado por `scripts/lib/capabilities.mjs` (`node scripts/cli.mjs capabilities 
 
 `builtin` es el motor y el oráculo: siempre `✅`. ✅ igual · ◐ parcial y declinado el resto · ✖ no soportado y declarado · ⚠ **distinto sin avisar** (es lo que hay que cerrar).
 
+Las celdas de `msw` se comprueban en `tests/parity.test.mjs` (rápido, con un stub que ejecuta los handlers) y en `tests/parity-real.test.mjs` (`msw/node` real, `ATREZZO_PARITY=real`, nocturno). Una celda sin prueba es una promesa.
+
 | Capacidad | msw | supabase | prism | wiremock |
 |---|---|---|---|---|
 | `filters` · filtros (igualdad, `a,b`, `null`) | ✅ | ⚠ | ✖ | ◐ |
