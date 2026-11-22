@@ -655,7 +655,7 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'scopes', 'include', 'embed', 'counts', 'shape', 'envelope', 'detail', 'pick', 'latency', 'pluck', 'error', 'passthrough'];
+const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'scopes', 'include', 'embed', 'counts', 'shape', 'envelope', 'wrap', 'detail', 'pick', 'latency', 'pluck', 'error', 'passthrough'];
 
 /** Levels of `embed` below an endpoint's entity (the endpoint's own children are level 1). */
 export const MAX_EMBED_DEPTH = 4;
@@ -1124,7 +1124,7 @@ function parsePassthrough(raw, ep, f, issues) {
     issues.add(`${f}.detail`, 'cannot combine "detail: true" with "passthrough"');
   }
   if (ep.entity === undefined) {
-    for (const k of ['filters', 'pagination', 'sort', 'sorts', 'scopes', 'include', 'embed', 'counts', 'pluck', 'envelope', 'pick']) {
+    for (const k of ['filters', 'pagination', 'sort', 'sorts', 'scopes', 'include', 'embed', 'counts', 'pluck', 'envelope', 'pick', 'wrap']) {
       if (ep[k] !== undefined) issues.add(`${f}.${k}`, `incompatible with "passthrough" without "entity"`);
     }
     if (ep.shape !== undefined && ep.shape !== 'array') {
@@ -1266,6 +1266,22 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
     }
     // A singleton answers one row: there is no list to page through.
     if (shape === 'object' && pagination) issues.add(`${f}.pagination`, 'incompatible with shape: object (the response is a single row, not a list)');
+    let wrap = null;
+    if (ep.wrap !== undefined) {
+      if (ep.shape !== 'object') {
+        const got = ep.shape === undefined ? 'none (default "array")' : JSON.stringify(ep.shape);
+        issues.add(`${f}.wrap`, `requires shape: "object" (got ${got})`);
+      }
+      if (ep.pick !== undefined) issues.add(`${f}.wrap`, 'incompatible with pick');
+      if (ep.envelope !== undefined) issues.add(`${f}.wrap`, 'incompatible with envelope');
+      if (ep.pluck !== undefined) issues.add(`${f}.wrap`, 'incompatible with pluck');
+      if (ep.pagination !== undefined && ep.pagination !== null) issues.add(`${f}.wrap`, 'incompatible with pagination');
+      if (typeof ep.wrap !== 'string' || !PARAM_NAME.test(ep.wrap) || FORBIDDEN_ENVELOPE_SEGMENTS.has(ep.wrap)) {
+        issues.add(`${f}.wrap`, `must be a single key name (letters, digits, "_", not starting with a digit); got ${JSON.stringify(ep.wrap)}`);
+      } else {
+        wrap = ep.wrap;
+      }
+    }
     if (ep.detail !== undefined && typeof ep.detail !== 'boolean') issues.add(`${f}.detail`, 'must be true or false');
     let latency = null;
     if (ep.latency !== undefined) {
@@ -1306,6 +1322,7 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
     if (userFilters.length) norm.userFilters = userFilters; // same: absent unless declared
     if (pick) norm.pick = pick; // only when declared: keeps 0.1 scenario hashes stable
     if (envelope) norm.envelope = envelope; // same: absent unless declared
+    if (wrap) norm.wrap = wrap; // same: absent unless declared
     if (latency !== null) norm.latency = latency; // same: absent unless declared
     if (params.length) norm.params = params; // same
     if (embed.length) norm.embed = embed; // same

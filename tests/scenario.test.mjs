@@ -196,3 +196,48 @@ test('streams validation: collisions with endpoints (exact, parameterized, and d
   const paramEp = `${SCENARIO.replace('  - path: /api/customers\n    entity: customers\n', '  - path: /api/customers/:id/events\n    entity: orders\n    filters:\n      ":id": customer_id\n')}streams:\n  "/api/customers/1/events": { interval: 100, events: [{ a: 1 }] }\n`;
   assert.match(errorOf(() => norm(paramEp)).message, /streams\[\/api\/customers\/1\/events\]": conflicts with endpoint "\/api\/customers\/:id\/events"/);
 });
+
+test('wrap: valid configuration normalizes on shape: object and scenarios without wrap keep their hash', () => {
+  const baseYaml = `name: wrapped-singleton
+seed: 7
+world:
+  articles:
+    total: 3
+    fields: { slug: string, title: string }
+endpoints:
+  - path: /api/articles/:slug
+    entity: articles
+    shape: object
+`;
+  const base = norm(baseYaml);
+  assert.equal('wrap' in base.endpoints[0], false);
+
+  const wrapped = norm(`${baseYaml}    wrap: article\n`);
+  assert.equal(wrapped.endpoints[0].wrap, 'article');
+  assert.notEqual(scenarioHash(wrapped), scenarioHash(base));
+});
+
+test('wrap validation: requires shape: object, valid key name, and rejects incompatible options', () => {
+  const make = (extra) => `name: bad-wrap
+seed: 1
+world:
+  articles:
+    total: 2
+    fields: { slug: string, title: string }
+endpoints:
+  - path: /api/articles
+    entity: articles
+${extra}`;
+
+  assert.match(errorOf(() => norm(make('    shape: array\n    wrap: article\n'))).message, /endpoints\[0\]\.wrap": requires shape: "object"/);
+  assert.match(errorOf(() => norm(make('    wrap: article\n'))).message, /endpoints\[0\]\.wrap": requires shape: "object"/);
+  assert.match(errorOf(() => norm(make('    shape: envelope\n    wrap: article\n'))).message, /endpoints\[0\]\.wrap": requires shape: "object"/);
+  assert.match(errorOf(() => norm(make('    shape: object\n    wrap: article\n    pick: data\n'))).message, /endpoints\[0\]\.wrap": incompatible with pick/);
+  assert.match(errorOf(() => norm(make('    shape: object\n    wrap: article\n    envelope: { items: articles }\n'))).message, /endpoints\[0\]\.wrap": incompatible with envelope/);
+  assert.match(errorOf(() => norm(make('    shape: object\n    wrap: article\n    pluck: title\n'))).message, /endpoints\[0\]\.wrap": incompatible with pluck/);
+  assert.match(errorOf(() => norm(make('    shape: object\n    wrap: article\n    pagination: { param_limit: limit }\n'))).message, /endpoints\[0\]\.wrap": incompatible with pagination/);
+  assert.match(errorOf(() => norm(make('    shape: object\n    wrap: "no-vale"\n'))).message, /endpoints\[0\]\.wrap": must be a single key name/);
+  assert.match(errorOf(() => norm(make('    shape: object\n    wrap: "1bad"\n'))).message, /endpoints\[0\]\.wrap": must be a single key name/);
+  assert.match(errorOf(() => norm(make('    shape: object\n    wrap: ""\n'))).message, /endpoints\[0\]\.wrap": must be a single key name/);
+  assert.match(errorOf(() => norm(make('    shape: object\n    wrap: 123\n'))).message, /endpoints\[0\]\.wrap": must be a single key name/);
+});

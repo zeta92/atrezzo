@@ -201,6 +201,7 @@ function cmdWorld({ pos, flags }) {
     if (ep.sorts) bits.push(`sorts: ${ep.sorts.by}${ep.sorts.order ? `/${ep.sorts.order}` : ''} (${ep.sorts.fields.join(',')})`);
     if (ep.envelope) bits.push(`envelope: ${Object.entries(ep.envelope).map(([k, v]) => `${k}→${v}`).join(',')}`);
     else if (ep.pick) bits.push(`envelope: ${ep.pick}`);
+    if (ep.wrap) bits.push(`wrap: ${ep.wrap}`);
     if (ep.params) bits.push(`params: ${ep.params.map((x) => `:${x.name}→${x.field ?? 'any'}`).join(',')}`);
     if (ep.embed) bits.push(`embed: ${embedLabel(ep.embed)}`);
     if (ep.counts?.length) bits.push(`counts: ${ep.counts.map((c) => `${c.field}=${c.entity}.${c.on}`).join(',')}`);
