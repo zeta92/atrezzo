@@ -378,6 +378,12 @@ export function createEngine(dataset) {
     return v === null || v === undefined ? null : String(v);
   };
 
+  /** `wrap: article`: wraps a singleton (and its detail route) response as `{ [ep.wrap]: row }`. */
+  const wrapRow = (row, ep, counts) => {
+    const val = answerRow(row, ep, counts);
+    return ep.wrap ? { [ep.wrap]: val } : val;
+  };
+
   /** " under project_id=1" for error messages of parameterised paths ("" otherwise). */
   function where(ep, params) {
     const bound = (ep.params ?? []).filter((p) => p.field !== null);
@@ -702,7 +708,7 @@ export function createEngine(dataset) {
     if (id !== null) {
       const row = rows.find((r) => String(r.id) === id);
       if (!row) return json(404, { error: `${ep.entity} ${id} does not exist${where(ep, m.params)} in scenario "${dataset.scenario}"` });
-      return json(200, answerRow(row, ep, counts));
+      return json(200, wrapRow(row, ep, counts));
     }
 
     const ignored = [];
@@ -769,7 +775,7 @@ export function createEngine(dataset) {
         const label = q || resolved || '(no filter)';
         return json(404, { error: `no ${ep.entity} matches ${label}${where(ep, m.params)} in scenario "${dataset.scenario}"` }, h);
       }
-      return json(200, answerRow(result[0], ep, counts), h);
+      return json(200, wrapRow(result[0], ep, counts), h);
     }
 
     let limit = null;

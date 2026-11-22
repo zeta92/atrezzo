@@ -224,7 +224,7 @@ Generator guarantees:
 - Each entity uses its own PRNG stream: adding an entity does not change the others.
 
 ### Endpoints
-`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (declared in `world`; optional when `passthrough` is set), `filters` (existing fields for query filters, `{ <field>: "$user.<field>" }` for seeded-user filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `scopes` (query parameters that pick the set of rows by a boolean field), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `counts` (child count fields `{ <name>: { entity, on } }`), `shape` (`array` default, `envelope`, `object`), `envelope` (custom response keys `{ items, total, page, per_page }` when `shape: envelope`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error), `passthrough` (serve a frozen fixture `{ fixture, patch }` with dot-path overrides).
+`path` (starts with `/`, no query; `:name` segments are path parameters), `entity` (declared in `world`; optional when `passthrough` is set), `filters` (existing fields for query filters, `{ <field>: "$user.<field>" }` for seeded-user filters, `{ <fk>: { from, where } }` for world-resolved filters; a map also binds path parameters), `pagination`, `sort`, `sorts` (dynamic sort query parameters and allowed fields), `scopes` (query parameters that pick the set of rows by a boolean field), `include` (referenced entities only), `embed` (entities that reference this one, nestable), `counts` (child count fields `{ <name>: { entity, on } }`), `shape` (`array` default, `envelope`, `object`), `envelope` (custom response keys `{ items, total, page, per_page }` when `shape: envelope`), `wrap` (key name wrapping a `shape: object` response as `{ <key>: <row> }`), `detail`, `pick`, `latency`, `pluck` (a field: answer its values, not rows), `error` (always answer this error), `passthrough` (serve a frozen fixture `{ fixture, patch }` with dot-path overrides).
 
 - Offset `pagination`: `{ param_limit, param_offset, default_limit, max_limit }`. By page: `{ param_page: page, param_limit: per_page, default_limit: 10 }` (`default_limit` required; `offset = (page - 1) × limit`; `page=0` ⇒ 400; cannot be combined with `param_offset`).
 - `pick: items` ⇒ an envelope with that key: `{ items: [...], total, limit, offset }` (implies `shape: envelope`; `shape: envelope` without `pick` or `envelope` uses `data`). A single key, no nested paths.
@@ -560,6 +560,28 @@ endpoints:
 - No `X-Total-Count`; undeclared parameters still show up in `X-Atrezzo-Ignored`. `include` and `child(count)` embeds work as on a list row.
 - The detail route keeps today's behaviour: `GET /api/v2/user/3` answers row 3 (or 404), whatever the shape. `pagination` and `pick` are rejected with `shape: object`.
 - No `Authorization` header semantics: the mock does not read `Authorization`. Use `auth: { user: { entity, id } }` with `filters: { id: "$user.id" }` to bind `/api/user` or `/api/me` to a specific seeded user; without `auth` (or `$user.id`), the current user is whichever row the query filters and `sort` pick.
+
+##### Wrapped singletons (`wrap`)
+
+Some APIs (such as Conduit / RealWorld) wrap every singleton object under a single key (`{ "article": {…} }`, `{ "user": {…} }`) instead of returning the raw row. Add `wrap: <key>` alongside `shape: object`:
+
+```yaml
+endpoints:
+  - path: /api/articles/:slug
+    entity: articles
+    include: [authors]
+    shape: object
+    wrap: article                 # → 200 { "article": { "id": 1, "slug": "…", "author": {…} } }
+  - path: /api/user
+    entity: users
+    shape: object
+    wrap: user                    # → 200 { "user": { "id": 1, "name": "…", "email": "…" } }
+```
+
+- **Without `wrap`**: the response stays the raw row (`{ "id": 1, … }`) and scenario hashes are unchanged.
+- **404s unchanged**: empty entities (`atrezzo.miss: true`) and unmatched filters keep their exact 404 bodies (never wrapped).
+- **Detail route and relations**: when `detail: true`, the derived `/:id` route wraps under the same key (`{ "user": <row> }`), and `include`, `embed` and `counts` stay inside the wrapped row.
+- **Validation (scenario error)**: `wrap` requires `shape: "object"`, must match `/^[A-Za-z_][A-Za-z0-9_]*$/`, and is incompatible with `pick`, `envelope`, `pluck` and `pagination`.
 
 #### Latency (`latency:` and `serve --latency`)
 

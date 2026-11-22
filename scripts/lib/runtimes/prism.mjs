@@ -162,6 +162,7 @@ export function openapiDocument(dataset, config) {
     }
     const item = itemSchema(ep, dataset, names);
     const list = { type: 'array', items: item };
+    const wrapped = (s) => (ep.wrap ? { type: 'object', properties: { [ep.wrap]: s }, required: [ep.wrap] } : s);
     let schema;
     if (ep.shape === 'envelope') {
       if (ep.envelope) {
@@ -189,7 +190,7 @@ export function openapiDocument(dataset, config) {
         schema = { type: 'object', properties: { [ep.pick ?? 'data']: list, total: { type: 'integer' }, limit: { type: ['integer', 'null'] }, offset: { type: 'integer' } }, required: [ep.pick ?? 'data', 'total', 'limit', 'offset'] };
       }
     } else {
-      schema = ep.shape === 'object' ? item : list;
+      schema = ep.shape === 'object' ? wrapped(item) : list;
     }
     const def = engine.handle({ pathname: concrete, query: {} });
     // An empty `shape: object` singleton answers 404: it has no 200 example to give.
@@ -230,7 +231,7 @@ export function openapiDocument(dataset, config) {
     if (ep.detail) {
       const first = rows[0];
       const detailResponses = {
-        200: { description: `One ${dataset.schema[ep.entity].singular}`, content: { 'application/json': { schema: item, ...(first ? { examples: { scenario: { summary: `id ${first.id}`, value: engine.handle({ pathname: `${concrete}/${first.id}` }).body } } } : {}) } } },
+        200: { description: `One ${dataset.schema[ep.entity].singular}`, content: { 'application/json': { schema: wrapped(item), ...(first ? { examples: { scenario: { summary: `id ${first.id}`, value: engine.handle({ pathname: `${concrete}/${first.id}` }).body } } } : {}) } } },
         404: { description: 'Does not exist in the scenario', content: { 'application/json': { schema: errorSchema } } },
       };
       const idName = ep.params?.some((x) => x.name === 'id') ? 'row_id' : 'id';

@@ -1,14 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { chownSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, statfsSync } from 'node:fs';
+import { chownSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, statfsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { SCENARIO, tmpProject, cli } from './helpers.mjs';
+import { getJson } from './helpers/http.mjs';
 import { normalizeScenario } from '../scripts/lib/scenario.mjs';
 import { parseYaml } from '../scripts/lib/yaml.mjs';
 import { generateWorld } from '../scripts/lib/world.mjs';
 import { createEngine } from '../scripts/lib/contract.mjs';
+import { createMockServer } from '../scripts/lib/serve.mjs';
 import { DEFAULT_CONFIG } from '../scripts/lib/config.mjs';
 import { projectContext } from '../scripts/lib/project.mjs';
 import { chooseRuntime, emitRuntimes, getAdapter, RUNTIME_IDS } from '../scripts/lib/runtimes/index.mjs';
@@ -281,4 +284,102 @@ test('supabase in world: reset.sh is executable', () => {
   assert.ok(existsSync(join(dir, 'atrezzo/.generated/conciliacion.handlers.mjs')));
   const out = emitRuntimes(['msw', 'supabase'], { dataset, scenario, config, dir: '/nada' });
   assert.deepEqual(out.map((o) => o.id), ['msw', 'supabase']);
+});
+
+// ---------- serve / MSW parity for wrapped singletons (`wrap`) ----------
+
+test('wrap: dataset JSON preserves wrap and serve + generated MSW handlers return identical wrapped responses', async () => {
+  const WRAP_YAML = `name: conduit
+seed: 19
+world:
+  authors:
+    total: 2
+    fields: { username: string }
+  articles:
+    total: 2
+    ref: authors
+    fields: { slug: string, title: string }
+    values: { slug: [hello-world, second-article] }
+    values_order: cycle
+  users: 2
+  empty_items: 0
+endpoints:
+  - path: /api/articles/:slug
+    entity: articles
+    include: [authors]
+    shape: object
+    wrap: article
+  - path: /api/user
+    entity: users
+    shape: object
+    wrap: user
+    detail: true
+  - path: /api/empty
+    entity: empty_items
+    shape: object
+    wrap: item
+`;
+  const dir = tmpProject({ 'atrezzo/scenarios/conduit.yaml': WRAP_YAML });
+  const r = cli(['world', 'atrezzo/scenarios/conduit.yaml'], dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  // Generated dataset JSON carries `wrap` on each declared endpoint
+  const emittedJson = JSON.parse(readFileSync(join(dir, 'atrezzo/.generated/conduit.json'), 'utf8'));
+  assert.equal(emittedJson.endpoints[0].wrap, 'article');
+  assert.equal(emittedJson.endpoints[1].wrap, 'user');
+  assert.equal(emittedJson.endpoints[2].wrap, 'item');
+
+  // Minimal msw stub to execute generated handlers directly
+  mkdirSync(join(dir, 'node_modules/msw'), { recursive: true });
+  writeFileSync(join(dir, 'node_modules/msw/package.json'), JSON.stringify({ name: 'msw', type: 'module', exports: './index.js' }));
+  writeFileSync(join(dir, 'node_modules/msw/index.js'), `
+export const http = { get: (path, resolver) => ({ method: 'GET', path, resolver }) };
+export const HttpResponse = Object.assign(
+  function HttpResponse(body, init) { return { body, ...init }; },
+  { json: (body, init) => ({ body, ...init }) },
+);
+`);
+  const mod = await import(pathToFileURL(join(dir, 'atrezzo/.generated/conduit.handlers.mjs')).href);
+  const mswGet = (pathname) => {
+    for (const h of mod.handlers) {
+      const res = h.resolver({ request: new Request(`http://localhost${pathname}`) });
+      if (res) return res;
+    }
+    return null;
+  };
+
+  const mock = createMockServer({ scenariosDir: join(dir, 'atrezzo/scenarios'), scenario: 'conduit' });
+  const baseUrl = `http://127.0.0.1:${(await mock.listen(0)).port}`;
+  try {
+    for (const path of ['/api/articles/hello-world', '/api/user', '/api/user/2']) {
+      const served = await getJson(`${baseUrl}${path}`);
+      const msw = mswGet(path);
+      assert.equal(served.status, 200, path);
+      assert.equal(msw.status, 200, path);
+      assert.deepEqual(served.body, msw.body, `serve vs MSW parity on ${path}`);
+    }
+    assert.deepEqual(Object.keys((await getJson(`${baseUrl}/api/articles/hello-world`)).body), ['article']);
+    assert.deepEqual(Object.keys((await getJson(`${baseUrl}/api/user/2`)).body), ['user']);
+    assert.equal((await getJson(`${baseUrl}/api/user/2`)).body.user.id, 2);
+
+    // Empty singleton 404 is not wrapped in either serve or MSW
+    const servedEmpty = await getJson(`${baseUrl}/api/empty`);
+    const mswEmpty = mswGet('/api/empty');
+    assert.equal(servedEmpty.status, 404);
+    assert.equal(mswEmpty.status, 404);
+    assert.equal(servedEmpty.body.item, undefined);
+    assert.equal(mswEmpty.body.item, undefined);
+    assert.equal(servedEmpty.body.atrezzo.miss, true);
+    assert.equal(mswEmpty.body.atrezzo.miss, true);
+  } finally {
+    await mock.close();
+  }
+
+  // Prism OpenAPI schema & examples also reflect wrap
+  const sc = normalizeScenario(parseYaml(WRAP_YAML, 'conduit.yaml'), 'conduit.yaml');
+  const ds = generateWorld(sc);
+  const prismDoc = parseYaml(getAdapter('prism').emit({ dataset: ds, scenario: sc, config, dir: '/nada' }).files[0].content);
+  const userMedia = prismDoc.paths['/api/user'].get.responses['200'].content['application/json'];
+  assert.deepEqual(Object.keys(userMedia.examples.scenario.value), ['user']);
+  assert.deepEqual(userMedia.schema.required, ['user']);
 });

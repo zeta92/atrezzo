@@ -69,6 +69,7 @@ export function handlersSource(dataset, { importBase = './' } = {}) {
     if (ep.scopes?.length) notes.push(`scopes: ${ep.scopes.map((s) => `${s.param}→${s.field}`).join(', ')}`);
     if (ep.envelope) notes.push(`envelope: ${Object.entries(ep.envelope).map(([k, v]) => `${k}→${v}`).join(', ')}`);
     else if (ep.pick) notes.push(`envelope: ${ep.pick}`);
+    if (ep.wrap) notes.push(`wrap: ${ep.wrap}`);
     if (ep.include.length) notes.push(`includes: ${ep.include.join(', ')}`);
     if (ep.embed?.length) notes.push(`embeds: ${embedLabel(ep.embed)}`);
     if (ep.counts?.length) notes.push(`counts: ${ep.counts.map((c) => `${c.field}=${c.entity}.${c.on}`).join(', ')}`);

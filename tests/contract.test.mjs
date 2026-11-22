@@ -2188,3 +2188,113 @@ test('scopes: scenario validation (boolean field, actions, parameter collisions)
   bad('    scopes: { sort_by: archived }', /parameter "sort_by" conflicts with a sort parameter/);
   bad('    scopes: []', /scopes": must be a map/);
 });
+
+// ---------- wrap: singleton wrapper (`shape: object` + `wrap: <key>`) ----------
+
+test('wrap: shape: object + wrap wraps singleton, includes/counts, and derived detail route; 404s and unwrapped control stay intact', () => {
+  const WRAP_SCENARIO = `name: conduit-wrap
+seed: 42
+world:
+  authors:
+    total: 2
+    fields: { username: string, bio: string }
+  articles:
+    total: 3
+    ref: authors
+    fields: { slug: string, title: string }
+    values: { slug: [first-post, second-post, third-post] }
+    values_order: cycle
+  comments:
+    total: 5
+    ref: articles
+    fields: { body: string }
+  profiles: 0
+endpoints:
+  - path: /api/articles/:slug
+    entity: articles
+    include: [authors]
+    counts:
+      comments: { entity: comments, on: article_id }
+    shape: object
+    wrap: article
+  - path: /api/article
+    entity: articles
+    include: [authors]
+    counts:
+      comments: { entity: comments, on: article_id }
+    shape: object
+    wrap: article
+    detail: true
+  - path: /api/article-raw
+    entity: articles
+    include: [authors]
+    counts:
+      comments: { entity: comments, on: article_id }
+    shape: object
+    detail: true
+  - path: /api/profile
+    entity: profiles
+    shape: object
+    wrap: profile
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(WRAP_SCENARIO, 'wrap.yaml'), 'wrap.yaml'));
+  const eng = createEngine(ds);
+  const req = (path) => {
+    const u = new URL(path, 'http://x');
+    return eng.handle({ method: 'GET', pathname: u.pathname, query: u.searchParams });
+  };
+
+  // Wrapped parameterized singleton carries world fields, include, and counts inside { article: ... }
+  const wrapped = req('/api/articles/second-post');
+  assert.equal(wrapped.status, 200);
+  assert.deepEqual(Object.keys(wrapped.body), ['article']);
+  const expectedRow2 = ds.entities.articles.find((a) => a.slug === 'second-post');
+  const expectedAuthor2 = ds.entities.authors.find((a) => a.id === expectedRow2.author_id);
+  const expectedComments2 = ds.entities.comments.filter((c) => c.article_id === expectedRow2.id).length;
+  assert.deepEqual(wrapped.body.article, { ...expectedRow2, author: expectedAuthor2, comments_count: expectedComments2 });
+
+  // Control: identical endpoint without wrap returns the raw row directly
+  const raw = req('/api/article-raw');
+  assert.equal(raw.status, 200);
+  assert.equal(raw.body.article, undefined);
+  assert.equal(raw.body.id, ds.entities.articles[0].id);
+  assert.equal(raw.body.title, ds.entities.articles[0].title);
+  assert.deepEqual(raw.body.author, ds.entities.authors.find((a) => a.id === ds.entities.articles[0].author_id));
+
+  // Unwrapped singleton vs wrapped singleton match on inner row
+  const wrappedFirst = req('/api/article');
+  assert.equal(wrappedFirst.status, 200);
+  assert.deepEqual(wrappedFirst.body, { article: raw.body });
+
+  // Derived detail route (`detail: true`) also wraps under the same key
+  const detailWrapped = req(`/api/article/${expectedRow2.id}`);
+  assert.equal(detailWrapped.status, 200);
+  assert.deepEqual(detailWrapped.body, { article: wrapped.body.article });
+
+  const detailParamWrapped = req(`/api/articles/second-post/${expectedRow2.id}`);
+  assert.equal(detailParamWrapped.status, 200);
+  assert.deepEqual(detailParamWrapped.body, { article: wrapped.body.article });
+
+  // Control detail route without wrap stays raw
+  const detailRaw = req(`/api/article-raw/${expectedRow2.id}`);
+  assert.equal(detailRaw.status, 200);
+  assert.deepEqual(detailRaw.body, wrapped.body.article);
+
+  // 404s stay unwrapped: empty entity (with miss: true), unmatched filter/param, and missing detail id
+  const empty = req('/api/profile');
+  assert.equal(empty.status, 404);
+  assert.equal(empty.miss, true);
+  assert.equal(empty.body.profile, undefined);
+  assert.equal(empty.body.atrezzo.miss, true);
+  assert.equal(empty.body.atrezzo.gap, 'GET /api/profile');
+
+  const noMatch = req('/api/articles/nonexistent-slug');
+  assert.equal(noMatch.status, 404);
+  assert.equal(noMatch.body.article, undefined);
+  assert.match(noMatch.body.error, /no articles matches/);
+
+  const missingDetail = req('/api/article/999');
+  assert.equal(missingDetail.status, 404);
+  assert.equal(missingDetail.body.article, undefined);
+  assert.match(missingDetail.body.error, /articles 999 does not exist/);
+});
