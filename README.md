@@ -61,12 +61,22 @@ $ atrezzo verify flow-broken.yaml --diagnose
 1  order-list  [data-testid=order-row] [data-status=issue]  =3        2         KO
 2  order-list  [data-testid=order-row]                      =12       12        OK
 3  order-list  [data-testid=issue-badge]                    =3        3         OK
-  #1 hypothesis [high] pagination-mismatch: the response has 12 of 40 items; unpaginated, 3 match the condition, but this page has only 2. Check the client's limit/offset or the endpoint's sort.
+  #1 hypothesis [likely] pagination-mismatch: the response has 12 of 40 items; unpaginated, 3 match the condition, but this page has only 2. Check the client's limit/offset or the endpoint's sort.
 
 2 OK · 1 KO · 0 not verified → RED
 ```
 
 `verify` compares the DOM with the JSON the request returned. It does not regenerate data until the numbers happen to match.
+
+Each hypothesis carries a certainty, so a hunch never reads like a fact:
+
+| certainty | means | what to do |
+|---|---|---|
+| `confirmed` | proven by the response and the DOM (`declared-error`, `non-200-response`, `render`, `navigation`, `page-error`, `click-target-missing`, `console-error`) | act on it |
+| `likely` | the probable cause, checked against the data (`pagination-mismatch`, `client-side-filter`, `world-mismatch`; `dedupe-by-id`, `null-field`, `ignored-sort` and `undeclared-filter` only when the counts fit) | verify it before changing anything |
+| `possible` | fits the symptom, not checked (`no-data`, `no-hypothesis`, and the rest when the counts do not fit) | do not touch the scenario for it |
+
+In `--json`, each hypothesis is `{ type, confidence, certainty, evidence, finding? }`. `finding` is the proven observation behind a cause that is only `likely` or `possible` ("the page carries 12 of 40 items"). `confidence` (`high`/`medium`/`low`) is the old field, kept with the same values for compatibility; read `certainty` instead.
 
 ### No session means red, never green
 
@@ -436,7 +446,7 @@ The whole user surface is now in English. There is no backward compatibility (pr
 | 404/405 body for a gap | `atrezzo.hueco`, `veces`, `siguiente` | `atrezzo.gap`, `times`, `next` |
 | `misses.json` entry | `ejemplo` | `example` |
 | response header | `x-atrezzo-escenario` | `x-atrezzo-scenario` |
-| `verify --json` hypotheses | `{ tipo, confianza, evidencia }`, `alta`/`media`/`baja` | `{ type, confidence, evidence }`, `high`/`medium`/`low` |
+| `verify --json` hypotheses | `{ tipo, confianza, evidencia }`, `alta`/`media`/`baja` | `{ type, confidence, evidence }`, `high`/`medium`/`low` (later also `certainty` and `finding`; `confidence` is legacy) |
 | hypothesis types | `respuesta-no-200`, `filtro-no-declarado`, `paginacion-desalineada`, `deduplicacion-por-id`, `campo-nulo`, `filtro-en-cliente`, `mundo-distinto`, `sin-datos`, `sin-hipotesis`, `navegacion` | `non-200-response`, `undeclared-filter`, `pagination-mismatch`, `dedupe-by-id`, `null-field`, `client-side-filter`, `world-mismatch`, `no-data`, `no-hypothesis`, `navigation` (`render` unchanged) |
 | Prism example key | `escenario` (`Prefer: example=escenario`) | `scenario` |
 | Prism operationIds | `listar_*`, `detalle_*` | `list_*`, `detail_*` |

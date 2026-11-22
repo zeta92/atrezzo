@@ -9,10 +9,10 @@ import { generateWorld } from './world.mjs';
 import { mergeHeaders, maskHeaders, redact, formatHeaders } from './headers.mjs';
 import { mergeStorage, hasStorage, storageKeys, formatStorage, createSeeder } from './storage.mjs';
 import { chromePath } from './env.mjs';
+import { diagnose, header, declaredError, whereMatch, expectedText, passes } from './diagnose.mjs';
 
-// Query parameters that mean "order the rows": if one of them is ignored, the fix is `sorts:`, not a
-// filter with the same name (declaring `filters: { order: ... }` would filter, never order).
-const SORT_PARAM_NAMES = new Set(['order', 'sort', 'sort_by', 'order_by', 'sortby', 'orderby', 'sort.by', 'sort.order', 'sorts.by', 'sorts.order']);
+// El diagnóstico vive en diagnose.mjs; se reexporta para quien ya lo importa desde aquí.
+export { diagnose } from './diagnose.mjs';
 
 // ---------- helpers ----------
 
@@ -22,28 +22,6 @@ function extractItems(body, pick) {
   else if (v && !Array.isArray(v) && Array.isArray(v.data)) v = v.data;
   if (Array.isArray(v)) return v;
   return v === undefined || v === null ? [] : [v];
-}
-
-function whereMatch(item, where) {
-  if (!where) return true;
-  return Object.entries(where).every(([k, w]) => {
-    const values = Array.isArray(w) ? w : [w];
-    return values.some((x) => String(x) === String(item?.[k] ?? null));
-  });
-}
-
-function expectedText(e) {
-  if (e.count !== undefined) return `=${e.count}`;
-  if (e.min !== undefined && e.max !== undefined) return `${e.min}..${e.max}`;
-  if (e.min !== undefined) return `>=${e.min}`;
-  return `<=${e.max}`;
-}
-
-function passes(e, n) {
-  if (e.count !== undefined) return n === e.count;
-  if (e.min !== undefined && n < e.min) return false;
-  if (e.max !== undefined && n > e.max) return false;
-  return true;
 }
 
 function joinUrl(base, path) {
@@ -57,13 +35,6 @@ async function getJson(fetchImpl, url, init) {
   try { body = JSON.parse(text); } catch { body = text; }
   return { status: res.status, headers: res.headers, body };
 }
-
-function header(h, name) {
-  return typeof h?.get === 'function' ? h.get(name) : h?.[name] ?? null;
-}
-
-/** The mock answered the `error:` the scenario declares for the endpoint (a legitimate answer, not a failure of the mock). */
-const declaredError = (r) => header(r?.headers, 'x-atrezzo-error') === 'declared';
 
 function fitEndpoint(segs, parts) {
   if (segs.length !== parts.length) return -1;
@@ -98,64 +69,6 @@ function withoutPagination(path, ep) {
   }
   for (const k of keys) u.searchParams.delete(k);
   return u.pathname + (u.search || '');
-}
-
-// ---------- diagnosis ----------
-
-/**
- * Build hypotheses for a failed assertion. Pure function: all evidence comes in `ctx`.
- * ctx: { expected, obtained, driver, response?, items?, matched?, fullMatched?, domCount? }
- */
-export function diagnose(row, ctx) {
-  const hyps = [];
-  const add = (type, confidence, evidence) => hyps.push({ type, confidence, evidence });
-  const exp = row.expect;
-  const target = exp.count ?? exp.min ?? exp.max;
-  const r = ctx.response;
-  if (r && declaredError(r)) add('declared-error', 'high', `the scenario declares error: { status: ${r.status} } on this endpoint, so it answers ${r.status} by design (${JSON.stringify(r.body).slice(0, 120)}) and no rows; a step that expects data cannot pass. Expect the error state on the screen, or drop error: from the endpoint.`);
-  else if (r && r.status !== 200) add('non-200-response', 'high', `the request returned ${r.status}: ${JSON.stringify(r.body).slice(0, 160)}`);
-  if (r) {
-    const ignored = header(r.headers, 'x-atrezzo-ignored');
-    if (ignored) {
-      const names = String(ignored).split(',').map((s) => s.trim()).filter(Boolean);
-      const isSort = (n) => SORT_PARAM_NAMES.has(n.toLowerCase());
-      const sorts = names.filter(isSort);
-      const rest = names.filter((n) => !isSort(n));
-      if (sorts.length) {
-        add('ignored-sort', 'medium', `the client orders by ${sorts.map((s) => `\`${s}\``).join(', ')} and the endpoint declares neither sorts: nor a sort: that matches, so the order was ignored. Add sorts: { by: ${sorts[0]}, fields: [<columns>] } (or sort: { by: ... }) to endpoints[]; declaring a filter named ${sorts[0]} would not fix the order.`);
-      }
-      if (rest.length) add('undeclared-filter', 'medium', `the client sends parameters the contract does not declare as filters, so they were ignored: ${rest.join(', ')}. If the client expects the server to filter, add them to endpoints[].filters.`);
-    }
-  }
-  if (ctx.items) {
-    const total = Number(header(r?.headers, 'x-total-count'));
-    if (Number.isFinite(total) && total > ctx.items.length && ctx.fullMatched !== undefined && ctx.fullMatched >= target && ctx.matched < target) {
-      add('pagination-mismatch', 'high', `the response has ${ctx.items.length} of ${total} items; unpaginated, ${ctx.fullMatched} match the condition, but this page has only ${ctx.matched}. Check the client's limit/offset or the endpoint's sort.`);
-    }
-    const ids = ctx.items.map((i) => i?.id).filter((x) => x !== undefined);
-    const dup = ids.length - new Set(ids).size;
-    if (dup > 0) add('dedupe-by-id', 'high', `${dup} repeated ids in the response; if the client dedupes by id it renders ${new Set(ids).size} rows.`);
-    const nullFields = {};
-    for (const it of ctx.items) for (const [k, v] of Object.entries(it ?? {})) if (v === null) nullFields[k] = (nullFields[k] ?? 0) + 1;
-    const nullRows = ctx.items.filter((it) => Object.values(it ?? {}).some((v) => v === null)).length;
-    if (nullRows > 0) {
-      const strong = ctx.domCount !== undefined && ctx.domCount === ctx.matched - nullRows;
-      add('null-field', strong ? 'high' : 'low', `${nullRows} items with null fields (${Object.entries(nullFields).map(([k, n]) => `${k}: ${n}`).join(', ')}); if the client drops them or crashes rendering them, rows go missing. See references/assumptions.md.`);
-    }
-    if (ctx.domCount !== undefined && ctx.domCount < ctx.matched && dup === 0 && nullRows === 0) {
-      add('client-side-filter', 'medium', `the JSON has ${ctx.matched} matching items, the DOM shows ${ctx.domCount}: the client filters or hides items. The scenario is right; look at the component.`);
-    }
-    if (ctx.domCount !== undefined && ctx.matched === target && ctx.domCount !== target) {
-      add('render', 'high', `the mock delivers exactly what was expected (${target}); the difference is in the screen, not the scenario. Do not regenerate the world.`);
-    }
-    if (ctx.domCount === undefined && ctx.fullMatched !== undefined && ctx.fullMatched !== target && ctx.matched === ctx.fullMatched) {
-      add('world-mismatch', 'medium', `the world has ${ctx.fullMatched} matching items and ${expectedText(exp)} were expected: check world (total/distribution) or the assertion's "where" condition.`);
-    }
-  } else if (ctx.domCount !== undefined) {
-    add('no-data', 'low', 'the assertion has no "data" to compare against the JSON; add data.request to tell a data failure from a screen failure.');
-  }
-  if (!hyps.length) add('no-hypothesis', 'low', `obtained ${ctx.obtained}, expected ${expectedText(exp)}; no heuristic fits. Check the screen path and the selectors.`);
-  return hyps;
 }
 
 // ---------- playwright ----------
@@ -444,6 +357,7 @@ export async function runVerify(flow, opts) {
             const matchedEp = matchScenarioEndpoint(flow.scenario, r.path);
             const pick = e.data.pick ?? (matchedEp?.shape === 'envelope' ? (matchedEp.envelope?.items ?? matchedEp.pick) : undefined);
             ctx.response = r;
+            ctx.query = new URL(r.path, 'http://x').searchParams;
             ctx.items = r.status === 200 ? extractItems(r.body, pick) : [];
             ctx.matched = ctx.items.filter((it) => whereMatch(it, e.data.where)).length;
             if (wantDiag && r.status === 200) {
@@ -472,7 +386,7 @@ export async function runVerify(flow, opts) {
           if (selectorFail && !nav.fail && !clickFail) {
             if (selectorFailRow === null) { selectorFailRow = rows.length + 1; row.note = selectorFail; } else row.note = `same cause as #${selectorFailRow}`;
             if (wantDiag && selectorFailRow === rows.length + 1) {
-              row.hypotheses = [{ type: 'navigation', confidence: 'high', evidence: `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.` }];
+              row.hypotheses = [{ type: 'navigation', confidence: 'high', certainty: 'confirmed', evidence: `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.` }];
             }
           }
           rows.push(row);
@@ -520,25 +434,26 @@ export async function runVerify(flow, opts) {
             firstRow.note = effectiveNavFail ? `${effectiveNavFail}; ${errNote}` : effectiveClickFail ? `${effectiveClickFail.note}; ${errNote}` : errNote;
             if (wantDiag) {
               const hyps = [];
-              if (effectiveNavFail) hyps.push({ type: 'navigation', confidence: 'high', evidence: navEvidence });
-              if (effectiveClickFail) hyps.push({ type: 'click-target-missing', confidence: 'high', evidence: clickEvidence });
+              if (effectiveNavFail) hyps.push({ type: 'navigation', confidence: 'high', certainty: 'confirmed', evidence: navEvidence });
+              if (effectiveClickFail) hyps.push({ type: 'click-target-missing', confidence: 'high', certainty: 'confirmed', evidence: clickEvidence });
               for (const msg of new Set(pageErrors)) {
-                hyps.push({ type: 'page-error', confidence: 'high', evidence: `uncaught page error on "${step.screen}": ${clip(msg)}` });
+                hyps.push({ type: 'page-error', confidence: 'high', certainty: 'confirmed', evidence: `uncaught page error on "${step.screen}": ${clip(msg)}` });
               }
               firstRow.hypotheses = hyps;
             }
           } else if (effectiveNavFail) {
             firstRow.note = effectiveNavFail;
-            if (wantDiag) firstRow.hypotheses = [{ type: 'navigation', confidence: 'high', evidence: navEvidence }];
+            if (wantDiag) firstRow.hypotheses = [{ type: 'navigation', confidence: 'high', certainty: 'confirmed', evidence: navEvidence }];
           } else if (effectiveClickFail) {
             firstRow.note = effectiveClickFail.note;
-            if (wantDiag) firstRow.hypotheses = [{ type: 'click-target-missing', confidence: 'high', evidence: clickEvidence }];
+            if (wantDiag) firstRow.hypotheses = [{ type: 'click-target-missing', confidence: 'high', certainty: 'confirmed', evidence: clickEvidence }];
           } else {
             firstRow.note = `console.error (--strict-console)${consoleErrors.length > 1 ? ` (${consoleErrors.length})` : ''}: ${clip(consoleErrors[0])}`;
             if (wantDiag) {
               firstRow.hypotheses = [...new Set(consoleErrors)].map((msg) => ({
                 type: 'console-error',
                 confidence: 'high',
+                certainty: 'confirmed',
                 evidence: `console.error on "${step.screen}" with --strict-console: ${clip(msg)}`,
               }));
             }
@@ -585,7 +500,7 @@ export function formatReport(result) {
   const out = [...head, '', fmt(cols), fmt(widths.map((w) => '-'.repeat(w))), ...data.map(fmt)];
   result.rows.forEach((r, i) => {
     if (r.note) out.push(`  #${i + 1}: ${r.note}`);
-    for (const h of r.hypotheses ?? []) out.push(`  #${i + 1} hypothesis [${h.confidence}] ${h.type}: ${h.evidence}`);
+    for (const h of r.hypotheses ?? []) out.push(`  #${i + 1} hypothesis [${h.certainty ?? h.confidence}] ${h.type}: ${h.evidence}`);
   });
   const ok = result.rows.filter((r) => r.status === 'OK').length;
   const ko = result.rows.filter((r) => r.status === 'KO').length;
