@@ -1,0 +1,33 @@
+{
+  "rows": [
+    {
+      "screen": "home",
+      "expect": {
+        "selector": ".article-preview .preview-link",
+        "count": 10,
+        "label": "global feed rows",
+        "data": {
+          "request": "articles",
+          "pick": "articles"
+        }
+      },
+      "status": "OK",
+      "obtained": 10,
+      "note": ""
+    }
+  ],
+  "steps": [
+    {
+      "screen": "home",
+      "visit": "/"
+    }
+  ],
+  "exitCode": 0,
+  "warnings": [],
+  "scenario": "f5-null-author",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

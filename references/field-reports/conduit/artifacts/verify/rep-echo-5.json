@@ -1,0 +1,49 @@
+{
+  "rows": [
+    {
+      "screen": "feed",
+      "expect": {
+        "selector": ".article-preview button.btn-primary",
+        "count": 5,
+        "label": "favourited after one click"
+      },
+      "status": "KO",
+      "obtained": 4,
+      "note": "uncaught page error: TypeError: Cannot read properties of undefined (reading 'slug')",
+      "hypotheses": [
+        {
+          "type": "page-error",
+          "confidence": "high",
+          "certainty": "confirmed",
+          "evidence": "uncaught page error on \"feed\": TypeError: Cannot read properties of undefined (reading 'slug')"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "feed",
+      "visit": "/",
+      "console": [
+        {
+          "level": "pageerror",
+          "text": "TypeError: Cannot read properties of undefined (reading 'slug')"
+        }
+      ]
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "f5-favorite-echo",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {},
+  "storage": {
+    "local": [
+      "jwt"
+    ],
+    "session": []
+  }
+}

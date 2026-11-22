@@ -1,0 +1,48 @@
+{
+  "rows": [
+    {
+      "screen": "feed",
+      "expect": {
+        "selector": ".article-preview .preview-link",
+        "count": 10,
+        "label": "feed rows",
+        "data": {
+          "request": "feed",
+          "pick": "articles"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "no-hypothesis",
+          "confidence": "low",
+          "certainty": "possible",
+          "evidence": "obtained 0, expected =10; no heuristic fits. Check the screen path and the selectors."
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "feed",
+      "visit": "/",
+      "console": []
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "f5-feed-world",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {},
+  "storage": {
+    "local": [
+      "jwt"
+    ],
+    "session": []
+  }
+}

@@ -1,0 +1,47 @@
+# Logged in as alice (fake token: the mock checks none). Feed → article → profile.
+scenario: ../scenarios/conduit-session.yaml
+base_url: http://127.0.0.1:4010
+storage:
+  local: { jwt: "fake-token-for-the-mock" }
+steps:
+  - screen: feed
+    visit: /
+    wait_for: ".article-preview .preview-link"
+    click: ".article-preview button.btn-outline-primary"
+    requests:
+      feed: GET /api/articles/feed?limit=10&offset=0
+    expect:
+      - selector: ".article-preview"
+        count: 10
+        label: feed rows (authors alice follows)
+        data: { request: feed, pick: articles }
+      - selector: ".article-preview button.btn-primary"
+        count: 5
+        label: favorited after one click (4 + 1)
+      - selector: ".pagination .page-item"
+        count: 2
+        label: feed pages (16 / 10)
+  - screen: article
+    visit: /article/21b6be78-8754-4566-820d-a428f1ece189
+    wait_for: ".article-page h1"
+    requests:
+      comments: GET /api/articles/21b6be78-8754-4566-820d-a428f1ece189/comments
+    expect:
+      - selector: ".card .card-text"
+        count: 5
+        label: comments
+        data: { request: comments, pick: comments }
+      - selector: ".comment-form"
+        count: 1
+        label: comment form (logged in)
+  - screen: profile
+    visit: /@dave
+    wait_for: ".profile-page .user-info h4"
+    click: ".user-info button.btn-outline-secondary"
+    expect:
+      - selector: ".user-info button.btn-secondary"
+        count: 1
+        label: following dave after the click
+      - selector: ".user-info button.btn-outline-secondary"
+        count: 0
+        label: no follow button left

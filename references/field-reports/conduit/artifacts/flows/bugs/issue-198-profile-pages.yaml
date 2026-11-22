@@ -1,0 +1,21 @@
+# Upstream issue #198 "No pagination for My Articles and Favorited Articles of a user".
+# carol has 7 articles; the profile lists 5 per page, so a correct screen shows 2 pages.
+# Expected result while the bug exists: KO (ListPagination assumes 10 per page and hides itself).
+scenario: ../../scenarios/issue-198-profile-pages.yaml
+base_url: http://127.0.0.1:4010
+storage:
+  local: { jwt: "fake-token-for-the-mock" }
+steps:
+  - screen: my-articles
+    visit: /@carol
+    wait_for: ".article-preview .preview-link"
+    requests:
+      mine: GET /api/articles?author=carol&limit=5&offset=0
+    expect:
+      - selector: ".article-preview"
+        count: 5
+        label: first page of carol's articles
+        data: { request: mine, pick: articles }
+      - selector: ".pagination .page-item"
+        count: 2
+        label: pages for 7 articles at 5 per page

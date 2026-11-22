@@ -1,0 +1,106 @@
+# Upstream issue #198: one author (carol, the logged-in user) owns all 7 articles, so ?author=carol (which the DSL cannot filter) answers the right rows.
+# Conduit, logged in as alice: feed, article page with comments, profile, and the writes they trigger.
+name: issue-198-profile-pages
+description: Logged-in user (alice) reading the feed, an article and a profile; favorite, follow and comment are writable.
+seed: 1
+now: 2026-11-01T09:00:00Z
+auth:
+  user: { entity: authors, id: 1 }
+world:
+  tags:
+    total: 6
+    fields: { name: [dragons, training, welcome, react, redux, node] }
+    values_order: cycle
+  authors:
+    total: 1
+    fields:
+      username: [carol]
+      email: email
+      token: string
+      bio: string
+      image: url
+      following: [false, true, true, false]
+    values_order: cycle
+  articles:
+    total: 7
+    ref: authors
+    fields:
+      slug: uuid
+      title: string
+      description: string
+      body: string
+      createdAt: date
+      updatedAt: date
+      favorited: boolean
+      favoritesCount: integer
+    values:
+      tagList: [[dragons, training], [welcome], [react, redux]]
+  comments:
+    total: 5
+    ref: [articles, authors]
+    fields:
+      body: string
+      createdAt: date
+      updatedAt: date
+endpoints:
+  - path: /api/tags
+    entity: tags
+    pluck: name
+    pick: tags
+  - path: /api/user
+    entity: authors
+    shape: object
+    wrap: user
+    filters: { id: "$user.id" }
+    detail: false
+  - path: /api/articles/feed
+    entity: articles
+    include: [authors]
+    filters:
+      author_id: { from: authors, where: { following: true } }
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: -createdAt
+    shape: envelope
+    envelope: { items: articles, total: articlesCount }
+    detail: false
+  - path: /api/articles
+    entity: articles
+    include: [authors]
+    pagination: { param_limit: limit, param_offset: offset }
+    sort: -createdAt
+    shape: envelope
+    envelope: { items: articles, total: articlesCount }
+    detail: false
+  - path: /api/articles/:slug
+    entity: articles
+    include: [authors]
+    shape: object
+    wrap: article
+    detail: false
+  - path: /api/articles/:slug/comments
+    entity: comments
+    include: [authors]
+    filters: { ":slug": null }
+    shape: envelope
+    envelope: { items: comments }
+    detail: false
+  - path: /api/profiles/:username
+    entity: authors
+    shape: object
+    wrap: profile
+    detail: false
+writes:
+  "POST /api/articles/:slug/favorite":
+    # echo answers the bare row; the app reads payload.article (field finding), so the body is static
+    expect: { status: 200, body: { article: { slug: 21b6be78-8754-4566-820d-a428f1ece189, favorited: true, favoritesCount: 868 } } }
+    mutate: { entity: articles, action: update, set: { favorited: true } }
+  "DELETE /api/articles/:slug/favorite":
+    expect: { status: 200, echo: true }
+    mutate: { entity: articles, action: update, set: { favorited: false } }
+  "POST /api/profiles/:username/follow":
+    expect: { status: 200, body: { profile: { username: dave, bio: "bio 4", image: "https://example.com/authors/4", following: true } } }
+    mutate: { entity: authors, action: update, set: { following: true } }
+  "POST /api/articles/:slug/comments":
+    # stateless: a write cannot bind :slug through the parent article (field finding)
+    expect: { status: 200, body: { comment: { id: 99, body: "posted", createdAt: "2026-11-01T09:00:00Z", author: { username: alice } } } }
+    mutate: false

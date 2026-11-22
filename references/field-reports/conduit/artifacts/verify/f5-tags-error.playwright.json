@@ -1,0 +1,59 @@
+{
+  "rows": [
+    {
+      "screen": "home",
+      "expect": {
+        "selector": ".sidebar .tag-pill",
+        "count": 6,
+        "label": "popular tags",
+        "data": {
+          "request": "tags",
+          "pick": "tags"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "uncaught page error: TypeError: Cannot read properties of undefined (reading 'tags')",
+      "hypotheses": [
+        {
+          "type": "page-error",
+          "confidence": "high",
+          "certainty": "confirmed",
+          "evidence": "uncaught page error on \"home\": TypeError: Cannot read properties of undefined (reading 'tags')"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "home",
+      "visit": "/",
+      "console": [
+        {
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+        },
+        {
+          "level": "pageerror",
+          "text": "TypeError: Cannot read properties of undefined (reading 'tags')"
+        }
+      ]
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [
+    "step \"home\" console.error: Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+  ],
+  "scenario": "f5-tags-error",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {},
+  "storage": {
+    "local": [
+      "jwt"
+    ],
+    "session": []
+  }
+}

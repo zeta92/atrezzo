@@ -1,0 +1,16 @@
+# F5 injected cause: feed-sort. Assertions describe the intended state.
+scenario: ../../scenarios/f5-feed-sort.yaml
+base_url: http://127.0.0.1:4010
+storage:
+  local: { jwt: "fake-token-for-the-mock" }
+steps:
+  - screen: feed
+    visit: /
+    wait_for: ".article-preview .preview-link"
+    requests:
+      feed: GET /api/articles/feed?limit=10&offset=0
+    expect:
+      - selector: ".article-preview button.btn-primary"
+        count: 4
+        label: favourited among the 10 newest
+        data: { request: feed, pick: articles, where: { favorited: true } }

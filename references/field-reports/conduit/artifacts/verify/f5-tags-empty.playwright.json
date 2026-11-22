@@ -1,0 +1,48 @@
+{
+  "rows": [
+    {
+      "screen": "home",
+      "expect": {
+        "selector": ".sidebar .tag-pill",
+        "count": 6,
+        "label": "popular tags",
+        "data": {
+          "request": "tags",
+          "pick": "tags"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "no-hypothesis",
+          "confidence": "low",
+          "certainty": "possible",
+          "evidence": "obtained 0, expected =6; no heuristic fits. Check the screen path and the selectors."
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "home",
+      "visit": "/",
+      "console": []
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "f5-tags-empty",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {},
+  "storage": {
+    "local": [
+      "jwt"
+    ],
+    "session": []
+  }
+}

@@ -1,0 +1,16 @@
+# F5 injected cause: comments-envelope. Assertions describe the intended state.
+scenario: ../../scenarios/f5-comments-envelope.yaml
+base_url: http://127.0.0.1:4010
+storage:
+  local: { jwt: "fake-token-for-the-mock" }
+steps:
+  - screen: article
+    visit: /article/21b6be78-8754-4566-820d-a428f1ece189
+    wait_for: ".article-page h1"
+    requests:
+      comments: GET /api/articles/21b6be78-8754-4566-820d-a428f1ece189/comments
+    expect:
+      - selector: ".card .card-text"
+        count: 5
+        label: comments
+        data: { request: comments, pick: comments }

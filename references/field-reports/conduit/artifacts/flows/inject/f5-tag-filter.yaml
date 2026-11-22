@@ -1,0 +1,17 @@
+# F5 injected cause: tag-filter. Assertions describe the intended state.
+scenario: ../../scenarios/f5-tag-filter.yaml
+base_url: http://127.0.0.1:4010
+storage:
+  local: { jwt: "fake-token-for-the-mock" }
+steps:
+  - screen: tag
+    visit: /
+    wait_for: ".sidebar .tag-pill"
+    click: ".sidebar .tag-pill >> nth=2"
+    requests:
+      byTag: GET /api/articles?tag=welcome&limit=10&offset=0
+    expect:
+      - selector: ".article-preview"
+        count: 5
+        label: articles tagged welcome
+        data: { request: byTag, pick: articles }

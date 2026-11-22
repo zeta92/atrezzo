@@ -1,0 +1,44 @@
+{
+  "rows": [
+    {
+      "screen": "home",
+      "expect": {
+        "selector": ".sidebar .tag-pill",
+        "count": 6,
+        "label": "popular tags",
+        "data": {
+          "request": "tags",
+          "pick": "tags"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "world-mismatch",
+          "confidence": "medium",
+          "certainty": "likely",
+          "evidence": "the world has 0 matching items and =6 were expected: check world (total/distribution) or the assertion's \"where\" condition.",
+          "finding": "unpaginated, 0 items match; =6 were expected"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "home",
+      "visit": "/"
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [
+    "storage: is ignored with the http driver (there is no browser to seed); use --driver playwright"
+  ],
+  "scenario": "f5-tags-empty",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

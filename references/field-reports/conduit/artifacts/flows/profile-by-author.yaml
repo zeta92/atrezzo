@@ -1,0 +1,20 @@
+# Field gap: GET /api/articles?author=<username> cannot be modelled (a filter through the parent's field).
+# Kept red on purpose; see references/field-reports/conduit/summary.md.
+scenario: ../scenarios/conduit-session.yaml
+base_url: http://127.0.0.1:4010
+storage:
+  local: { jwt: "fake-token-for-the-mock" }
+steps:
+  - screen: profile
+    visit: /@carol
+    wait_for: ".profile-page .user-info h4"
+    requests:
+      byAuthor: GET /api/articles?author=carol&limit=5&offset=0
+    expect:
+      - selector: ".article-preview"
+        count: 5
+        label: carol's articles, first page
+        data: { request: byAuthor, pick: articles, where: { author_id: 3 } }
+      - selector: ".pagination .page-item"
+        count: 2
+        label: carol's pages (7 / 5)

@@ -1,0 +1,57 @@
+{
+  "rows": [
+    {
+      "screen": "home",
+      "expect": {
+        "selector": ".article-preview .preview-link",
+        "count": 10,
+        "label": "global feed rows",
+        "data": {
+          "request": "articles",
+          "pick": "articles"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "uncaught page error: TypeError: Cannot read properties of null (reading 'username')",
+      "hypotheses": [
+        {
+          "type": "page-error",
+          "confidence": "high",
+          "certainty": "confirmed",
+          "evidence": "uncaught page error on \"home\": TypeError: Cannot read properties of null (reading 'username')"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "home",
+      "visit": "/",
+      "console": [
+        {
+          "level": "error",
+          "text": "TypeError: Cannot read properties of null (reading 'username')\n    at c (http://127.0.0.1:4010/static/js/main.eb352103.js:1:303619)\n    at Sn (http://127.0.0.1:4010/static/js/main.eb352103.js:1:106498)\n    at Il (http://127.0.0.1:4010/static/js/main.eb352103.js:1:180056)\n    at to (http://127.0.0.1:4010/static/js/main.eb352103.js:1:141239)\n    at Jr (http://127.0.0.1:4010/static/js/main.eb352103.js:1:141164)\n    at Br (http://127.0.0.1:4010/static/js/main.eb352103.js:1:138077)\n    at http://127.0.0.1:4010/static/js/main.eb352103.js:1:94661\n    at t.unstable_runWithPriority (http://127.0.0.1:4010/static/js/main.eb352103.js:1:196535)\n    at Bt (http://127.0.0.1:4010/static/js/main.eb352103.js:1:94371)\n    at Gt (http://127.0.0.1:4010/static/js/main.eb352103.js:1:94607)"
+        },
+        {
+          "level": "error",
+          "text": "TypeError: Cannot read properties of null (reading 'username')\n    at c (http://127.0.0.1:4010/static/js/main.eb352103.js:1:303619)\n    at Sn (http://127.0.0.1:4010/static/js/main.eb352103.js:1:106498)\n    at Il (http://127.0.0.1:4010/static/js/main.eb352103.js:1:180056)\n    at to (http://127.0.0.1:4010/static/js/main.eb352103.js:1:141239)\n    at Jr (http://127.0.0.1:4010/static/js/main.eb352103.js:1:141164)\n    at Br (http://127.0.0.1:4010/static/js/main.eb352103.js:1:138077)\n    at http://127.0.0.1:4010/static/js/main.eb352103.js:1:94661\n    at t.unstable_runWithPriority (http://127.0.0.1:4010/static/js/main.eb352103.js:1:196535)\n    at Bt (http://127.0.0.1:4010/static/js/main.eb352103.js:1:94371)\n    at Gt (http://127.0.0.1:4010/static/js/main.eb352103.js:1:94607)"
+        },
+        {
+          "level": "pageerror",
+          "text": "TypeError: Cannot read properties of null (reading 'username')"
+        }
+      ]
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [
+    "step \"home\" console.error (×2): TypeError: Cannot read properties of null (reading 'username')\n    at c (http://127.0.0.1:4010/static/js/main.eb352103.js:1:303619)\n    at Sn (http://127.0.0.1:4010/static/js/main.eb352103.js:1:106498)\n    at Il (http://127.0.0.1:4010/static/js/main.eb352103.js:1:180056)\n    at to (http://127.0.0.1:"
+  ],
+  "scenario": "f5-null-author",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {}
+}

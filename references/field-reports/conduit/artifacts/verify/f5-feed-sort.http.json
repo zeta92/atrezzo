@@ -1,0 +1,47 @@
+{
+  "rows": [
+    {
+      "screen": "feed",
+      "expect": {
+        "selector": ".article-preview button.btn-primary",
+        "count": 4,
+        "label": "favourited among the 10 newest",
+        "data": {
+          "request": "feed",
+          "where": {
+            "favorited": true
+          },
+          "pick": "articles"
+        }
+      },
+      "status": "KO",
+      "obtained": 2,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "pagination-mismatch",
+          "confidence": "high",
+          "certainty": "likely",
+          "evidence": "the response has 10 of 16 items; unpaginated, 5 match the condition, but this page has only 2. Check the client's limit/offset or the endpoint's sort.",
+          "finding": "the page carries 10 of 16 items"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "feed",
+      "visit": "/"
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [
+    "storage: is ignored with the http driver (there is no browser to seed); use --driver playwright"
+  ],
+  "scenario": "f5-feed-sort",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

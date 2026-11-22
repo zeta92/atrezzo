@@ -1,0 +1,35 @@
+{
+  "rows": [
+    {
+      "screen": "home",
+      "expect": {
+        "selector": ".article-preview",
+        "count": 10,
+        "label": "feed rows",
+        "data": {
+          "request": "feed",
+          "pick": "articles"
+        }
+      },
+      "status": "OK",
+      "obtained": 10,
+      "note": ""
+    }
+  ],
+  "steps": [
+    {
+      "screen": "home",
+      "visit": "/"
+    }
+  ],
+  "exitCode": 0,
+  "warnings": [
+    "storage: is ignored with the http driver (there is no browser to seed); use --driver playwright"
+  ],
+  "scenario": "f5-duplicate-slug",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "http",
+  "viewport": null,
+  "headers": {}
+}

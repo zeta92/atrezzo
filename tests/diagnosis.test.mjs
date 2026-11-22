@@ -123,6 +123,49 @@ const CASES = [
   { name: 'sin data: solo hay DOM', row: expect({ count: 3 }), cause: null, ctx: { obtained: 2, domCount: 2 } },
   { name: 'sin nada que comparar', row: expect({ count: 3 }), cause: null, ctx: { obtained: 0 } },
   { name: 'respuesta 200 sin items ni DOM', row: expect({ count: 3 }), cause: null, ctx: { obtained: 0, response: ok() } },
+
+  // --- F5 field cases: Conduit (references/field-reports/conduit/summary.md) ---
+  // Each one comes from a real `verify --diagnose` run against the Conduit front end with one cause injected
+  // into the scenario; ctx is what verify passed to diagnose() (items trimmed to the keys that matter, same
+  // hypotheses before and after trimming). `cause: null` = no hypothesis type names the injected cause
+  // (an ignored pagination parameter, a wrong envelope key); nothing stronger than `possible` is right there.
+  // The null-author case: verify reports page-error for it (the browser crash wins); this is diagnose() on its data.
+  { name: 'field: ?author=<username> ignored (a filter through the author), http', row: { expect: {selector: '.article-preview', count: 5, data: {request: 'r', where: {author_id: 3}}} }, cause: 'undeclared-filter',
+    ctx: { obtained: 2, response: {status: 200, headers: {'x-total-count':'23', 'x-atrezzo-ignored':'author'}, body: null}, items: [{id: 21, author_id: 2, author: {username: 'bob'}}, {id: 15, author_id: 3, author: {username: 'carol'}}, {id: 20, author_id: 3, author: {username: 'carol'}}, {id: 9, author_id: 4, author: {username: 'dave'}}, {id: 23, author_id: 2, author: {username: 'bob'}}], query: q('author=carol&limit=5&offset=0'), matched: 2, fullMatched: 7 } },
+  { name: 'field: ?tag= ignored (tagList contains), http', row: { expect: {selector: '.article-preview', count: 5, data: {request: 'r'}} }, cause: 'undeclared-filter',
+    ctx: { obtained: 10, response: {status: 200, headers: {'x-total-count':'23', 'x-atrezzo-ignored':'tag'}, body: null}, items: [{id: 21}, {id: 15}, {id: 20}, {id: 9}, {id: 23}, {id: 17}, {id: 19}, {id: 3}, {id: 10}, {id: 1}], query: q('tag=welcome&limit=10&offset=0'), matched: 10, fullMatched: 23 } },
+  { name: 'field: ?tag= ignored, playwright', row: { expect: {selector: '.article-preview', count: 5, data: {request: 'r'}} }, cause: 'undeclared-filter',
+    ctx: { obtained: 10, response: {status: 200, headers: {'x-total-count':'23', 'x-atrezzo-ignored':'tag'}, body: null}, items: [{id: 21}, {id: 15}, {id: 20}, {id: 9}, {id: 23}, {id: 17}, {id: 19}, {id: 3}, {id: 10}, {id: 1}], query: q('tag=welcome&limit=10&offset=0'), matched: 10, fullMatched: 23, domCount: 10 } },
+  { name: 'field: max_limit 5 while the client asks for 10, http', row: { expect: {selector: '.article-preview', count: 10, data: {request: 'r'}} }, cause: 'pagination-mismatch',
+    ctx: { obtained: 5, response: {status: 200, headers: {'x-total-count':'16'}, body: null}, items: [{id: 21}, {id: 15}, {id: 20}, {id: 23}, {id: 17}], query: q('limit=10&offset=0'), matched: 5, fullMatched: 16 } },
+  { name: 'field: max_limit 5 while the client asks for 10, playwright', row: { expect: {selector: '.article-preview', count: 10, data: {request: 'r'}} }, cause: 'pagination-mismatch',
+    ctx: { obtained: 5, response: {status: 200, headers: {'x-total-count':'16'}, body: null}, items: [{id: 21}, {id: 15}, {id: 20}, {id: 23}, {id: 17}], query: q('limit=10&offset=0'), matched: 5, fullMatched: 16, domCount: 5 } },
+  { name: 'field: endpoint sort reversed, the favourites fall off the page, http', row: { expect: {selector: '.article-preview button.btn-primary', count: 4, data: {request: 'r', where: {favorited: true}}} }, cause: 'pagination-mismatch',
+    ctx: { obtained: 2, response: {status: 200, headers: {'x-total-count':'16'}, body: null}, items: [{id: 16, favorited: false}, {id: 8, favorited: false}, {id: 2, favorited: false}, {id: 12, favorited: false}, {id: 7, favorited: true}, {id: 13, favorited: false}, {id: 5, favorited: false}, {id: 22, favorited: true}, {id: 1, favorited: false}, {id: 10, favorited: false}], query: q('limit=10&offset=0'), matched: 2, fullMatched: 5 } },
+  { name: 'field: endpoint sort reversed, playwright', row: { expect: {selector: '.article-preview button.btn-primary', count: 4, data: {request: 'r', where: {favorited: true}}} }, cause: 'pagination-mismatch',
+    ctx: { obtained: 2, response: {status: 200, headers: {'x-total-count':'16'}, body: null}, items: [{id: 16, favorited: false}, {id: 8, favorited: false}, {id: 2, favorited: false}, {id: 12, favorited: false}, {id: 7, favorited: true}, {id: 13, favorited: false}, {id: 5, favorited: false}, {id: 22, favorited: true}, {id: 1, favorited: false}, {id: 10, favorited: false}], query: q('limit=10&offset=0'), matched: 2, fullMatched: 5, domCount: 2 } },
+  { name: 'field: alice follows nobody, empty feed, http', row: { expect: {selector: '.article-preview .preview-link', count: 10, data: {request: 'r'}} }, cause: 'world-mismatch',
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'0'}, body: null}, items: [], query: q('limit=10&offset=0'), matched: 0, fullMatched: 0 } },
+  { name: 'field: empty feed, playwright (world-mismatch only exists without a DOM)', row: { expect: {selector: '.article-preview .preview-link', count: 10, data: {request: 'r'}} }, cause: 'world-mismatch',
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'0'}, body: null}, items: [], query: q('limit=10&offset=0'), matched: 0, fullMatched: 0, domCount: 0 } },
+  { name: 'field: world without tags, http', row: { expect: {selector: '.sidebar .tag-pill', count: 6, data: {request: 'r'}} }, cause: 'world-mismatch',
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'0'}, body: null}, items: [], matched: 0, fullMatched: 0 } },
+  { name: 'field: world without tags, playwright', row: { expect: {selector: '.sidebar .tag-pill', count: 6, data: {request: 'r'}} }, cause: 'world-mismatch',
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'0'}, body: null}, items: [], matched: 0, fullMatched: 0, domCount: 0 } },
+  { name: 'field: declared 500 on /api/tags, http', row: { expect: {selector: '.sidebar .tag-pill', count: 6, data: {request: 'r'}} }, cause: 'declared-error',
+    ctx: { obtained: 0, response: {status: 500, headers: {'x-atrezzo-error':'declared'}, body: {error: '500'}}, items: [], matched: 0 } },
+  { name: 'field: 3 articles without author, the preview reads author.username and crashes', row: { expect: {selector: '.article-preview .preview-link', count: 10, data: {request: 'r'}} }, cause: 'null-field', truths: ['render'],
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'23'}, body: null}, items: [{id: 21}, {id: 15}, {id: 20}, {id: 9}, {id: 23, author_id: null, author: null}, {id: 17}, {id: 19, author_id: null, author: null}, {id: 3}, {id: 10}, {id: 1}], query: q('limit=10&offset=0'), matched: 10, fullMatched: 23, domCount: 0 } },
+  { name: 'field: page-style pagination declared, the client sends offset (ignored), http', row: { expect: {selector: '.article-preview', count: 6, data: {request: 'r'}} }, cause: null, truths: ['undeclared-filter'],
+    ctx: { obtained: 10, response: {status: 200, headers: {'x-total-count':'16', 'x-atrezzo-ignored':'offset'}, body: null}, items: [{id: 21}, {id: 15}, {id: 20}, {id: 23}, {id: 17}, {id: 19}, {id: 10}, {id: 1}, {id: 22}, {id: 5}], query: q('limit=10&offset=10'), matched: 10, fullMatched: 10 } },
+  { name: 'field: offset ignored, playwright (the front end never sends offset either: upstream #197)', row: { expect: {selector: '.article-preview', count: 6, data: {request: 'r'}} }, cause: null, truths: ['undeclared-filter'],
+    ctx: { obtained: 10, response: {status: 200, headers: {'x-total-count':'16', 'x-atrezzo-ignored':'offset'}, body: null}, items: [{id: 21}, {id: 15}, {id: 20}, {id: 23}, {id: 17}, {id: 19}, {id: 10}, {id: 1}, {id: 22}, {id: 5}], query: q('limit=10&offset=10'), matched: 10, fullMatched: 10, domCount: 10 } },
+  { name: 'field: comments envelope uses data, the client reads comments, http', row: { expect: {selector: '.card .card-text', count: 5, data: {request: 'r'}} }, cause: null,
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'5'}, body: null}, items: [], matched: 0, fullMatched: 0 } },
+  { name: 'field: wrong envelope key, playwright', row: { expect: {selector: '.card .card-text', count: 5, data: {request: 'r'}} }, cause: null,
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'5'}, body: null}, items: [], matched: 0, fullMatched: 0, domCount: 0 } },
+  { name: 'field: upstream #197, the feed pager never sends offset (real front-end bug), playwright', row: { expect: {selector: '.article-preview', count: 6, data: {request: 'r'}} }, cause: 'render',
+    ctx: { obtained: 10, response: {status: 200, headers: {'x-total-count': '16'}, body: null}, items: [{id:13}, {id:7}, {id:12}, {id:2}, {id:8}, {id:16}], query: q('limit=10&offset=10'), matched: 6, fullMatched: 16, domCount: 10 } },
 ];
 
 const STRONG = new Set(['confirmed', 'likely']);

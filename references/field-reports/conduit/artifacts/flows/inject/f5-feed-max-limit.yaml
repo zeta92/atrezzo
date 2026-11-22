@@ -1,0 +1,16 @@
+# F5 injected cause: feed-max-limit. Assertions describe the intended state.
+scenario: ../../scenarios/f5-feed-max-limit.yaml
+base_url: http://127.0.0.1:4010
+storage:
+  local: { jwt: "fake-token-for-the-mock" }
+steps:
+  - screen: feed
+    visit: /
+    wait_for: ".article-preview .preview-link"
+    requests:
+      feed: GET /api/articles/feed?limit=10&offset=0
+    expect:
+      - selector: ".article-preview"
+        count: 10
+        label: feed rows
+        data: { request: feed, pick: articles }

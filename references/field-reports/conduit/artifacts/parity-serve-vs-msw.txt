@@ -1,0 +1,26 @@
+(node:2978955) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.
+(Use `node --trace-warnings ...` to show where the warning was created)
+same  GET /api/tags  serve=200 msw=200
+same  GET /api/user  serve=200 msw=200
+same  GET /api/articles/feed?limit=10&offset=0  serve=200 msw=200
+same  GET /api/articles?limit=10&offset=0  serve=200 msw=200
+same  GET /api/articles?limit=10&offset=20  serve=200 msw=200
+same  GET /api/articles?author=carol&limit=5&offset=0  serve=200 msw=200
+same  GET /api/articles?tag=welcome&limit=10&offset=0  serve=200 msw=200
+same  GET /api/articles?favorited=alice&limit=5&offset=0  serve=200 msw=200
+same  GET /api/articles/21b6be78-8754-4566-820d-a428f1ece189  serve=200 msw=200
+same  GET /api/articles/21b6be78-8754-4566-820d-a428f1ece189/comments  serve=200 msw=200
+same  GET /api/profiles/dave  serve=200 msw=200
+same  GET /api/profiles/nobody  serve=404 msw=404
+same  GET /api/articles/nope  serve=404 msw=404
+same  POST /api/articles/21b6be78-8754-4566-820d-a428f1ece189/favorite  serve=200 msw=200
+same  GET /api/articles/21b6be78-8754-4566-820d-a428f1ece189  serve=200 msw=200
+same  POST /api/profiles/dave/follow  serve=200 msw=200
+same  GET /api/articles/feed?limit=10&offset=0  serve=200 msw=200
+same  DELETE /api/articles/21b6be78-8754-4566-820d-a428f1ece189/favorite  serve=200 msw=200
+same  GET /api/articles/21b6be78-8754-4566-820d-a428f1ece189  serve=200 msw=200
+same  POST /api/articles/21b6be78-8754-4566-820d-a428f1ece189/comments  serve=200 msw=200
+DIFF  PUT /api/user  serve=405 msw=405  body differs: serve {"error":"PUT /api/user is not in the contract of scenario \"conduit-session\" (method not declared in scenario; add it  | msw {"error":"PUT /api/user is not in the contract (allowed: GET)"}
+same  POST /api/users/login  serve=404 msw=404
+
+22 requests · 1 with differences

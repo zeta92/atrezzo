@@ -1,0 +1,59 @@
+{
+  "rows": [
+    {
+      "screen": "my-articles",
+      "expect": {
+        "selector": ".article-preview",
+        "count": 5,
+        "label": "first page of carol's articles",
+        "data": {
+          "request": "mine",
+          "pick": "articles"
+        }
+      },
+      "status": "OK",
+      "obtained": 5,
+      "note": ""
+    },
+    {
+      "screen": "my-articles",
+      "expect": {
+        "selector": ".pagination .page-item",
+        "count": 2,
+        "label": "pages for 7 articles at 5 per page"
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "no-data",
+          "confidence": "low",
+          "certainty": "possible",
+          "evidence": "the assertion has no \"data\" to compare against the JSON; add data.request to tell a data failure from a screen failure."
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "my-articles",
+      "visit": "/@carol",
+      "console": []
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "issue-198-profile-pages",
+  "seed": 1,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {},
+  "storage": {
+    "local": [
+      "jwt"
+    ],
+    "session": []
+  }
+}

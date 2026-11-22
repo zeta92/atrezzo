@@ -1,0 +1,16 @@
+# F5 injected cause: tags-error. Assertions describe the intended state.
+scenario: ../../scenarios/f5-tags-error.yaml
+base_url: http://127.0.0.1:4010
+storage:
+  local: { jwt: "fake-token-for-the-mock" }
+steps:
+  - screen: home
+    visit: /
+    wait_for: ".article-preview .preview-link"
+    requests:
+      tags: GET /api/tags
+    expect:
+      - selector: ".sidebar .tag-pill"
+        count: 6
+        label: popular tags
+        data: { request: tags, pick: tags }
