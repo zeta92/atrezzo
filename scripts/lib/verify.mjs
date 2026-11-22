@@ -10,6 +10,10 @@ import { mergeHeaders, maskHeaders, redact, formatHeaders } from './headers.mjs'
 import { mergeStorage, hasStorage, storageKeys, formatStorage, createSeeder } from './storage.mjs';
 import { chromePath } from './env.mjs';
 
+// Query parameters that mean "order the rows": if one of them is ignored, the fix is `sorts:`, not a
+// filter with the same name (declaring `filters: { order: ... }` would filter, never order).
+const SORT_PARAM_NAMES = new Set(['order', 'sort', 'sort_by', 'order_by', 'sortby', 'orderby', 'sort.by', 'sort.order', 'sorts.by', 'sorts.order']);
+
 // ---------- helpers ----------
 
 function extractItems(body, pick) {
@@ -112,7 +116,16 @@ export function diagnose(row, ctx) {
   else if (r && r.status !== 200) add('non-200-response', 'high', `the request returned ${r.status}: ${JSON.stringify(r.body).slice(0, 160)}`);
   if (r) {
     const ignored = header(r.headers, 'x-atrezzo-ignored');
-    if (ignored) add('undeclared-filter', 'medium', `the client sends parameters the contract does not declare as filters, so they were ignored: ${ignored}. If the client expects the server to filter, add them to endpoints[].filters.`);
+    if (ignored) {
+      const names = String(ignored).split(',').map((s) => s.trim()).filter(Boolean);
+      const isSort = (n) => SORT_PARAM_NAMES.has(n.toLowerCase());
+      const sorts = names.filter(isSort);
+      const rest = names.filter((n) => !isSort(n));
+      if (sorts.length) {
+        add('ignored-sort', 'medium', `the client orders by ${sorts.map((s) => `\`${s}\``).join(', ')} and the endpoint declares neither sorts: nor a sort: that matches, so the order was ignored. Add sorts: { by: ${sorts[0]}, fields: [<columns>] } (or sort: { by: ... }) to endpoints[]; declaring a filter named ${sorts[0]} would not fix the order.`);
+      }
+      if (rest.length) add('undeclared-filter', 'medium', `the client sends parameters the contract does not declare as filters, so they were ignored: ${rest.join(', ')}. If the client expects the server to filter, add them to endpoints[].filters.`);
+    }
   }
   if (ctx.items) {
     const total = Number(header(r?.headers, 'x-total-count'));
