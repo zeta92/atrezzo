@@ -1892,11 +1892,28 @@ export function loadScenario(file, { fixturesDir = null, checkFixtures = true } 
 // ---------- flow ----------
 
 /** @param {string} file */
+/** `clock: { time: <ISO> | "scenario" }`: fija el reloj del navegador antes de navegar. */
+function parseClock(raw, f, issues, scenarioNow) {
+  if (raw === undefined) return null;
+  if (!isObj(raw)) { issues.add(f, 'must be a map { time: "<ISO date>" | "scenario" }'); return null; }
+  issues.unknownKeys(raw, ['time'], f);
+  if (raw.time === undefined) { issues.add(`${f}.time`, 'required: an ISO date/time or "scenario"'); return null; }
+  if (raw.time === 'scenario') {
+    if (!scenarioNow) { issues.add(`${f}.time`, '"scenario" needs the flow to declare a scenario'); return null; }
+    return { time: new Date(scenarioNow).toISOString() };
+  }
+  if (typeof raw.time !== 'string' || Number.isNaN(Date.parse(raw.time))) {
+    issues.add(`${f}.time`, `must be an ISO date/time or "scenario"; got ${JSON.stringify(raw.time)}`);
+    return null;
+  }
+  return { time: new Date(raw.time).toISOString() };
+}
+
 export function loadFlow(file) {
   const doc = readYaml(file, 'flow');
   const issues = new Issues();
   if (!isObj(doc)) throw new AtrezzoError(`${file}: a flow must be a YAML map`);
-  issues.unknownKeys(doc, ['scenario', 'base_url', 'headers', 'storage', 'viewport', 'click_timeout', 'steps']);
+  issues.unknownKeys(doc, ['scenario', 'base_url', 'headers', 'storage', 'viewport', 'click_timeout', 'clock', 'steps']);
   if (doc.scenario !== undefined && typeof doc.scenario !== 'string') issues.add('scenario', 'path to the scenario YAML (relative to the flow); omit it only to verify a real app without a mock');
   if (doc.base_url !== undefined && typeof doc.base_url !== 'string') issues.add('base_url', 'must be a URL');
   if (!Array.isArray(doc.steps) || !doc.steps.length) issues.add('steps', 'required; a list with at least one step');
@@ -1920,12 +1937,13 @@ export function loadFlow(file) {
 
   const scenarioFile = doc.scenario === undefined ? null : resolve(dirname(file), doc.scenario);
   const scenario = scenarioFile ? loadScenario(scenarioFile) : null;
+  const flowClock = parseClock(doc.clock, 'clock', issues, scenario?.now ?? null);
   const path = scenario?.path ?? [];
   const steps = [];
   doc.steps.forEach((st, i) => {
     const f = `steps[${i}]`;
     if (!isObj(st)) { issues.add(f, 'must be a map'); return; }
-    issues.unknownKeys(st, ['screen', 'visit', 'wait_for', 'click', 'click_timeout', 'headers', 'storage', 'requests', 'expect', 'redirects_to', 'allow_redirect'], f);
+    issues.unknownKeys(st, ['screen', 'visit', 'wait_for', 'click', 'click_timeout', 'headers', 'storage', 'requests', 'expect', 'redirects_to', 'allow_redirect', 'clock'], f);
     if (typeof st.screen !== 'string') issues.add(`${f}.screen`, 'required; the screen name');
     else if (path.length && !path.includes(st.screen)) issues.add(`${f}.screen`, `"${st.screen}" is not in the scenario path (${path.join(' → ')})`);
     let redirectsTo = null;
@@ -1980,7 +1998,8 @@ export function loadFlow(file) {
     });
     const stepHeaders = parseHeaders(st.headers, `${f}.headers`, issues);
     const stepStorage = parseStorage(st.storage, `${f}.storage`, issues);
-    steps.push({ screen: st.screen, visit: st.visit ?? null, waitFor: st.wait_for ?? null, click, clickTimeout: stepClickTimeout, redirectsTo, allowRedirect, headers: stepHeaders, storage: stepStorage, requests, expect });
+    const stepClock = parseClock(st.clock, `${f}.clock`, issues, scenario?.now ?? null);
+    steps.push({ screen: st.screen, visit: st.visit ?? null, waitFor: st.wait_for ?? null, click, clickTimeout: stepClickTimeout, redirectsTo, allowRedirect, headers: stepHeaders, storage: stepStorage, clock: stepClock, requests, expect });
   });
 
   // Scenario-level expectations go to their screen (default: last of path, else last step).
@@ -2000,7 +2019,7 @@ export function loadFlow(file) {
     } else if (!names.includes(e.data.request)) issues.add(`steps[${i}].expect[${j}].data.request`, `"${e.data.request}" is not in the step requests (${names.join(', ') || 'none'})`);
   }));
   if (issues.list.length) throw new AtrezzoError(`${file}: invalid flow`, { issues: issues.list });
-  return { file, scenarioFile, scenario, baseUrl: doc.base_url ?? null, headers, storage, viewport, clickTimeout, steps };
+  return { file, scenarioFile, scenario, baseUrl: doc.base_url ?? null, headers, storage, viewport, clickTimeout, clock: flowClock, steps };
 }
 
 export function scenarioNameFromFile(file) {
