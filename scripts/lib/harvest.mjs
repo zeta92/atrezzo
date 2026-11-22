@@ -918,6 +918,8 @@ export async function runHarvest({
     const mockBaseUrl = `http://${addr.address}:${addr.port}`;
     targetUrl = url.startsWith('/') ? new URL(url, mockBaseUrl).toString() : url;
     pw = await (pageFactory ? pageFactory() : defaultPageFactory(cwd));
+    // La captura tiene que ver la misma fecha que el mundo: si no, "quedan 3 días" se pinta con otro número.
+    if (initialNormalized?.now && pw.page?.clock?.install) await pw.page.clock.install({ time: new Date(initialNormalized.now) });
     if (seedStorage) {
       const script = storageScript(new URL(targetUrl).origin, parsedStorage);
       if (pw.context?.addInitScript) await pw.context.addInitScript(script);
