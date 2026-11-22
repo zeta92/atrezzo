@@ -1,0 +1,12 @@
+scenario: ../../scenarios/inj-perpage-neg1.yaml
+base_url: http://127.0.0.1:4010
+steps:
+  - screen: tags
+    visit: /g/home
+    requests:
+      tags: GET /api/organizers/tags?page=1&perPage=-1
+    expect:
+      - selector: ".tag-row"
+        count: 6
+        label: tags with perPage=-1
+        data: { request: tags }

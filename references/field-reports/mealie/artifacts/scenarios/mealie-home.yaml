@@ -1,0 +1,163 @@
+name: mealie-home
+description: Minimal public Recipe Explorer scenario for Mealie Nuxt SPA
+seed: 42
+now: 2026-11-22T12:00:00Z
+world:
+  app_about:
+    total: 1
+    fields:
+      production: boolean
+      version: ["3.31.0"]
+      demoStatus: boolean
+      allowSignup: boolean
+      allowPasswordLogin: boolean
+      defaultGroupSlug: ["home"]
+      defaultHouseholdSlug: ["family"]
+      enableOidc: boolean
+      oidcRedirect: boolean
+      oidcProviderName: [""]
+      enableReverseProxyAuth: boolean
+      tokenTime: [48]
+      brandingName: ["Mealie"]
+    seed_first: true
+  app_theme:
+    total: 1
+    fields:
+      lightPrimary: ["#E58325"]
+      lightAccent: ["#007A99"]
+      lightSecondary: ["#973542"]
+      lightSuccess: ["#43A047"]
+      lightInfo: ["#1976d2"]
+      lightWarning: ["#FF6D00"]
+      lightError: ["#EF5350"]
+      darkPrimary: ["#E58325"]
+      darkAccent: ["#007A99"]
+      darkSecondary: ["#973542"]
+      darkSuccess: ["#43A047"]
+      darkInfo: ["#1976d2"]
+      darkWarning: ["#FF6D00"]
+      darkError: ["#EF5350"]
+  groups:
+    total: 2
+    fields:
+      name: ["Home Kitchen", "Bakery Club"]
+      slug: ["home", "bakery"]
+    values_order: cycle
+  households:
+    total: 2
+    ref: groups
+    fields:
+      name: ["Family", "Guests"]
+      slug: ["family", "guests"]
+      groupSlug: ["home", "bakery"]
+    values_order: cycle
+  recipes:
+    total: 12
+    ref: [groups, households]
+    derive:
+      group_id: { from: households, field: group_id }
+    fields:
+      name: ["Pasta Carbonara", "Tomato Soup", "Roast Chicken", "Apple Pie", "Caesar Salad", "Beef Stew", "Lentil Curry", "Garlic Bread", "Berry Tart", "Mushroom Risotto", "Fish Tacos", "Lemon Cake"]
+      slug: ["pasta-carbonara", "tomato-soup", "roast-chicken", "apple-pie", "caesar-salad", "beef-stew", "lentil-curry", "garlic-bread", "berry-tart", "mushroom-risotto", "fish-tacos", "lemon-cake"]
+      description: string
+      rating: [4, 5, 3, 5]
+      groupSlug: ["home"]
+      created_at: date
+      updated_at: date
+    values_order: cycle
+  tags:
+    total: 6
+    ref: [groups, recipes]
+    derive:
+      group_id: { from: recipes, field: group_id }
+    fields:
+      name: ["Quick", "Dinner", "Vegetarian", "Dessert", "Comfort", "Summer"]
+      slug: ["quick", "dinner", "vegetarian", "dessert", "comfort", "summer"]
+      groupSlug: ["home"]
+      recipeCount: [3, 4, 2, 2, 3, 2]
+    values_order: cycle
+  categories:
+    total: 3
+    ref: groups
+    fields:
+      name: ["Main", "Soup", "Dessert"]
+      slug: ["main", "soup", "dessert"]
+      groupSlug: ["home"]
+      recipeCount: [6, 3, 3]
+    values_order: cycle
+  tools:
+    total: 2
+    ref: groups
+    fields:
+      name: ["Oven", "Skillet"]
+      slug: ["oven", "skillet"]
+      groupSlug: ["home"]
+      recipeCount: [5, 4]
+    values_order: cycle
+  foods:
+    total: 6
+    ref: groups
+    fields:
+      name: ["Garlic", "Tomato", "Olive Oil", "Flour", "Basil", "Butter"]
+      description: string
+      groupSlug: ["home"]
+      recipeCount: [4, 3, 5, 3, 2, 4]
+    values_order: cycle
+  cookbooks:
+    total: 2
+    ref: groups
+    fields:
+      name: ["Weeknight", "Weekend"]
+      slug: ["weeknight", "weekend"]
+      description: string
+      position: [1, 2]
+      public: [true]
+      groupSlug: ["home"]
+    values_order: cycle
+endpoints:
+  - path: /api/app/about
+    entity: app_about
+    shape: object
+  - path: /api/app/about/theme
+    entity: app_theme
+    shape: object
+  - path: /api/explore/groups/:group_slug/recipes
+    entity: recipes
+    filters:
+      ":group_slug": groupSlug
+    pagination: { param_page: page, param_limit: perPage, default_limit: 24, max_limit: 100 }
+    sort: -created_at
+    sorts: { by: orderBy, order: orderDirection, fields: [name, created_at, updated_at, rating] }
+    embed: [tags]
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/organizers/categories
+    entity: categories
+    filters: { ":group_slug": groupSlug }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/organizers/tags
+    entity: tags
+    filters: { ":group_slug": groupSlug }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/organizers/tools
+    entity: tools
+    filters: { ":group_slug": groupSlug }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/foods
+    entity: foods
+    filters: { ":group_slug": groupSlug }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/households
+    entity: households
+    filters: { ":group_slug": groupSlug }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/cookbooks
+    entity: cookbooks
+    filters: { ":group_slug": groupSlug }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }

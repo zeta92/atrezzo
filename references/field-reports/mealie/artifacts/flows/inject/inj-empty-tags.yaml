@@ -1,0 +1,13 @@
+scenario: ../../scenarios/inj-empty-tags.yaml
+base_url: http://127.0.0.1:4010
+steps:
+  - screen: explorer
+    visit: /g/home
+    wait_for: ".recipe-card-footer"
+    requests:
+      tags: GET /api/explore/groups/home/organizers/tags
+    expect:
+      - selector: ".recipe-card-tags .v-chip"
+        count: 6
+        label: tag chips when tags=0
+        data: { request: tags }

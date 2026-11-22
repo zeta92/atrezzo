@@ -1,0 +1,555 @@
+Imported mealie.openapi.json (OpenAPI 3.1.0 · "Mealie" · 197 paths, 285 operations)
+Base: / (the spec declares no servers[0].url)
+Inferred endpoints (33):
+  GET /api/households/cookbooks → cook_book_outs · envelope {items: [...]} → pick: items
+      fields: name:string, description:string, position:integer, public:boolean, queryFilterString:string, groupId:string, householdId:string
+      skipped: slug (no type), queryFilter (nested object), household (no type)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/households/cookbooks/:id (from /api/households/cookbooks/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/households/events/notifications → group_event_notifier_outs · envelope {items: [...]} → pick: items
+      fields: name:string, enabled:boolean, groupId:string, householdId:string
+      skipped: options (nested object)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/households/events/notifications/:id (from /api/households/events/notifications/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/households/recipe-actions → group_recipe_action_outs · envelope {items: [...]} → pick: items
+      fields: actionType:[link|post], title:string, url:string, groupId:string, householdId:string
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/households/recipe-actions/:id (from /api/households/recipe-actions/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/households/members → user_out_outputs · envelope {items: [...]} → pick: items
+      fields: email:string, authMethod:[Mealie|LDAP|OIDC|ReverseProxy], admin:boolean, group:string, household:string, advanced:boolean, showAnnouncements:boolean, canInvite:boolean, canManage:boolean, canManageHousehold:boolean, canOrganize:boolean, groupId:string, groupSlug:string, householdId:string, householdSlug:string, cacheKey:string
+      skipped: username (no type), fullName (no type), lastReadAnnouncement (no type), tokens (no type)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: no
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/households/invitations → invite_token_outs · array
+      fields: token:string, usesLeft:integer, groupId:uuid, householdId:uuid
+      filters: — · pagination: — · detail: no
+  GET /api/households/shopping/lists → shopping_list_summaries · envelope {items: [...]} → pick: items
+      fields: groupId:string, userId:string, householdId:string
+      skipped: name (no type), extras (no type), createdAt (no type), updatedAt (no type), recipeReferences (nested array), labelSettings (nested array)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/households/shopping/lists/:id (from /api/households/shopping/lists/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/households/shopping/items → shopping_list_item_out_outputs · envelope {items: [...]} → pick: items
+      fields: quantity:number, display:string, shoppingListId:string, checked:boolean, position:integer, groupId:string, householdId:string
+      skipped: unit (no type), food (no type), referencedRecipe (no type), note (no type), foodId (no type), labelId (no type), unitId (no type), extras (no type), label (no type), recipeReferences (nested array), createdAt (no type), updatedAt (no type)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/households/shopping/items/:id (from /api/households/shopping/items/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/households/webhooks → webhook_outs · envelope {items: [...]} → pick: items
+      fields: enabled:boolean, name:string, url:string, webhookType:[mealplan], scheduledTime:string, groupId:string, householdId:string
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/households/webhooks/:id (from /api/households/webhooks/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/households/mealplans/rules → plan_rules_outs · envelope {items: [...]} → pick: items
+      fields: day:[monday|tuesday|wednesday|thursday|friday|saturday|sunday|unset], entryType:[breakfast|lunch|dinner|side|snack|drink|dessert|unset], queryFilterString:string, groupId:string, householdId:string
+      skipped: queryFilter (nested object)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/households/mealplans/rules/:id (from /api/households/mealplans/rules/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/households/mealplans → plan_entry_outs · envelope {items: [...]} → pick: items
+      fields: date:date, entryType:[breakfast|lunch|dinner|side|snack|drink|dessert], title:string, text:string, recipeScale:number, groupId:uuid, userId:uuid, householdId:uuid
+      skipped: endDate (no type), recipeId (no type), recipe (no type), updatedAt (no type)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/households/mealplans/:id (from /api/households/mealplans/{item_id})
+      note: ?start_date without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?end_date without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?include_week_entries without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/groups/households → household_summaries · envelope {items: [...]} → pick: items
+      fields: groupId:string, name:string, slug:string
+      skipped: preferences (no type)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/groups/households/:id (from /api/groups/households/{household_slug})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/groups/members → user_summaries · envelope {items: [...]} → pick: items
+      fields: groupId:string, householdId:string, username:string, fullName:string
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/groups/members/:id (from /api/groups/members/{username_or_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/groups/reports → report_summaries · array
+      fields: timestamp:date, category:[backup|restore|migration|bulk_import], groupId:string, name:string, status:[in-progress|success|failure|partial]
+      filters: — · pagination: — · detail: /api/groups/reports/:id (from /api/groups/reports/{item_id})
+      note: ?report_type without enum: no filter declared (add it to filters if it filters by equality)
+  GET /api/groups/labels → multi_purpose_label_summary_outputs · envelope {items: [...]} → pick: items
+      fields: name:string, color:string, groupId:string
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/groups/labels/:id (from /api/groups/labels/{item_id})
+      note: ?search without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/groups/labels/empty → multi_purpose_label_outs · array
+      fields: name:string, color:string, groupId:string
+      filters: — · pagination: — · detail: no
+  GET /api/recipes → recipe_summaries · envelope {items: [...]} → pick: items
+      fields: userId:string, householdId:string, groupId:string, name:string, slug:string, recipeServings:number, recipeYieldQuantity:number
+      skipped: image (no type), recipeYield (no type), totalTime (no type), prepTime (no type), performTime (no type), totalTimeSeconds (no type), prepTimeSeconds (no type), performTimeSeconds (no type), description (no type), recipeCategory (nested array), tags (nested array), tools (nested array), rating (no type), orgURL (no type), dateAdded (no type), dateUpdated (no type), createdAt (no type), updatedAt (no type)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/recipes/:id (from /api/recipes/{slug})
+      note: ?categories without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?tags without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?tools without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?foods without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?households without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?cookbook without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?requireAllCategories without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?requireAllTags without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?requireAllTools without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?requireAllFoods without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?search without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/recipes/suggestions → recipe_suggestion_response_items · envelope {items: [...]} → pick: items
+      fields: generic (TODO)
+      skipped: recipe (nested object), missingFoods (nested array), substitutedFoods (nested array), missingTools (nested array)
+      filters: — · pagination: param_limit=limit param_offset=offset default_limit=10 · detail: no
+      note: ?foods without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?tools without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?maxMissingFoods without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?maxMissingTools without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?includeFoodsOnHand without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?includeToolsOnHand without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?includeSubstitutions without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?limit without offset: declaring param_offset: offset by default
+  GET /api/recipes/bulk-actions/export → group_data_exports · array
+      fields: groupId:string, name:string, filename:string, path:string, size:string, expires:date
+      filters: — · pagination: — · detail: no
+  GET /api/recipes/timeline/events → recipe_timeline_event_outs · envelope {items: [...]} → pick: items
+      fields: recipeId:string, userId:string, subject:string, eventType:[system|info|comment], timestamp:date, groupId:string, householdId:string, createdAt:date, updatedAt:date
+      skipped: eventMessage (no type), image (no type)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/recipes/timeline/events/:id (from /api/recipes/timeline/events/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/organizers/categories → category_outs · envelope {items: [...]} → pick: items
+      fields: groupId:string, name:string, slug:string, recipeCount:integer
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/organizers/categories/:id (from /api/organizers/categories/{item_id})
+      note: ?search without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/organizers/categories/empty → category_outs · array
+      fields: groupId:string, name:string, slug:string, recipeCount:integer
+      filters: — · pagination: — · detail: no
+  GET /api/organizers/tags → tag_outs · envelope {items: [...]} → pick: items
+      fields: groupId:string, name:string, slug:string, recipeCount:integer
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/organizers/tags/:id (from /api/organizers/tags/{item_id})
+      note: ?search without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/organizers/tags/empty → tag_outs · array
+      fields: groupId:string, name:string, slug:string, recipeCount:integer
+      filters: — · pagination: — · detail: no
+  GET /api/organizers/tools → tool_outs · envelope {items: [...]} → pick: items
+      fields: groupId:string, name:string, slug:string, recipeCount:integer
+      skipped: householdsWithTool (nested array)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/organizers/tools/:id (from /api/organizers/tools/{item_id})
+      note: ?search without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/organizers/tools/empty → tool_outs · array
+      fields: groupId:string, name:string, slug:string, recipeCount:integer
+      skipped: householdsWithTool (nested array)
+      filters: — · pagination: — · detail: no
+  GET /api/shared/recipes → recipe_share_token_summaries · array
+      fields: recipeId:string, expiresAt:date, groupId:string, createdAt:date
+      filters: — · pagination: — · detail: /api/shared/recipes/:id (from /api/shared/recipes/{item_id})
+      note: ?recipe_id without enum: no filter declared (add it to filters if it filters by equality)
+  GET /api/comments → recipe_comment_out_outputs · envelope {items: [...]} → pick: items
+      fields: recipeId:string, text:string, createdAt:date, updatedAt:date, userId:string
+      skipped: user (nested object)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/comments/:id (from /api/comments/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/foods → ingredient_food_out_outputs · envelope {items: [...]} → pick: items
+      fields: name:string, description:string, recipeCount:integer
+      skipped: pluralName (no type), extras (no type), labelId (no type), aliases (nested array), substitutions (nested array), householdsWithIngredientFood (nested array), label (no type), createdAt (no type), updatedAt (no type)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/foods/:id (from /api/foods/{item_id})
+      note: ?search without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/foods/empty → ingredient_food_out_outputs · array
+      fields: name:string, description:string, recipeCount:integer
+      skipped: pluralName (no type), extras (no type), labelId (no type), aliases (nested array), substitutions (nested array), householdsWithIngredientFood (nested array), label (no type), createdAt (no type), updatedAt (no type)
+      filters: — · pagination: — · detail: no
+  GET /api/units → ingredient_unit_out_outputs · envelope {items: [...]} → pick: items
+      fields: name:string, description:string, fraction:boolean, abbreviation:string, useAbbreviation:boolean
+      skipped: pluralName (no type), extras (no type), pluralAbbreviation (no type), aliases (nested array), standardQuantity (no type), standardUnit (no type), createdAt (no type), updatedAt (no type)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/units/:id (from /api/units/{item_id})
+      note: ?search without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/admin/users → user_out_outputs · envelope {items: [...]} → pick: items
+      fields: email:string, authMethod:[Mealie|LDAP|OIDC|ReverseProxy], admin:boolean, group:string, household:string, advanced:boolean, showAnnouncements:boolean, canInvite:boolean, canManage:boolean, canManageHousehold:boolean, canOrganize:boolean, groupId:string, groupSlug:string, householdId:string, householdSlug:string, cacheKey:string
+      skipped: username (no type), fullName (no type), lastReadAnnouncement (no type), tokens (no type)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/admin/users/:id (from /api/admin/users/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/admin/households → household_outs · envelope {items: [...]} → pick: items
+      fields: groupId:string, name:string, slug:string, group:string
+      skipped: preferences (no type), users (no type), webhooks (nested array)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/admin/households/:id (from /api/admin/households/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+  GET /api/admin/groups → group_outs · envelope {items: [...]} → pick: items
+      fields: name:string, slug:string
+      skipped: categories (no type), webhooks (nested array), households (no type), users (no type), preferences (no type), aiProviderSettings (no type)
+      filters: — · pagination: param_page=page param_limit=perPage default_limit=50 · detail: /api/admin/groups/:id (from /api/admin/groups/{item_id})
+      note: ?orderBy without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderByNullPosition without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?orderDirection (enum) has no field with the same name in the response: no filter declared
+      note: ?queryFilter without enum: no filter declared (add it to filters if it filters by equality)
+      note: ?paginationSeed without enum: no filter declared (add it to filters if it filters by equality)
+      note: the envelope also carries page, per_page, total, total_pages, next, previous; atrezzo emits {items, total, limit, offset}
+Marked # TODO in the YAML (29):
+  GET /api/app/about: returns an object (production, version, demoStatus, allowSignup, allowPasswordLogin), not a collection
+  GET /api/app/about/startup-info: returns an object (isFirstLogin, isDemo), not a collection
+  GET /api/app/about/theme: returns an object (lightPrimary, lightAccent, lightSecondary, lightSuccess, lightInfo), not a collection
+  GET /api/auth/oauth: schema with no type or properties
+  GET /api/auth/oauth/callback: schema with no type or properties
+  GET /api/auth/oauth/native/config: returns an object (authorization_endpoint, client_id, scope), not a collection
+  GET /api/auth/reverse-proxy: schema with no type or properties
+  GET /api/users/self: returns an object (id, username, fullName, email, authMethod), not a collection
+  GET /api/users/self/ratings: returns an object (ratings), not a collection
+  GET /api/users/self/favorites: returns an object (ratings), not a collection
+  GET /api/households/self: returns an object (groupId, name, id, slug, preferences), not a collection
+  GET /api/households/preferences: returns an object (privateHousehold, showAnnouncements, lockRecipeEditsFromOtherHouseholds, firstDayOfWeek, recipePublic), not a collection
+  GET /api/households/statistics: returns an object (totalRecipes, totalUsers, totalCategories, totalTags, totalTools), not a collection
+  GET /api/households/mealplans/ical: returns an object (householdId, mealplanIcalToken), not a collection
+  GET /api/households/mealplans/today: schema with no type or properties
+  GET /api/groups/ai-providers/settings: returns an object (defaultProviderId, audioProviderId, imageProviderId, enrichNonAiImports, providers), not a collection
+  GET /api/groups/ai-providers/prompts: returns an object (globalInstructions, prompts), not a collection
+  GET /api/groups/self: returns an object (name, id, slug, preferences, aiProviderSettings), not a collection
+  GET /api/groups/preferences: returns an object (privateGroup, showAnnouncements, groupId, id), not a collection
+  GET /api/groups/storage: returns an object (usedStorageBytes, usedStorageStr, totalStorageBytes, totalStorageStr), not a collection
+  GET /api/recipes/exports: returns an object (json, zip), not a collection
+  GET /api/admin/about: returns an object (production, version, demoStatus, allowSignup, allowPasswordLogin), not a collection
+  GET /api/admin/about/statistics: returns an object (totalRecipes, totalUsers, totalHouseholds, totalGroups, uncategorizedRecipes), not a collection
+  GET /api/admin/about/check: returns an object (emailReady, ldapReady, ldapDisabled, oidcReady, oidcDisabled), not a collection
+  GET /api/admin/email: returns an object (ready), not a collection
+  GET /api/admin/backups: returns an object (imports, templates), not a collection
+  GET /api/admin/maintenance: returns an object (dataDirSize, cleanableImages, cleanableDirs), not a collection
+  GET /api/admin/maintenance/storage: returns an object (tempDirSize, backupsDirSize, groupsDirSize, recipesDirSize, userDirSize), not a collection
+  GET /api/utils/download: schema with no type or properties
+Ignored (199):
+  GET /api/app/about/branding-logo: 200 without schema (no content)
+  POST /api/auth/token: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/auth/oauth/native/token: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/auth/refresh: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/auth/logout: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/users/register: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/users/password: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/users/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/users/forgot-password: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/users/reset-password: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/users/{id}/image: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/users/api-tokens: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/users/api-tokens/{token_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/users/{id}/ratings/{slug}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/users/{id}/favorites/{slug}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/users/{id}/favorites/{slug}: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/cookbooks: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/cookbooks: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/cookbooks/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/households/cookbooks/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  GET /api/households/cookbooks/{item_id}/pdf: 200 without schema (no content)
+  POST /api/households/events/notifications: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/events/notifications/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/households/events/notifications/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/events/notifications/{item_id}/test: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/recipe-actions: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/recipe-actions/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/households/recipe-actions/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/recipe-actions/{item_id}/trigger/{recipe_slug}: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/preferences: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/permissions: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/invitations: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/invitations/email: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/shopping/lists: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/shopping/lists/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/households/shopping/lists/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/shopping/lists/{item_id}/label-settings: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/shopping/lists/{item_id}/recipe: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/shopping/lists/{item_id}/recipe/{recipe_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/shopping/lists/{item_id}/recipe/{recipe_id}/delete: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/shopping/items: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/shopping/items: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/households/shopping/items: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/shopping/items/create-bulk: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/shopping/items/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/households/shopping/items/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/webhooks: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/webhooks/rerun: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/webhooks/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/households/webhooks/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/webhooks/{item_id}/test: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/mealplans/rules: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/mealplans/rules/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/households/mealplans/rules/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/mealplans/ical: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/households/mealplans/ical: mutation not supported: atrezzo only projects reads (GET)
+  GET /api/households/mealplans/ical/{token}: 200 without schema (no content)
+  POST /api/households/mealplans: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/households/mealplans/random: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/households/mealplans/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/households/mealplans/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/groups/ai-providers/providers: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/groups/ai-providers/providers/test: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/groups/ai-providers/providers/{provider_id}/test: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/groups/ai-providers/providers/{provider_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/groups/ai-providers/providers/{provider_id}: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/groups/ai-providers/settings: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/groups/ai-providers/prompts/{prompt_name}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/groups/ai-providers/prompts/{prompt_name}: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/groups/preferences: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/groups/migrations: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/groups/reports/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/groups/labels: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/groups/labels/merge: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/groups/labels/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/groups/labels/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/groups/seeders/foods: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/groups/seeders/units: mutation not supported: atrezzo only projects reads (GET)
+  GET /api/recipes/{slug}/exports: 200 without schema (no content)
+  GET /api/recipes/{slug}/exports/pdf: 200 without schema (no content)
+  POST /api/recipes/test-scrape-url: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/create/html-or-json: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/create/html-or-json/stream: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/create/url: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/create/url/stream: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/create/ai: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/create/ai/stream: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/create/url/bulk: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/create/zip: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/recipes: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes: mutation not supported: atrezzo only projects reads (GET)
+  PATCH /api/recipes: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/recipes/{slug}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/recipes/{slug}: mutation not supported: atrezzo only projects reads (GET)
+  PATCH /api/recipes/{slug}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/{slug}/duplicate: mutation not supported: atrezzo only projects reads (GET)
+  PATCH /api/recipes/{slug}/last-made: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/recipes/{slug}/image: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/{slug}/image: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/recipes/{slug}/image: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/{slug}/assets: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/{slug}/assets/url: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/bulk-actions/tag: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/bulk-actions/settings: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/bulk-actions/categorize: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/bulk-actions/delete: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/recipes/bulk-actions/export: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/recipes/bulk-actions/export/purge: mutation not supported: atrezzo only projects reads (GET)
+  GET /api/recipes/shared/{token_id}/zip: 200 without schema (no content)
+  POST /api/recipes/timeline/events: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/recipes/timeline/events/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/recipes/timeline/events/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/recipes/timeline/events/{item_id}/image: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/organizers/categories: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/organizers/categories/merge: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/organizers/categories/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/organizers/categories/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/organizers/tags: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/organizers/tags/merge: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/organizers/tags/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/organizers/tags/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/organizers/tools: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/organizers/tools/merge: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/organizers/tools/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/organizers/tools/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/shared/recipes: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/shared/recipes/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/comments: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/comments/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/comments/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/parser/ingredient: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/parser/ingredients: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/foods: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/foods/merge: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/foods/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/foods/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/units: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/units/merge: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/units/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/units/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/users: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/users/unlock: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/admin/users/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/admin/users/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/users/password-reset-token: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/households: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/admin/households/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/admin/households/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/groups: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/admin/groups/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/admin/groups/{item_id}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/groups/{group_id}/ai-providers/providers: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/admin/groups/{group_id}/ai-providers/providers/{provider_id}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/admin/groups/{group_id}/ai-providers/providers/{provider_id}: mutation not supported: atrezzo only projects reads (GET)
+  PUT /api/admin/groups/{group_id}/ai-providers/prompts/{prompt_name}: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/admin/groups/{group_id}/ai-providers/prompts/{prompt_name}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/email: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/backups: mutation not supported: atrezzo only projects reads (GET)
+  DELETE /api/admin/backups/{file_name}: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/backups/upload: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/backups/{file_name}/restore: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/maintenance/clean/images: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/maintenance/clean/temp: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/maintenance/clean/recipe-folders: mutation not supported: atrezzo only projects reads (GET)
+  POST /api/admin/debug/openai/{provider_id}: mutation not supported: atrezzo only projects reads (GET)
+  GET /api/media/users/{user_id}/{file_name}: 200 without schema (no content)
+  GET /api/media/docker/validate.txt: 200 without schema (no content)
+  GET /api/users/self/ratings/{recipe_id}: detail without a projectable list /api/users/self/ratings: atrezzo generates /:id only alongside its collection
+  GET /api/users/{id}/ratings: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/users/{id}/favorites: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/households/self/recipes/{recipe_slug}: detail without a projectable list /api/households/self/recipes: atrezzo generates /:id only alongside its collection
+  GET /api/groups/ai-providers/providers/{provider_id}: detail without a projectable list /api/groups/ai-providers/providers: atrezzo generates /:id only alongside its collection
+  GET /api/recipes/{slug}/comments: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/recipes/bulk-actions/export/{export_id}/download: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/recipes/shared/{token_id}: detail without a projectable list /api/recipes/shared: atrezzo generates /:id only alongside its collection
+  GET /api/organizers/categories/slug/{category_slug}: detail without a projectable list /api/organizers/categories/slug: atrezzo generates /:id only alongside its collection
+  GET /api/organizers/tags/slug/{tag_slug}: detail without a projectable list /api/organizers/tags/slug: atrezzo generates /:id only alongside its collection
+  GET /api/organizers/tools/slug/{tool_slug}: detail without a projectable list /api/organizers/tools/slug: atrezzo generates /:id only alongside its collection
+  GET /api/admin/groups/{group_id}/ai-providers/providers/{provider_id}: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/admin/groups/{group_id}/ai-providers/prompts: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/admin/backups/{file_name}: detail without a projectable list /api/admin/backups: atrezzo generates /:id only alongside its collection
+  GET /api/explore/groups/{group_slug}/foods: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/foods/{item_id}: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/households: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/households/{household_slug}: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/organizers/categories: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/organizers/categories/{item_id}: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/organizers/tags: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/organizers/tags/{item_id}: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/organizers/tools: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/organizers/tools/{item_id}: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/cookbooks: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/cookbooks/{item_id}: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/recipes: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/recipes/suggestions: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/explore/groups/{group_slug}/recipes/{recipe_slug}: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/media/recipes/{recipe_id}/images/{file_name}: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/media/recipes/{recipe_id}/images/timeline/{timeline_event_id}/{file_name}: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+  GET /api/media/recipes/{recipe_id}/assets/{file_name}: nested path with parameters in the middle: atrezzo does not project it (declare it as its own collection if the screen uses it)
+Notes:
+  cook_book_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  group_event_notifier_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  group_recipe_action_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  user_out_outputs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  invite_token_outs: the schema declares no "id"; atrezzo adds one (integers 1..n)
+  shopping_list_summaries.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  shopping_list_item_out_outputs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  webhook_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  plan_rules_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  household_summaries.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  user_summaries.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  report_summaries.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  multi_purpose_label_summary_outputs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  multi_purpose_label_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  recipe_summaries.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  recipe_suggestion_response_items: the schema declares no "id"; atrezzo adds one (integers 1..n)
+  group_data_exports.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  recipe_timeline_event_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  category_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  tag_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  tool_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  recipe_share_token_summaries.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  recipe_comment_out_outputs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  ingredient_food_out_outputs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  ingredient_unit_out_outputs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  household_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+  group_outs.id: the spec says string (uuid4); atrezzo generates integer ids 1..n
+Written: atrezzo/scenarios/api.yaml (valid scenario)
+Next step: atrezzo world atrezzo/scenarios/api.yaml

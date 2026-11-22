@@ -1,0 +1,42 @@
+{
+  "rows": [
+    {
+      "screen": "cookbook",
+      "expect": {
+        "selector": ".recipe-card-footer",
+        "count": 6,
+        "label": "weeknight cookbook recipes",
+        "data": {
+          "request": "recipes"
+        }
+      },
+      "status": "KO",
+      "obtained": 12,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "undeclared-filter",
+          "confidence": "medium",
+          "certainty": "likely",
+          "evidence": "the client sends parameters the contract does not declare as filters, so they were ignored: cookbook. If the client expects the server to filter, add them to endpoints[].filters.",
+          "finding": "the mock ignored cookbook (x-atrezzo-ignored header)"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "cookbook",
+      "visit": "/g/home/cookbooks/weeknight",
+      "console": []
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "inj-ignored-cookbook",
+  "seed": 42,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {}
+}

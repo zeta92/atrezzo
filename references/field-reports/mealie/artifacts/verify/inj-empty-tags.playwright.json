@@ -1,0 +1,41 @@
+{
+  "rows": [
+    {
+      "screen": "explorer",
+      "expect": {
+        "selector": ".recipe-card-tags .v-chip",
+        "count": 6,
+        "label": "tag chips when tags=0",
+        "data": {
+          "request": "tags"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "no-hypothesis",
+          "confidence": "low",
+          "certainty": "possible",
+          "evidence": "obtained 0, expected =6; no heuristic fits. Check the screen path and the selectors."
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "explorer",
+      "visit": "/g/home",
+      "console": []
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [],
+  "scenario": "inj-empty-tags",
+  "seed": 42,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {}
+}

@@ -1,0 +1,49 @@
+{
+  "rows": [
+    {
+      "screen": "explorer",
+      "expect": {
+        "selector": ".recipe-card-footer",
+        "count": 12,
+        "label": "recipe cards under 500 error",
+        "data": {
+          "request": "recipes"
+        }
+      },
+      "status": "KO",
+      "obtained": 0,
+      "note": "",
+      "hypotheses": [
+        {
+          "type": "declared-error",
+          "confidence": "high",
+          "certainty": "confirmed",
+          "evidence": "the scenario declares error: { status: 500 } on this endpoint, so it answers 500 by design ({\"detail\":\"Internal error\"}) and no rows; a step that expects data cannot pass. Expect the error state on the screen, or drop error: from the endpoint.",
+          "finding": "the endpoint answered the declared error 500"
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "screen": "explorer",
+      "visit": "/g/home",
+      "console": [
+        {
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+        }
+      ]
+    }
+  ],
+  "exitCode": 1,
+  "warnings": [
+    "step \"explorer\" console.error: Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+  ],
+  "scenario": "inj-declared-500",
+  "seed": 42,
+  "url": "http://127.0.0.1:4010",
+  "driver": "playwright",
+  "viewport": null,
+  "headers": {}
+}

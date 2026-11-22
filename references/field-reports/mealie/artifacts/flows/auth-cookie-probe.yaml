@@ -1,0 +1,13 @@
+scenario: ../scenarios/kitchen.yaml
+base_url: http://127.0.0.1:4010
+steps:
+  - screen: admin-groups
+    visit: /admin/manage/groups
+    wait_for: "table tbody tr"
+    requests:
+      groups: GET /api/admin/groups
+    expect:
+      - selector: "table tbody tr"
+        count: 2
+        label: admin groups table
+        data: { request: groups }

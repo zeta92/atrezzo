@@ -1,0 +1,72 @@
+{
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "hasBody": true,
+  "body": {
+    "id": "1",
+    "userId": "1",
+    "householdId": "1",
+    "groupId": "1",
+    "name": "Pasta Carbonara",
+    "slug": "pasta-carbonara",
+    "image": null,
+    "recipeServings": 4,
+    "recipeYieldQuantity": 1,
+    "recipeYield": "4 servings",
+    "totalTime": "25 Minutes",
+    "prepTime": "10 Minutes",
+    "performTime": "15 Minutes",
+    "totalTimeSeconds": 1500,
+    "prepTimeSeconds": 600,
+    "performTimeSeconds": 900,
+    "description": "Classic Roman pasta with guanciale, egg yolks, and pecorino.",
+    "recipeCategory": [
+      { "id": "1", "groupId": "1", "name": "Main", "slug": "main", "recipeCount": 6 }
+    ],
+    "tags": [
+      { "id": "1", "groupId": "1", "name": "Quick", "slug": "quick", "recipeCount": 3 },
+      { "id": "2", "groupId": "1", "name": "Dinner", "slug": "dinner", "recipeCount": 4 }
+    ],
+    "tools": [
+      { "id": "2", "groupId": "1", "name": "Skillet", "slug": "skillet", "recipeCount": 4, "householdsWithTool": [] }
+    ],
+    "rating": 4,
+    "orgURL": null,
+    "dateAdded": "2026-11-20",
+    "dateUpdated": "2026-11-22T12:00:00Z",
+    "createdAt": "2026-11-20T12:00:00Z",
+    "updatedAt": "2026-11-22T12:00:00Z",
+    "recipeIngredient": [
+      { "quantity": 400, "unit": null, "food": null, "note": "spaghetti", "display": "400g spaghetti", "title": null, "originalText": "400g spaghetti", "referenceId": "ing-1" },
+      { "quantity": 200, "unit": null, "food": null, "note": "guanciale, diced", "display": "200g guanciale, diced", "title": null, "originalText": "200g guanciale, diced", "referenceId": "ing-2" },
+      { "quantity": 4, "unit": null, "food": null, "note": "egg yolks", "display": "4 egg yolks", "title": null, "originalText": "4 egg yolks", "referenceId": "ing-3" }
+    ],
+    "recipeInstructions": [
+      { "id": "step-1", "title": "", "summary": "", "text": "Boil spaghetti in salted water until al dente.", "ingredientReferences": [], "noteReferences": [], "durationSeconds": null },
+      { "id": "step-2", "title": "", "summary": "", "text": "Crisp guanciale in a skillet, then toss pasta off-heat with yolks and pecorino.", "ingredientReferences": [], "noteReferences": [], "durationSeconds": null }
+    ],
+    "nutrition": {},
+    "settings": {
+      "public": true,
+      "showNutrition": false,
+      "showAssets": false,
+      "landscapeView": false,
+      "disableComments": false,
+      "locked": false
+    },
+    "assets": [],
+    "notes": [],
+    "extras": {},
+    "comments": [
+      {
+        "id": "1",
+        "recipeId": "1",
+        "text": "Turned out great!",
+        "createdAt": "2026-11-21T12:00:00Z",
+        "updatedAt": "2026-11-21T12:00:00Z",
+        "userId": "1",
+        "user": { "id": "1", "username": "alice", "admin": true, "fullName": "Alice Chef" }
+      }
+    ]
+  }
+}

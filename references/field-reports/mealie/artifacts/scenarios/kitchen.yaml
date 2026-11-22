@@ -1,0 +1,362 @@
+name: kitchen
+description: Complex Mealie scenario with groups->users, recipes->ingredients->foods->labels, tags, cookbooks, comments, auth user, and declared writes
+seed: 42
+now: 2026-11-22T12:00:00Z
+auth:
+  user:
+    entity: users
+    id: 1
+world:
+  app_about:
+    total: 1
+    fields:
+      production: boolean
+      version: ["3.31.0"]
+      demoStatus: boolean
+      allowSignup: boolean
+      allowPasswordLogin: boolean
+      defaultGroupSlug: ["home"]
+      defaultHouseholdSlug: ["family"]
+      enableOidc: boolean
+      oidcRedirect: boolean
+      oidcProviderName: [""]
+      enableReverseProxyAuth: boolean
+      tokenTime: [48]
+      brandingName: ["Mealie"]
+    seed_first: true
+  app_theme:
+    total: 1
+    fields:
+      lightPrimary: ["#E58325"]
+      lightAccent: ["#007A99"]
+      lightSecondary: ["#973542"]
+      lightSuccess: ["#43A047"]
+      lightInfo: ["#1976d2"]
+      lightWarning: ["#FF6D00"]
+      lightError: ["#EF5350"]
+      darkPrimary: ["#E58325"]
+      darkAccent: ["#007A99"]
+      darkSecondary: ["#973542"]
+      darkSuccess: ["#43A047"]
+      darkInfo: ["#1976d2"]
+      darkWarning: ["#FF6D00"]
+      darkError: ["#EF5350"]
+  groups:
+    total: 2
+    fields:
+      name: ["Home Kitchen", "Bakery Club"]
+      slug: ["home", "bakery"]
+    values_order: cycle
+  households:
+    total: 2
+    ref: groups
+    fields:
+      name: ["Family", "Bakers"]
+      slug: ["family", "bakers"]
+      groupSlug: ["home", "bakery"]
+    values_order: cycle
+  users:
+    total: 6
+    ref: [groups, households]
+    derive:
+      group_id: { from: households, field: group_id }
+    fields:
+      username: ["alice", "bob", "carol", "dave", "erin", "frank"]
+      fullName: ["Alice Chef", "Bob Cook", "Carol Baker", "Dave Prep", "Erin Host", "Frank Guest"]
+      email: email
+      authMethod: [Mealie]
+      admin: [true, false, false, false, false, false]
+      group: ["Home Kitchen", "Bakery Club"]
+      household: ["Family", "Bakers"]
+      groupSlug: ["home", "bakery"]
+      householdSlug: ["family", "bakers"]
+      advanced: [true]
+      showAnnouncements: [false]
+      canInvite: [true]
+      canManage: [true]
+      canManageHousehold: [true]
+      canOrganize: [true]
+      cacheKey: uuid
+    values_order: cycle
+  labels:
+    total: 4
+    ref: groups
+    fields:
+      name: ["Produce", "Dairy", "Pantry", "Spices"]
+      color: ["#4CAF50", "#2196F3", "#FF9800", "#E91E63"]
+    values_order: cycle
+  foods:
+    total: 8
+    ref: [groups, labels]
+    derive:
+      group_id: { from: labels, field: group_id }
+    fields:
+      name: ["Garlic", "Tomato", "Olive Oil", "Flour", "Basil", "Butter", "Pasta", "Lemon"]
+      description: string
+      groupSlug: ["home"]
+      recipeCount: [4, 3, 5, 3, 2, 4, 3, 2]
+    values_order: cycle
+  recipes:
+    total: 12
+    ref: [groups, households, users]
+    derive:
+      group_id: { from: households, field: group_id }
+    fields:
+      name: ["Pasta Carbonara", "Tomato Soup", "Roast Chicken", "Apple Pie", "Caesar Salad", "Beef Stew", "Lentil Curry", "Garlic Bread", "Berry Tart", "Mushroom Risotto", "Fish Tacos", "Lemon Cake"]
+      slug: ["pasta-carbonara", "tomato-soup", "roast-chicken", "apple-pie", "caesar-salad", "beef-stew", "lentil-curry", "garlic-bread", "berry-tart", "mushroom-risotto", "fish-tacos", "lemon-cake"]
+      description: string
+      rating: [5, 4, 5, 4, 3, 5]
+      groupSlug: ["home"]
+      cookbook: ["weeknight", "weeknight", "weekend", "weekend"]
+      recipeServings: [4, 2, 6, 8]
+      recipeYieldQuantity: [1]
+      created_at: date
+      updated_at: date
+    values_order: cycle
+  ingredients:
+    total: 24
+    ref: [recipes, foods]
+    fields:
+      quantity: [1, 2, 3, 4]
+      note: ["chopped", "diced", "minced", "fresh"]
+      display: ["2 cloves garlic, minced", "400g tomatoes, diced", "2 tbsp olive oil", "250g flour", "1 bunch fresh basil", "50g unsalted butter"]
+    values_order: cycle
+  tags:
+    total: 6
+    ref: [groups, recipes]
+    derive:
+      group_id: { from: recipes, field: group_id }
+    fields:
+      name: ["Quick", "Dinner", "Vegetarian", "Dessert", "Comfort", "Summer"]
+      slug: ["quick", "dinner", "vegetarian", "dessert", "comfort", "summer"]
+      groupSlug: ["home"]
+      recipeCount: [3, 4, 2, 2, 3, 2]
+    values_order: cycle
+  categories:
+    total: 3
+    ref: groups
+    fields:
+      name: ["Main", "Soup", "Dessert"]
+      slug: ["main", "soup", "dessert"]
+      groupSlug: ["home"]
+      recipeCount: [6, 3, 3]
+    values_order: cycle
+  tools:
+    total: 4
+    ref: [groups, recipes]
+    derive:
+      group_id: { from: recipes, field: group_id }
+    fields:
+      name: ["Oven", "Skillet", "Dutch Oven", "Blender"]
+      slug: ["oven", "skillet", "dutch-oven", "blender"]
+      groupSlug: ["home"]
+      recipeCount: [5, 4, 3, 2]
+    values_order: cycle
+  comments:
+    total: 12
+    ref: [recipes, users]
+    fields:
+      text: ["Turned out great!", "Added extra garlic.", "Family favorite.", "Will make again.", "Perfect for weeknights.", "Kids loved it."]
+      createdAt: date
+      updatedAt: date
+    values_order: cycle
+  units:
+    total: 4
+    ref: groups
+    fields:
+      name: ["gram", "clove", "tablespoon", "cup"]
+      abbreviation: ["g", "clove", "tbsp", "cup"]
+      useAbbreviation: [true]
+    values_order: cycle
+  cookbooks:
+    total: 2
+    ref: [groups, households]
+    derive:
+      group_id: { from: households, field: group_id }
+    fields:
+      name: ["Weeknight", "Weekend"]
+      slug: ["weeknight", "weekend"]
+      description: ["Fast meals for busy evenings", "Slow cooking for Saturday and Sunday"]
+      position: [1, 2]
+      public: [true]
+      groupSlug: ["home"]
+    values_order: cycle
+endpoints:
+  - path: /api/app/about
+    entity: app_about
+    shape: object
+  - path: /api/app/about/theme
+    entity: app_theme
+    shape: object
+  - path: /api/users/self
+    entity: users
+    shape: object
+    filters: { id: "$user.id" }
+  - path: /api/groups/self
+    entity: groups
+    shape: object
+    filters: { id: "$user.group_id" }
+    embed: [users, households, categories]
+  - path: /api/explore/groups/:group_slug/recipes
+    entity: recipes
+    detail: false
+    filters:
+      ":group_slug": groupSlug
+      cookbook: cookbook
+    pagination: { param_page: page, param_limit: perPage, default_limit: 24, max_limit: 100 }
+    sort: -created_at
+    sorts: { by: orderBy, order: orderDirection, fields: [name, created_at, updated_at, rating] }
+    embed: [tags]
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/home/recipes/pasta-carbonara
+    passthrough:
+      fixture: recipe-pasta-carbonara
+      patch:
+        rating: 5
+  - path: /api/explore/groups/:group_slug/recipes/:slug
+    entity: recipes
+    detail: false
+    shape: object
+    filters:
+      ":group_slug": groupSlug
+      ":slug": slug
+    embed: [tags, tools, comments, ingredients]
+  - path: /api/households/cookbooks
+    entity: cookbooks
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/groups/households
+    entity: households
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/groups/members
+    entity: users
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/units
+    entity: units
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/cookbooks
+    entity: cookbooks
+    detail: false
+    filters: { ":group_slug": groupSlug }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/cookbooks/:slug
+    entity: cookbooks
+    detail: false
+    shape: object
+    filters:
+      ":group_slug": groupSlug
+      ":slug": slug
+  - path: /api/explore/groups/:group_slug/organizers/categories
+    entity: categories
+    filters: { ":group_slug": groupSlug }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/organizers/tags
+    entity: tags
+    filters: { ":group_slug": groupSlug }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/organizers/tools
+    entity: tools
+    filters: { ":group_slug": groupSlug }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/foods
+    entity: foods
+    filters: { ":group_slug": groupSlug }
+    include: [labels]
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/explore/groups/:group_slug/households
+    entity: households
+    filters: { ":group_slug": groupSlug }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/recipes
+    entity: recipes
+    detail: false
+    filters:
+      cookbook: cookbook
+      group_id: group_id
+    pagination: { param_page: page, param_limit: perPage, default_limit: 24, max_limit: 100 }
+    sort: -created_at
+    sorts: { by: orderBy, order: orderDirection, fields: [name, created_at, updated_at, rating] }
+    embed: [tags, ingredients]
+    counts:
+      ingredient_count: { entity: ingredients, on: recipe_id }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/recipes/:slug
+    entity: recipes
+    detail: false
+    shape: object
+    filters: { ":slug": slug }
+    embed: [tags, tools, comments, ingredients]
+  - path: /api/organizers/tags
+    entity: tags
+    filters: [group_id, recipe_id]
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/foods
+    entity: foods
+    filters: [label_id, group_id]
+    include: [labels]
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/groups/labels
+    entity: labels
+    filters: [group_id]
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/admin/groups
+    entity: groups
+    embed: [users, households]
+    counts:
+      user_count: { entity: users, on: group_id }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/admin/users
+    entity: users
+    filters: [group_id, household_id]
+    include: [groups]
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/comments
+    entity: comments
+    filters: [recipe_id, user_id]
+    include: [users]
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+writes:
+  "POST /api/organizers/tags":
+    expect: { status: 201, echo: true }
+    mutate: { entity: tags }
+  "PUT /api/organizers/tags/:id":
+    expect: { status: 200, echo: true }
+    mutate: { entity: tags }
+  "DELETE /api/organizers/tags/:id":
+    expect: { status: 204 }
+    mutate: { entity: tags }
+  "POST /api/foods":
+    expect: { status: 201, echo: true }
+    mutate: { entity: foods }
+  "POST /api/recipes":
+    expect: { status: 201, echo: true }
+    mutate: { entity: recipes, set: { groupSlug: "home" } }
+  "PATCH /api/recipes/:slug":
+    expect: { status: 200, echo: true }
+    mutate: { entity: recipes, action: update }
+  "POST /api/admin/groups":
+    expect: { status: 201, echo: true }
+    mutate: { entity: groups }
+  "DELETE /api/admin/groups/:id":
+    expect: { status: 204 }
+    mutate: { entity: groups }
+  "POST /api/comments":
+    expect: { status: 201, echo: true }
+    mutate: { entity: comments, set: { user_id: "$user.id" } }
