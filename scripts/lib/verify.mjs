@@ -467,8 +467,12 @@ export async function runVerify(flow, opts) {
       const diagnoseRow = async (row, ctx) => {
         const probe = probes.get(ctx);
         if (probe) {
-          const n = await probe();
-          if (n !== null) ctx.fullMatched = n;
+          // fullItems: the proven full set, for diagnose()'s counterfactuals; internal, never reported.
+          const full = await probe();
+          if (full) {
+            ctx.fullItems = full;
+            ctx.fullMatched = full.filter((it) => whereMatch(it, row.expect.data?.where)).length;
+          }
         }
         row.hypotheses = diagnose(row, ctx);
       };
@@ -532,10 +536,7 @@ export async function runVerify(flow, opts) {
             ctx.items = r.status === 200 ? extractItems(r.body, pick) : [];
             ctx.matched = ctx.items.filter((it) => whereMatch(it, e.data.where)).length;
             if (wantDiag && r.status === 200) {
-              probes.set(ctx, async () => {
-                const full = await fullSet(r.path, r, matchedEp, pick);
-                return full ? full.filter((it) => whereMatch(it, e.data.where)).length : null;
-              });
+              probes.set(ctx, () => fullSet(r.path, r, matchedEp, pick));
               const clamp = clampedLimit(r.path, matchedEp, ctx.items.length);
               if (clamp) ctx.clampedLimit = clamp;
             }

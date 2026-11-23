@@ -74,7 +74,7 @@ Each hypothesis carries a certainty, so a hunch never reads like a fact:
 |---|---|---|
 | `confirmed` | proven by the response and the DOM (`declared-error`, `non-200-response`, `render`, `page-error`, `click-target-missing`, `console-error`; `navigation` when the runtime detected a route mismatch or a main-document HTTP ≥ 400) | act on it |
 | `likely` | the probable cause, checked against the data (`pagination-mismatch`, `client-side-filter`, `world-mismatch`; `dedupe-by-id`, `null-field`, `ignored-sort` and `undeclared-filter` only when the counts fit) | verify it before changing anything |
-| `possible` | fits the symptom, not checked (`no-data`, `no-hypothesis`; `navigation` when only `wait_for` timed out; and the rest when the counts do not fit) | do not touch the scenario for it |
+| `possible` | fits the symptom, not checked (`no-data`, `no-hypothesis`; `navigation` when only `wait_for` timed out; `pagination-mismatch` when sorting the proven full set by the ignored order explains the page and no `max_limit` cut it; and the rest when the counts do not fit) | do not touch the scenario for it |
 
 A `wait_for` timeout still makes every assertion of the step KO. If the runtime detected neither a route mismatch nor a main-document HTTP ≥ 400, the timeout only shows that the selector never appeared: `navigation` is `possible` (its `finding` is the timeout, with no uncaught `pageerror` captured), and it does not rule out the scenario or the selectors.
 

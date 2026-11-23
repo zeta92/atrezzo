@@ -9,7 +9,7 @@
 //     esconde filas: el fallo está en la pantalla, aunque la causa concreta sea otra)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { diagnose } from '../scripts/lib/diagnose.mjs';
+import { diagnose, whereMatch } from '../scripts/lib/diagnose.mjs';
 import { diagnose as fromVerify } from '../scripts/lib/verify.mjs';
 
 const ok = (headers = {}) => ({ status: 200, headers, body: null });
@@ -283,6 +283,84 @@ test('pagination-mismatch: a low page of a full set with enough matches stays pa
     { obtained: 1, response: ok({ 'x-total-count': '12' }), items: rows(5, (i) => ({ rating: i === 1 ? 5 : 4 })), query: q('page=1&perPage=24'), matched: 1, fullMatched: 6 });
   assert.equal(hyps.find((h) => h.certainty === 'likely')?.type, 'pagination-mismatch', JSON.stringify(hyps));
   assert.ok(!hyps.some((h) => h.type === 'world-mismatch'), JSON.stringify(hyps));
+});
+
+// --- B3 review hardening: sort-key classification and counterfactual evidence ---
+
+const ratings = (...rs) => rs.map((rating, i) => ({ id: i + 1, rating }));
+/** ctx for an ignored-sort diagnosis over a proven full set; `page` is what the server served. */
+function sortCtx({ query, ignored, full, page, where }) {
+  const matched = page.filter((it) => whereMatch(it, where)).length;
+  return { obtained: matched, response: ok({ 'x-atrezzo-ignored': ignored }), query: q(query), items: page, fullItems: full, matched,
+    fullMatched: full.filter((it) => whereMatch(it, where)).length };
+}
+const fives = (count) => expect({ count, data: { request: 'r', where: { rating: 5 } } });
+
+test('B3 hardening: a direction-only name with a non-direction value is an ignored filter, not a sort', () => {
+  for (const [key, value] of [['dir', 'left'], ['direction', 'inbound'], ['orderDirection', 'north']]) {
+    const hyps = diagnose(expect({ count: 2 }), { obtained: 5, response: ok({ 'x-atrezzo-ignored': key }), items: rows(5), query: q(`${key}=${value}`), matched: 5 });
+    const f = hyps.find((h) => h.type === 'undeclared-filter');
+    assert.ok(f, `${key}=${value} is a filter the mock ignored: ${JSON.stringify(hyps)}`);
+    assert.ok(f.evidence.includes(key), f.evidence);
+    assert.ok(!hyps.some((h) => h.type === 'ignored-sort'), `${key}=${value} is not a sort: ${JSON.stringify(hyps)}`);
+  }
+  // Control: asc/desc values keep the direction behaviour.
+  for (const [key, value] of [['dir', 'DESC'], ['direction', 'asc'], ['orderDirection', 'desc']]) {
+    const hyps = diagnose(expect({ count: 2 }), { obtained: 5, response: ok({ 'x-atrezzo-ignored': key }), items: rows(5), query: q(`${key}=${value}`), matched: 5 });
+    assert.ok(hyps.some((h) => h.type === 'ignored-sort'), `${key}=${value}: ${JSON.stringify(hyps)}`);
+    assert.ok(!hyps.some((h) => h.type === 'undeclared-filter'), `${key}=${value}: ${JSON.stringify(hyps)}`);
+  }
+});
+
+test('B3 hardening: sort=desc / sort_by=asc alone are direction-only: no by: advice', () => {
+  const full = ratings(4, 5, 3, 5, 5, 5);
+  for (const [key, value] of [['sort', 'desc'], ['sort_by', 'asc']]) {
+    const hyps = diagnose(fives(2), sortCtx({ query: `${key}=${value}`, ignored: key, full, page: full.slice(0, 2), where: { rating: 5 } }));
+    const s = hyps.find((h) => h.type === 'ignored-sort');
+    assert.equal(s?.certainty, 'possible', JSON.stringify(hyps));
+    assert.ok(!s.evidence.includes(`by: ${key},`) && !s.evidence.includes(`by: ${key} `), s.evidence);
+    assert.match(s.evidence, /field key cannot be inferred/, s.evidence);
+    assert.ok(s.evidence.includes(`order: ${key}`), s.evidence);
+    assert.ok(!hyps.some((h) => h.type === 'undeclared-filter'), JSON.stringify(hyps));
+  }
+});
+
+test('B3 hardening: a full-set proof without ctx.matched derives the served count from the items', () => {
+  const full = ratings(4, 5, 3, 5, 5, 5);
+  const ctx = sortCtx({ query: 'orderBy=rating&orderDirection=desc', ignored: 'orderBy, orderDirection', full, page: full.slice(0, 2), where: { rating: 5 } });
+  delete ctx.matched;
+  const s = diagnose(fives(2), ctx).find((h) => h.type === 'ignored-sort');
+  assert.equal(s?.certainty, 'likely', s?.evidence);
+  assert.match(s.evidence, /puts 2 matching items on this page; as served it has 1\./, s.evidence);
+  assert.doesNotMatch(s.evidence, /undefined/, s.evidence);
+});
+
+test('B3 hardening: PostgREST by / sortfield in the query are the field key for a lone ignored direction', () => {
+  // The endpoint honours the field key (served ascending) but ignores the direction: sorted desc, page 1 holds two 5s.
+  const full = ratings(3, 4, 5, 5);
+  for (const [query, ignored, by] of [['by=rating&order=desc', 'order', 'by'], ['sortField=rating&dir=desc', 'dir', 'sortField']]) {
+    const hyps = diagnose(fives(2), sortCtx({ query, ignored, full, page: full.slice(0, 2), where: { rating: 5 } }));
+    const s = hyps.find((h) => h.type === 'ignored-sort');
+    assert.equal(s?.certainty, 'likely', JSON.stringify(hyps));
+    assert.ok(s.evidence.includes(`sorts: { by: ${by}, order: ${ignored}, fields: [<columns>] }`), s.evidence);
+    assert.match(s.evidence, /by rating desc puts 2 matching items on this page; as served it has 0/, s.evidence);
+  }
+  // Only for the inference: an ignored `by` / `sortField` is still classified as a filter.
+  for (const key of ['by', 'sortField']) {
+    const hyps = diagnose(expect({ count: 2 }), { obtained: 5, response: ok({ 'x-atrezzo-ignored': key }), items: rows(5), query: q(`${key}=rating`), matched: 5 });
+    assert.ok(hyps.some((h) => h.type === 'undeclared-filter'), `${key}: ${JSON.stringify(hyps)}`);
+    assert.ok(!hyps.some((h) => h.type === 'ignored-sort'), `${key}: ${JSON.stringify(hyps)}`);
+  }
+});
+
+test('B3 hardening: a lowercased ignored header matches the query key and the advice keeps the query spelling', () => {
+  const full = ratings(3, 4, 5, 5);
+  const hyps = diagnose(fives(2), sortCtx({ query: 'orderBy=rating&orderDirection=desc', ignored: 'orderdirection', full, page: full.slice(0, 2), where: { rating: 5 } }));
+  const s = hyps.find((h) => h.type === 'ignored-sort');
+  assert.equal(s?.certainty, 'likely', JSON.stringify(hyps));
+  assert.ok(s.evidence.includes('sorts: { by: orderBy, order: orderDirection, fields: [<columns>] }'), s.evidence);
+  assert.match(s.evidence, /by rating desc puts 2 matching items/, s.evidence);
+  assert.ok(!hyps.some((h) => h.type === 'undeclared-filter'), JSON.stringify(hyps));
 });
 
 test('verify.mjs reexporta diagnose', () => {

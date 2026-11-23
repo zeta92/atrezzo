@@ -9,6 +9,7 @@ import { loadFlow } from '../scripts/lib/scenario.mjs';
 import { createMockServer } from '../scripts/lib/serve.mjs';
 import { runVerify, formatReport, diagnose, loadPlaywright, chromeExecutable } from '../scripts/lib/verify.mjs';
 import { AtrezzoError } from '../scripts/lib/errors.mjs';
+import { whereMatch } from '../scripts/lib/diagnose.mjs';
 import { ROOT, SCENARIO, FLOW, tmpProject, cliAsync } from './helpers.mjs';
 
 let dir; let mock; let url;
@@ -467,6 +468,203 @@ test('diagnosis B2v2: an undeclared lower page cap is followed at the observed s
     assert.match(top.evidence, /across the full set, 12 match/);
     assert.ok(apiCalls(requested).length <= 1 + 4, `step + ceil(12 / 3) pages at most: ${apiCalls(requested).join(' ')}`);
   });
+});
+
+// B3 (references/field-reports/mealie, inj-ignored-sort): the endpoint declares no sort, so the mock
+// ignores orderBy and orderDirection. Page 1 of 4 carries ratings 4,5,3,5 (2 fives); the world has 6
+// fives, so sorting the whole set by rating desc would put 4 fives on page 1. Only the proven full
+// set shows that: page 1 alone holds 2 fives, sorted or not.
+test('diagnosis B3: ignored orderBy+orderDirection proven over the full set is ignored-sort, not a filter or pagination', async () => {
+  const flow = maxLimitFlow('      - selector: ".recipe-card"\n        count: 4\n        data: { request: recipes, where: { rating: 5 } }\n')
+    .replace('?page=1&perPage=24', '?page=1&perPage=4&orderBy=rating&orderDirection=desc');
+  await withMaxLimitMock({ 'f.yaml': flow }, async ({ dir: d, url: u, fetchImpl }) => {
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.equal(row.obtained, 2);
+    const hyps = JSON.stringify(row.hypotheses);
+    assert.ok(!row.hypotheses.some((h) => h.type === 'undeclared-filter' && /orderDirection/.test(h.evidence)), `orderDirection is a sort direction, not a filter: ${hyps}`);
+    const top = row.hypotheses.find((h) => h.certainty !== 'possible');
+    assert.equal(top?.type, 'ignored-sort', hyps);
+    assert.equal(top.certainty, 'likely');
+    assert.match(top.evidence, /`orderBy`, `orderDirection`/);
+    assert.match(top.evidence, /sorting the full set \(12 items\) by rating desc puts 4 matching items on this page/, top.evidence);
+    assert.ok(!row.hypotheses.some((h) => h.type === 'pagination-mismatch' && h.certainty === 'likely'), `the page size is honoured; the order is not: ${hyps}`);
+    assert.ok(!JSON.stringify(r).includes('fullItems'), 'the full set stays internal to the diagnosis');
+  });
+});
+
+/** ctx for an ignored-sort diagnosis over a proven full set; `page` is the served slice of `full`. */
+function sortCtx({ query, ignored, full, page, where, total, clampedLimit }) {
+  const headers = { 'x-atrezzo-ignored': ignored, ...(total !== undefined ? { 'x-total-count': String(total) } : {}) };
+  return {
+    obtained: page.filter((it) => whereMatch(it, where)).length,
+    response: { status: 200, headers },
+    query: new URLSearchParams(query),
+    items: page,
+    fullItems: full,
+    matched: page.filter((it) => whereMatch(it, where)).length,
+    fullMatched: full.filter((it) => whereMatch(it, where)).length,
+    ...(clampedLimit ? { clampedLimit } : {}),
+  };
+}
+const ratings = (...rs) => rs.map((rating, i) => ({ id: i + 1, rating }));
+
+test('diagnose() B3: the full-set sort counterfactual puts nulls first in desc, like contract compare()', () => {
+  // contract.mjs sorts desc as -compare(a, b): nulls (last in asc) come first in desc. Sorted desc the
+  // set is null, null, 2, 1, so page 1 (2 rows) holds both nulls; nulls-last-in-desc would give 0.
+  const full = ratings(1, 2, null, null);
+  const where = { rating: null };
+  const row = { expect: { selector: 'x', count: 2, data: { request: 'r', where } } };
+  const hyps = diagnose(row, sortCtx({ query: 'orderBy=rating&orderDirection=desc', ignored: 'orderBy, orderDirection', full, page: full.slice(0, 2), where }));
+  const s = hyps.find((h) => h.type === 'ignored-sort');
+  assert.equal(s?.certainty, 'likely', JSON.stringify(hyps));
+  assert.match(s.evidence, /sorting the full set \(4 items\) by rating desc puts 2 matching items on this page/, s.evidence);
+});
+
+test('diagnose() B3: numeric-looking strings sort lexically in the full-set counterfactual, like contract compare()', () => {
+  // Lexically '10' < '2' < '3': page 1 (1 row) sorted asc is '10'. Numeric coercion would put '2' first.
+  const full = [{ id: 1, code: '2' }, { id: 2, code: '10' }, { id: 3, code: '3' }];
+  const where = { code: '10' };
+  const row = { expect: { selector: 'x', count: 1, data: { request: 'r', where } } };
+  const hyps = diagnose(row, sortCtx({ query: 'orderBy=code&orderDirection=asc', ignored: 'orderBy, orderDirection', full, page: full.slice(0, 1), where }));
+  const s = hyps.find((h) => h.type === 'ignored-sort');
+  assert.equal(s?.certainty, 'likely', JSON.stringify(hyps));
+  assert.match(s.evidence, /by code asc puts 1 matching items on this page/, s.evidence);
+});
+
+test('diagnose() B3: a direction key before the field key still advises by: orderBy, order: orderDirection', () => {
+  // ratings 4,5,3,5,5,5; page 1 of 2 rows has one 5; sorted DESC it has two.
+  const full = ratings(4, 5, 3, 5, 5, 5);
+  const where = { rating: 5 };
+  const row = { expect: { selector: 'x', count: 2, data: { request: 'r', where } } };
+  const hyps = diagnose(row, sortCtx({ query: 'orderDirection=DESC&orderBy=rating', ignored: 'orderDirection, orderBy', full, page: full.slice(0, 2), where }));
+  const s = hyps.find((h) => h.type === 'ignored-sort');
+  assert.equal(s?.certainty, 'likely', JSON.stringify(hyps));
+  assert.match(s.evidence, /sorts: \{ by: orderBy, order: orderDirection, fields: \[<columns>\] \}/, s.evidence);
+  assert.doesNotMatch(s.evidence, /by: orderDirection/, s.evidence);
+  assert.match(s.evidence, /by rating desc puts 2 matching items/, `uppercase DESC is a descending order: ${s.evidence}`);
+  assert.ok(!hyps.some((h) => h.type === 'undeclared-filter'), JSON.stringify(hyps));
+});
+
+test('diagnose() B3: an ignored direction alone is not a field key and gets no by: advice', () => {
+  const full = ratings(4, 5, 3, 5, 5, 5);
+  const where = { rating: 5 };
+  const row = { expect: { selector: 'x', count: 2, data: { request: 'r', where } } };
+  const hyps = diagnose(row, sortCtx({ query: 'orderDirection=desc', ignored: 'orderDirection', full, page: full.slice(0, 2), where }));
+  const s = hyps.find((h) => h.type === 'ignored-sort');
+  assert.ok(s, JSON.stringify(hyps));
+  assert.equal(s.certainty, 'possible', s.evidence);
+  assert.doesNotMatch(s.evidence, /by: orderDirection/, s.evidence);
+  assert.doesNotMatch(s.evidence, /orders by `orderDirection`/, s.evidence);
+  assert.match(s.evidence, /field key cannot be inferred/, s.evidence);
+  assert.ok(!hyps.some((h) => h.type === 'undeclared-filter'), JSON.stringify(hyps));
+});
+
+test('diagnose() B3: an ambiguous order=desc listed before sort=rating is the direction, so by: sort, order: order', () => {
+  const full = ratings(4, 5, 3, 5, 5, 5);
+  const where = { rating: 5 };
+  const row = { expect: { selector: 'x', count: 2, data: { request: 'r', where } } };
+  const hyps = diagnose(row, sortCtx({ query: 'order=desc&sort=rating', ignored: 'order,sort', full, page: full.slice(0, 2), where }));
+  const s = hyps.find((h) => h.type === 'ignored-sort');
+  assert.equal(s?.certainty, 'likely', JSON.stringify(hyps));
+  assert.match(s.evidence, /sorts: \{ by: sort, order: order, fields: \[<columns>\] \}/, s.evidence);
+  assert.doesNotMatch(s.evidence, /by: order\b/, s.evidence);
+  assert.match(s.evidence, /orders by `sort`, `order`/, s.evidence);
+  assert.match(s.evidence, /by rating desc puts 2 matching items/, s.evidence);
+  assert.ok(!hyps.some((h) => h.type === 'undeclared-filter'), JSON.stringify(hyps));
+});
+
+test('diagnose() B3: sort.order / sorts.order carrying only a direction are never the by: key', () => {
+  const full = ratings(4, 5, 3, 5, 5, 5);
+  const where = { rating: 5 };
+  const row = { expect: { selector: 'x', count: 2, data: { request: 'r', where } } };
+  for (const [dir, by] of [['sort.order', 'sort.by'], ['sorts.order', 'sorts.by']]) {
+    const hyps = diagnose(row, sortCtx({ query: `${dir}=desc&${by}=rating`, ignored: `${dir},${by}`, full, page: full.slice(0, 2), where }));
+    const s = hyps.find((h) => h.type === 'ignored-sort');
+    assert.equal(s?.certainty, 'likely', JSON.stringify(hyps));
+    assert.ok(s.evidence.includes(`sorts: { by: ${by}, order: ${dir}, fields: [<columns>] }`), s.evidence);
+  }
+});
+
+test('diagnose() B3: an ambiguous order carrying a field (order=rating) stays the by: key', () => {
+  const full = ratings(4, 5, 3, 5, 5, 5);
+  const where = { rating: 5 };
+  const row = { expect: { selector: 'x', count: 2, data: { request: 'r', where } } };
+  const hyps = diagnose(row, sortCtx({ query: 'order=rating&dir=desc', ignored: 'order,dir', full, page: full.slice(0, 2), where }));
+  const s = hyps.find((h) => h.type === 'ignored-sort');
+  assert.equal(s?.certainty, 'likely', JSON.stringify(hyps));
+  assert.match(s.evidence, /sorts: \{ by: order, order: dir, fields: \[<columns>\] \}/, s.evidence);
+});
+
+test('diagnose() B3: an ambiguous order=desc alone is direction-only: possible, no by: advice', () => {
+  const full = ratings(4, 5, 3, 5, 5, 5);
+  const where = { rating: 5 };
+  const row = { expect: { selector: 'x', count: 2, data: { request: 'r', where } } };
+  const hyps = diagnose(row, sortCtx({ query: 'order=desc', ignored: 'order', full, page: full.slice(0, 2), where }));
+  const s = hyps.find((h) => h.type === 'ignored-sort');
+  assert.equal(s?.certainty, 'possible', JSON.stringify(hyps));
+  assert.doesNotMatch(s.evidence, /by: order\b/, s.evidence);
+  assert.match(s.evidence, /field key cannot be inferred/, s.evidence);
+});
+
+test('diagnose() B3: an ignored direction whose field key is in the query but not ignored infers by: from the query', () => {
+  // The endpoint honours orderBy (served ascending) but ignores orderDirection: sorted desc, page 1 holds two 5s.
+  const full = ratings(3, 4, 5, 5);
+  const where = { rating: 5 };
+  const row = { expect: { selector: 'x', count: 2, data: { request: 'r', where } } };
+  const hyps = diagnose(row, sortCtx({ query: 'orderBy=rating&orderDirection=desc', ignored: 'orderDirection', full, page: full.slice(0, 2), where }));
+  const s = hyps.find((h) => h.type === 'ignored-sort');
+  assert.equal(s?.certainty, 'likely', JSON.stringify(hyps));
+  assert.match(s.evidence, /sorts: \{ by: orderBy, order: orderDirection, fields: \[<columns>\] \}/, s.evidence);
+  assert.doesNotMatch(s.evidence, /cannot be inferred/, s.evidence);
+  assert.doesNotMatch(s.evidence, /by: orderDirection/, s.evidence);
+  assert.match(s.evidence, /by rating desc puts 2 matching items on this page; as served it has 0/, s.evidence);
+  assert.match(s.evidence, /field key `orderBy` \(in the query, not ignored\)/, s.evidence);
+});
+
+test('diagnose() B3: a max_limit clamp keeps pagination-mismatch likely next to a proven ignored sort', () => {
+  const full = ratings(4, 5, 3, 5, 5, 5);
+  const where = { rating: 5 };
+  const row = { expect: { selector: 'x', count: 2, data: { request: 'r', where } } };
+  const ctx = sortCtx({ query: 'orderBy=rating&orderDirection=desc&perPage=24', ignored: 'orderBy, orderDirection', full, page: full.slice(0, 2), where, total: 6,
+    clampedLimit: { param: 'perPage', requested: 24, max: 2 } });
+  const hyps = diagnose(row, ctx);
+  assert.equal(hyps.find((h) => h.type === 'ignored-sort')?.certainty, 'likely', JSON.stringify(hyps));
+  assert.equal(hyps.find((h) => h.type === 'pagination-mismatch')?.certainty, 'likely', JSON.stringify(hyps));
+  // Without the clamp the proven order explains the short page: pagination-mismatch drops to possible.
+  delete ctx.clampedLimit;
+  assert.equal(diagnose(row, ctx).find((h) => h.type === 'pagination-mismatch')?.certainty, 'possible');
+});
+
+test('diagnose() B3: a served page 2 is compared with page 2 of the sorted full set', () => {
+  // ratings 6,1,5,2,4,3: served page 2 (offset 2) is 5,2; sorted desc, page 2 is 4,3 (page 1 is 6,5).
+  const full = ratings(6, 1, 5, 2, 4, 3);
+  const where = { rating: [4, 3] };
+  const row = { expect: { selector: 'x', count: 2, data: { request: 'r', where } } };
+  const hyps = diagnose(row, sortCtx({ query: 'orderBy=rating&orderDirection=desc&page=2', ignored: 'orderBy, orderDirection', full, page: full.slice(2, 4), where }));
+  const s = hyps.find((h) => h.type === 'ignored-sort');
+  assert.equal(s?.certainty, 'likely', JSON.stringify(hyps));
+  assert.match(s.evidence, /by rating desc puts 2 matching items on this page; as served it has 0/, s.evidence);
+});
+
+test('diagnose() B3: a served page that is not a contiguous slice of the full set falls back to the page-only check', () => {
+  const full = ratings(1, 2, 6, 3);
+  const where = { rating: 6 };
+  const row = { expect: { selector: 'x', count: 1, data: { request: 'r', where } } };
+  const page = [full[0], full[2]]; // ratings 1, 6: not a slice of the full set
+  const ctx = sortCtx({ query: 'orderBy=rating&orderDirection=desc', ignored: 'orderBy, orderDirection', full, page, where });
+  const hyps = diagnose(row, ctx);
+  const s = hyps.find((h) => h.type === 'ignored-sort');
+  // Sorting the page itself puts the 6 first, but the page contradicts the proven set: only possible.
+  assert.equal(s?.certainty, 'possible', JSON.stringify(hyps));
+  assert.doesNotMatch(s.evidence, /sorting the full set/, s.evidence);
+  assert.match(s.evidence, /not a slice of the proven full set \(4 items\)/, s.evidence);
+  // Without a proven full set, the same page-only proof keeps its certainty.
+  delete ctx.fullItems;
+  const alone = diagnose(row, ctx).find((h) => h.type === 'ignored-sort');
+  assert.equal(alone?.certainty, 'likely', alone?.evidence);
+  assert.doesNotMatch(alone.evidence, /not a slice/, alone.evidence);
 });
 
 test('diagnose(): dedupe by id, null field and client-side filter', () => {
