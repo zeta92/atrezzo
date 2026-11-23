@@ -134,7 +134,10 @@ function filterCounterfactual(ctx, exp, names) {
 
 /**
  * Hipótesis para una aserción fallida.
- * ctx: { expected, obtained, driver, response?, items?, query?: URLSearchParams, matched?, fullMatched?, domCount? }
+ * ctx: { expected, obtained, driver, response?, items?, query?: URLSearchParams, matched?, fullMatched?, domCount?,
+ *        clampedLimit?: { param, requested, max, defaulted? } (the endpoint's max_limit cut the client's page size,
+ *        or its default_limit when defaulted) }
+ * fullMatched is only set when the full set was proven (every page, adding up to X-Total-Count).
  * Cada hipótesis: { type, confidence, certainty, evidence, finding? }.
  */
 export function diagnose(row, ctx) {
@@ -180,7 +183,12 @@ export function diagnose(row, ctx) {
   if (ctx.items) {
     const total = Number(header(r?.headers, 'x-total-count'));
     if (Number.isFinite(total) && total > ctx.items.length && ctx.fullMatched !== undefined && ctx.fullMatched >= target && ctx.matched < target) {
-      add('pagination-mismatch', 'high', 'likely', `the response has ${ctx.items.length} of ${total} items; unpaginated, ${ctx.fullMatched} match the condition, but this page has only ${ctx.matched}. Check the client's limit/offset or the endpoint's sort.`,
+      const c = ctx.clampedLimit;
+      const fix = !c ? `Check the client's limit/offset or the endpoint's sort.`
+        : c.defaulted
+          ? `The client sends no ${c.param} and the endpoint's pagination has default_limit: ${c.requested} with max_limit: ${c.max}, so the page is cut to ${c.max}: raise max_limit, lower default_limit or page through.`
+          : `The client asks for ${c.param}=${c.requested} and the endpoint's pagination has max_limit: ${c.max}, so the page is cut to ${c.max}: raise max_limit or page through.`;
+      add('pagination-mismatch', 'high', 'likely', `the response has ${ctx.items.length} of ${total} items; across the full set, ${ctx.fullMatched} match the condition, but this page has only ${ctx.matched}. ${fix}`,
         `the page carries ${ctx.items.length} of ${total} items`);
     }
     const ids = ctx.items.map((i) => i?.id).filter((x) => x !== undefined);
@@ -208,9 +216,18 @@ export function diagnose(row, ctx) {
       add('render', 'high', mockIgnored ? 'possible' : 'confirmed', `the mock delivers exactly what was expected (${target}); the difference is in the screen, not the scenario. Do not regenerate the world.`,
         `the JSON carries the expected ${target} and the DOM shows ${ctx.domCount}: the failure is in the screen`);
     }
-    if (ctx.domCount === undefined && ctx.fullMatched !== undefined && ctx.fullMatched !== target && ctx.matched === ctx.fullMatched) {
+    // The verified full set decides: if it holds fewer matches than needed, no page can reach the
+    // expectation, whatever this page carries (it may be clamped). Over the count/max, it is the
+    // world only when this page is over it too (the page's own excess comes from the world); a page
+    // below the expectation of a set with enough matches points at the client's paging, not the
+    // world (pagination-mismatch above), so then the page must be the set.
+    const need = exp.count ?? exp.min;
+    const upper = exp.count ?? exp.max;
+    const worldShort = ctx.fullMatched !== undefined && need !== undefined && ctx.fullMatched < need;
+    const worldOver = ctx.fullMatched !== undefined && upper !== undefined && ctx.fullMatched > upper && ctx.matched > upper;
+    if (ctx.domCount === undefined && ctx.fullMatched !== undefined && ctx.fullMatched !== target && (ctx.matched === ctx.fullMatched || worldShort || worldOver)) {
       add('world-mismatch', 'medium', explainedByMock ? 'possible' : 'likely', `the world has ${ctx.fullMatched} matching items and ${expectedText(exp)} were expected: check world (total/distribution) or the assertion's "where" condition.`,
-        `unpaginated, ${ctx.fullMatched} items match; ${expectedText(exp)} were expected`);
+        `across the full set, ${ctx.fullMatched} items match; ${expectedText(exp)} were expected`);
     }
   } else if (ctx.domCount !== undefined) {
     add('no-data', 'low', 'possible', 'the assertion has no "data" to compare against the JSON; add data.request to tell a data failure from a screen failure.');

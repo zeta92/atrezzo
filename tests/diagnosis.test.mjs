@@ -166,6 +166,25 @@ const CASES = [
     ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'5'}, body: null}, items: [], matched: 0, fullMatched: 0, domCount: 0 } },
   { name: 'field: upstream #197, the feed pager never sends offset (real front-end bug), playwright', row: { expect: {selector: '.article-preview', count: 6, data: {request: 'r'}} }, cause: 'render',
     ctx: { obtained: 10, response: {status: 200, headers: {'x-total-count': '16'}, body: null}, items: [{id:13}, {id:7}, {id:12}, {id:2}, {id:8}, {id:16}], query: q('limit=10&offset=10'), matched: 6, fullMatched: 16, domCount: 10 } },
+
+  // --- F5 field cases: Mealie (references/field-reports/mealie/summary.md, B2 / inj-max-limit) ---
+  // Page pagination with default_limit 24 and max_limit 5: verify now walks the pages to rebuild the
+  // full set (12) instead of trusting the clamped probe (5), and reports the clamp.
+  { name: 'field mealie: max_limit 5 on perPage=24, page pagination, http', row: { expect: {selector: '.recipe-card-footer', count: 12, data: {request: 'r'}} }, cause: 'pagination-mismatch',
+    ctx: { obtained: 5, response: {status: 200, headers: {'x-total-count': '12'}, body: null}, items: rows(5), query: q('page=1&perPage=24'), matched: 5, fullMatched: 12, clampedLimit: { param: 'perPage', requested: 24, max: 5 } } },
+  { name: 'field mealie: max_limit 5 on perPage=24, playwright', row: { expect: {selector: '.recipe-card-footer', count: 12, data: {request: 'r'}} }, cause: 'pagination-mismatch',
+    ctx: { obtained: 5, response: {status: 200, headers: {'x-total-count': '12'}, body: null}, items: rows(5), query: q('page=1&perPage=24'), matched: 5, fullMatched: 12, clampedLimit: { param: 'perPage', requested: 24, max: 5 }, domCount: 5 } },
+  // The page is clamped (2 of its 5 rows match) but the verified full set has only 6: no page reaches 7.
+  { name: 'field mealie: clamped page, verified world short of the expectation, http', row: { expect: {selector: '.five', count: 7, data: {request: 'r', where: {rating: 5}}} }, cause: 'world-mismatch',
+    ctx: { obtained: 2, response: {status: 200, headers: {'x-total-count': '12'}, body: null}, items: rows(5, (i) => ({ rating: [4, 5, 3, 5][i % 4] })), query: q('page=1&perPage=24'), matched: 2, fullMatched: 6, clampedLimit: { param: 'perPage', requested: 24, max: 5 } } },
+  // Guard: the world has more than enough (16 ≥ 10); the client's offset is the problem, not the world.
+  { name: 'page slice of a larger verified world is not world-mismatch, http', row: { expect: {selector: 'tr', count: 10, data: {request: 'r'}} }, cause: 'pagination-mismatch',
+    ctx: { obtained: 6, response: {status: 200, headers: {'x-total-count': '16'}, body: null}, items: rows(6), query: q('limit=10&offset=10'), matched: 6, fullMatched: 16 } },
+  // Verified over-count: the clamped page already has 2 matches and the full set 6; 1 was expected.
+  { name: 'clamped page, verified world over the expected count, http', row: { expect: {selector: '.five', count: 1, data: {request: 'r', where: {rating: 5}}} }, cause: 'world-mismatch',
+    ctx: { obtained: 2, response: {status: 200, headers: {'x-total-count': '12'}, body: null}, items: rows(5, (i) => ({ rating: [4, 5, 3, 5][i % 4] })), query: q('page=1&perPage=24'), matched: 2, fullMatched: 6, clampedLimit: { param: 'perPage', requested: 24, max: 5 } } },
+  { name: 'clamped page, verified world over the max, http', row: { expect: {selector: '.five', max: 1, data: {request: 'r', where: {rating: 5}}} }, cause: 'world-mismatch',
+    ctx: { obtained: 2, response: {status: 200, headers: {'x-total-count': '12'}, body: null}, items: rows(5, (i) => ({ rating: [4, 5, 3, 5][i % 4] })), query: q('page=1&perPage=24'), matched: 2, fullMatched: 6 } },
 ];
 
 const STRONG = new Set(['confirmed', 'likely']);
@@ -244,6 +263,26 @@ test('pagination-mismatch: likely, con el recorte de la página como finding', (
   assert.equal(h.certainty, 'likely');
   assert.equal(h.confidence, 'high');
   assert.equal(h.finding, 'the page carries 12 of 40 items');
+});
+
+test('world-mismatch: a verified over-count (count or max) is the world, not no-hypothesis', () => {
+  const ctx = { obtained: 2, response: ok({ 'x-total-count': '12' }), items: rows(5, (i) => ({ rating: [4, 5, 3, 5][i % 4] })), query: q('page=1&perPage=24'), matched: 2, fullMatched: 6 };
+  for (const [bound, text] of [[{ count: 1 }, '=1'], [{ max: 1 }, '<=1'], [{ min: 0, max: 1 }, '0..1']]) {
+    const hyps = diagnose(expect({ ...bound, data: { request: 'r', where: { rating: 5 } } }), ctx);
+    const w = hyps.find((h) => h.type === 'world-mismatch');
+    assert.equal(w?.certainty, 'likely', `${text}: ${JSON.stringify(hyps)}`);
+    assert.match(w.evidence, new RegExp(`the world has 6 matching items and ${text} were expected`));
+    assert.ok(!hyps.some((h) => h.type === 'no-hypothesis'), text);
+  }
+});
+
+test('pagination-mismatch: a low page of a full set with enough matches stays pagination, not world', () => {
+  // The full set has 6 ≥ 3 matches and this page 1: the client's paging, not the world. Also with
+  // the full set over the expectation (6 > 3) the page is below it, so the world is not the claim.
+  const hyps = diagnose(expect({ count: 3, data: { request: 'r', where: { rating: 5 } } }),
+    { obtained: 1, response: ok({ 'x-total-count': '12' }), items: rows(5, (i) => ({ rating: i === 1 ? 5 : 4 })), query: q('page=1&perPage=24'), matched: 1, fullMatched: 6 });
+  assert.equal(hyps.find((h) => h.certainty === 'likely')?.type, 'pagination-mismatch', JSON.stringify(hyps));
+  assert.ok(!hyps.some((h) => h.type === 'world-mismatch'), JSON.stringify(hyps));
 });
 
 test('verify.mjs reexporta diagnose', () => {

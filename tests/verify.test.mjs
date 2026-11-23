@@ -64,6 +64,411 @@ test('diagnosis: pagination mismatch', async () => {
   }
 });
 
+// B2 (references/field-reports/mealie, inj-max-limit): page pagination with default_limit 24 and
+// max_limit 5. The client asks for ?page=1&perPage=24 and expects all 12 rows; the mock clamps to 5.
+// Stripping page/perPage is not an unpaginated probe here: default_limit is clamped to 5 again.
+const MAX_LIMIT_SCENARIO = `name: maxlimit
+seed: 42
+world:
+  recipes:
+    total: 12
+    fields:
+      groupSlug: ["home"]
+      rating: [4, 5, 3, 5]
+    values_order: cycle
+endpoints:
+  - path: /api/explore/groups/:group_slug/recipes
+    entity: recipes
+    filters: { ":group_slug": groupSlug }
+    pagination: { param_page: page, param_limit: perPage, default_limit: 24, max_limit: 5 }
+    shape: envelope
+    envelope: { items: items, total: total, page: page, per_page: per_page, total_pages: total_pages }
+`;
+const maxLimitFlow = (expect) => `scenario: scenarios/maxlimit.yaml
+steps:
+  - screen: explorer
+    visit: /g/home
+    requests:
+      recipes: GET /api/explore/groups/home/recipes?page=1&perPage=24
+    expect:
+${expect}`;
+
+async function withMaxLimitMock(files, fn) {
+  const d = tmpProject({ 'scenarios/maxlimit.yaml': MAX_LIMIT_SCENARIO, ...files });
+  const m = createMockServer({ scenariosDir: join(d, 'scenarios') });
+  const addr = await m.listen(0);
+  const requested = [];
+  const fetchImpl = (u, init) => { requested.push(String(u)); return fetch(u, init); };
+  try { return await fn({ dir: d, url: `http://127.0.0.1:${addr.port}`, fetchImpl, requested }); } finally { await m.close(); }
+}
+
+const ALL_CARDS = '      - selector: ".recipe-card-footer"\n        count: 12\n        data: { request: recipes }\n';
+
+test('diagnosis B2: max_limit truncating the full set is pagination-mismatch, not world-mismatch (http)', async () => {
+  await withMaxLimitMock({ 'f.yaml': maxLimitFlow(ALL_CARDS) }, async ({ dir: d, url: u, fetchImpl, requested }) => {
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.equal(row.obtained, 5);
+    const strong = row.hypotheses.filter((h) => h.certainty !== 'possible');
+    assert.deepEqual(strong.map((h) => h.type), ['pagination-mismatch'], JSON.stringify(row.hypotheses));
+    const h = strong[0];
+    assert.equal(h.certainty, 'likely');
+    assert.match(h.evidence, /5 of 12 items/);
+    assert.match(h.evidence, /12 match/);
+    assert.match(h.evidence, /perPage=24.*max_limit: 5/, 'the clamp is the evidence, name it');
+    assert.ok(!row.hypotheses.some((x) => x.type === 'world-mismatch'), 'the world has 12 rows, not 5');
+    // Bounded probe: the step request + the stripped probe + ceil(12 / 5) = 3 pages at most.
+    const probes = requested.filter((x) => x.includes('/api/explore/'));
+    assert.ok(probes.length <= 1 + 1 + 3, `too many probe requests: ${probes.join(' ')}`);
+  });
+});
+
+test('diagnosis B2: same case under playwright (fake page) is pagination-mismatch, not no-hypothesis', async () => {
+  await withMaxLimitMock({ 'f.yaml': maxLimitFlow(ALL_CARDS) }, async ({ dir: d, url: u, fetchImpl }) => {
+    const fp = fakePage({ '.recipe-card-footer': 5 });
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'playwright', diagnose: true, pageFactory: fp.factory, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.equal(row.obtained, 5);
+    const top = row.hypotheses.find((h) => h.certainty !== 'possible');
+    assert.equal(top?.type, 'pagination-mismatch', JSON.stringify(row.hypotheses));
+    assert.equal(top.certainty, 'likely');
+  });
+});
+
+test('diagnosis B2: with a where, the full-set count is the rows that match it, not X-Total-Count', async () => {
+  // rating cycles 4,5,3,5 over 12 rows ⇒ 6 rows with rating 5 in the world; X-Total-Count is 12.
+  const six = '      - selector: ".five"\n        count: 6\n        data: { request: recipes, where: { rating: 5 } }\n';
+  const seven = '      - selector: ".five"\n        count: 7\n        data: { request: recipes, where: { rating: 5 } }\n';
+  await withMaxLimitMock({ 'six.yaml': maxLimitFlow(six), 'seven.yaml': maxLimitFlow(seven) }, async ({ dir: d, url: u, fetchImpl }) => {
+    const r6 = await runVerify(loadFlow(join(d, 'six.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    const h6 = r6.rows[0].hypotheses.find((h) => h.type === 'pagination-mismatch');
+    assert.ok(h6, JSON.stringify(r6.rows[0].hypotheses));
+    assert.equal(h6.certainty, 'likely');
+    assert.match(h6.evidence, /across the full set, 6 match/);
+    // 7 expected, only 6 in the world: completing the page would not reach 7, so it is the world
+    // (verified over every page), even though this page is clamped to 5 rows with 2 matches; the
+    // clamped probe's count (2) must not be passed off as the world's.
+    const r7 = await runVerify(loadFlow(join(d, 'seven.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    const hyps7 = r7.rows[0].hypotheses;
+    assert.ok(!hyps7.some((h) => h.type === 'pagination-mismatch' && h.certainty === 'likely'), JSON.stringify(hyps7));
+    const w7 = hyps7.find((h) => h.type === 'world-mismatch');
+    assert.equal(w7?.certainty, 'likely', JSON.stringify(hyps7));
+    assert.match(w7.evidence, /the world has 6 matching items and =7 were expected/);
+    assert.match(w7.finding, /across the full set, 6 items match/);
+  });
+});
+
+test('diagnosis B2: the full-set probe is capped; past the cap it claims nothing about the world', async () => {
+  // max_limit 1 over 12 rows would take 12 pages; with 30 rows, 30 > the cap of 20 pages.
+  const files = { 'scenarios/maxlimit.yaml': MAX_LIMIT_SCENARIO.replace('total: 12', 'total: 30').replace('max_limit: 5', 'max_limit: 1') };
+  await withMaxLimitMock({ ...files, 'f.yaml': maxLimitFlow(ALL_CARDS.replace('count: 12', 'count: 30')) }, async ({ dir: d, url: u, fetchImpl, requested }) => {
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.obtained, 1);
+    assert.ok(!row.hypotheses.some((h) => h.type === 'world-mismatch'), JSON.stringify(row.hypotheses));
+    assert.ok(row.hypotheses.every((h) => h.certainty === 'possible'), JSON.stringify(row.hypotheses));
+    const probes = requested.filter((x) => x.includes('/api/explore/'));
+    assert.ok(probes.length <= 2, `the cap must stop before walking pages: ${probes.length} requests`);
+  });
+});
+
+// The response with one header rewritten (null deletes it); body and status untouched.
+const withTotalHeader = (fetchImpl, value) => async (u, init) => {
+  const res = await fetchImpl(u, init);
+  const h = new Headers(res.headers);
+  if (value === null) h.delete('x-total-count'); else h.set('x-total-count', value);
+  return new Response(await res.text(), { status: res.status, headers: h });
+};
+const STRONG_FULL_SET = (h) => (h.type === 'world-mismatch' || h.type === 'pagination-mismatch') && (h.certainty === 'likely' || h.certainty === 'confirmed');
+
+test('diagnosis B2: without a usable X-Total-Count the clamped probe proves nothing about the world', async () => {
+  // A real server (or proxy) that drops X-Total-Count: the stripped probe is clamped to 5 again by
+  // default_limit/max_limit and Number(null) === 0 must not pass those 5 off as the full set of 12.
+  for (const value of [null, '', 'abc']) {
+    await withMaxLimitMock({ 'f.yaml': maxLimitFlow(ALL_CARDS) }, async ({ dir: d, url: u, fetchImpl }) => {
+      const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl: withTotalHeader(fetchImpl, value) });
+      const row = r.rows[0];
+      assert.equal(row.status, 'KO');
+      assert.equal(row.obtained, 5);
+      assert.ok(!row.hypotheses.some(STRONG_FULL_SET), `x-total-count=${JSON.stringify(value)}: ${JSON.stringify(row.hypotheses)}`);
+    });
+  }
+});
+
+test('diagnosis B2: a server that ignores page repeats rows; the walked set is not the full set', async () => {
+  // 10 rows at max_limit 5: two pages add up to X-Total-Count exactly even if page 2 is page 1 again.
+  const files = { 'scenarios/maxlimit.yaml': MAX_LIMIT_SCENARIO.replace('total: 12', 'total: 10') };
+  await withMaxLimitMock({ ...files, 'f.yaml': maxLimitFlow(ALL_CARDS.replace('count: 12', 'count: 10')) }, async ({ dir: d, url: u, fetchImpl }) => {
+    const pageOne = (x, init) => {
+      const v = new URL(String(x));
+      if (Number(v.searchParams.get('page')) > 1) v.searchParams.set('page', '1');
+      return fetchImpl(v.toString(), init);
+    };
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl: pageOne });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.equal(row.obtained, 5);
+    assert.ok(!row.hypotheses.some(STRONG_FULL_SET), JSON.stringify(row.hypotheses));
+  });
+});
+
+test('diagnosis B2: a huge max_limit does not make the probe ask for huge pages', async () => {
+  // default_limit 1200 clamps the stripped probe (1200 of 1500); max_limit 50000 would let one page
+  // carry everything, but the probe never asks for more than its own page-size cap (1000).
+  const files = { 'scenarios/maxlimit.yaml': MAX_LIMIT_SCENARIO.replace('total: 12', 'total: 1500').replace('default_limit: 24, max_limit: 5', 'default_limit: 1200, max_limit: 50000') };
+  const flow = maxLimitFlow(ALL_CARDS.replace('count: 12', 'count: 1500'));
+  await withMaxLimitMock({ ...files, 'f.yaml': flow }, async ({ dir: d, url: u, fetchImpl, requested }) => {
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.obtained, 24);
+    const sizes = requested.map((x) => Number(new URL(x).searchParams.get('perPage') ?? 0));
+    assert.ok(sizes.every((n) => n <= 1000), `probe page sizes above the cap: ${sizes.join(',')}`);
+    const top = row.hypotheses.find((h) => h.certainty !== 'possible');
+    assert.equal(top?.type, 'pagination-mismatch', JSON.stringify(row.hypotheses));
+    assert.match(top.evidence, /24 of 1500 items/);
+    assert.match(top.evidence, /across the full set, 1500 match/);
+  });
+  // Same endpoint, but X-Total-Count claims 25000: at 1000 per page that is 25 pages > the 20-page
+  // cap, so the probe stops after the stripped request and claims nothing.
+  await withMaxLimitMock({ ...files, 'f.yaml': flow }, async ({ dir: d, url: u, fetchImpl, requested }) => {
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl: withTotalHeader(fetchImpl, '25000') });
+    const row = r.rows[0];
+    assert.ok(!row.hypotheses.some(STRONG_FULL_SET), JSON.stringify(row.hypotheses));
+    const probes = requested.filter((x) => x.includes('/api/explore/'));
+    assert.ok(probes.length <= 2, `past the page cap only the step and the stripped probe: ${probes.join(' ')}`);
+  });
+});
+
+test('diagnosis B2: a page far larger than asked (server ignores the page size) neither crashes nor counts', async () => {
+  // X-Total-Count 15 at max_limit 5 is 3 pages; page 1 answers 200000 items, which overflows a
+  // spread push (RangeError) on V8.
+  await withMaxLimitMock({ 'f.yaml': maxLimitFlow(ALL_CARDS) }, async ({ dir: d, url: u, fetchImpl }) => {
+    const huge = JSON.stringify({ items: Array.from({ length: 200000 }, (_, i) => ({ id: i + 1 })), total: 15 });
+    const ignoring = async (x, init) => {
+      const v = new URL(String(x));
+      if (!v.searchParams.has('page')) return new Response(JSON.stringify({ items: Array.from({ length: 5 }, (_, i) => ({ id: i + 1 })), total: 15 }), { status: 200, headers: { 'x-total-count': '15' } });
+      if (v.searchParams.get('perPage') !== '24') return new Response(huge, { status: 200, headers: { 'x-total-count': '15' } });
+      return fetchImpl(x, init);
+    };
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl: ignoring });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.ok(!row.hypotheses.some(STRONG_FULL_SET), JSON.stringify(row.hypotheses));
+  });
+});
+
+test('diagnosis B2: perPage omitted with default_limit above max_limit reports the clamp', async () => {
+  const flow = maxLimitFlow(ALL_CARDS).replace('?page=1&perPage=24', '?page=1');
+  await withMaxLimitMock({ 'f.yaml': flow }, async ({ dir: d, url: u, fetchImpl }) => {
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    const top = r.rows[0].hypotheses.find((h) => h.certainty !== 'possible');
+    assert.equal(top?.type, 'pagination-mismatch', JSON.stringify(r.rows[0].hypotheses));
+    assert.match(top.evidence, /default_limit: 24.*max_limit: 5/, top.evidence);
+  });
+});
+
+// ---------- B2 hardening v2: the probe is bounded, gated on a KO row and fails closed ----------
+
+/** fetchImpl that records, per request, the URL and how many items its (envelope) body carried. */
+const sizing = (fetchImpl, seen) => async (u, init) => {
+  const res = await fetchImpl(u, init);
+  const text = await res.text();
+  let n = null;
+  try { const b = JSON.parse(text); n = Array.isArray(b) ? b.length : Array.isArray(b?.items) ? b.items.length : null; } catch { /* not JSON */ }
+  seen.push({ url: String(u), n });
+  return new Response(text, { status: res.status, headers: res.headers });
+};
+const apiCalls = (requested) => requested.filter((x) => x.includes('/api/explore/'));
+
+test('diagnosis B2v2: the first probe is an explicit bounded page, never the unpaginated collection', async () => {
+  // max_limit 50000 and a default_limit of 5000 (page) or none at all (offset): dropping the
+  // pagination params would ask for, and receive, all 1500 rows in one response.
+  const variants = [
+    { pagination: 'pagination: { param_page: page, param_limit: perPage, default_limit: 5000, max_limit: 50000 }', query: '?page=1&perPage=24' },
+    { pagination: 'pagination: { param_limit: perPage, param_offset: offset, max_limit: 50000 }', query: '?perPage=24&offset=0' },
+  ];
+  for (const v of variants) {
+    const files = { 'scenarios/maxlimit.yaml': MAX_LIMIT_SCENARIO.replace('total: 12', 'total: 1500').replace(/pagination: \{[^}]*\}/, v.pagination) };
+    const flow = maxLimitFlow(ALL_CARDS.replace('count: 12', 'count: 1500')).replace('?page=1&perPage=24', v.query);
+    await withMaxLimitMock({ ...files, 'f.yaml': flow }, async ({ dir: d, url: u, fetchImpl }) => {
+      const seen = [];
+      const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl: sizing(fetchImpl, seen) });
+      const row = r.rows[0];
+      assert.equal(row.obtained, 24);
+      const api = seen.filter((s) => s.url.includes('/api/explore/'));
+      assert.ok(api.length >= 2, `a probe ran: ${api.map((s) => s.url).join(' ')}`);
+      for (const s of api) {
+        assert.ok(s.n !== null && s.n <= 1000, `${v.query}: ${s.url} received ${s.n} items`);
+        const asked = Number(new URL(s.url).searchParams.get('perPage'));
+        assert.ok(asked > 0 && asked <= 1000, `${v.query}: ${s.url} does not bound its page size`);
+      }
+      const top = row.hypotheses.find((h) => h.certainty !== 'possible');
+      assert.equal(top?.type, 'pagination-mismatch', JSON.stringify(row.hypotheses));
+      assert.match(top.evidence, /24 of 1500 items/);
+      assert.match(top.evidence, /across the full set, 1500 match/);
+    });
+  }
+});
+
+test('diagnosis B2v2: without a declared pagination to bound it, the probe claims nothing (custom ?p=&n=)', async () => {
+  // A real server paginating by ?p=&n= without X-Total-Count. Neither "no scenario" nor an endpoint
+  // without pagination can tell its 5 rows from the full set.
+  const five = () => new Response(JSON.stringify({ items: Array.from({ length: 5 }, (_, i) => ({ id: i + 1 })) }), { status: 200, headers: { 'content-type': 'application/json' } });
+  const expect = '    expect:\n      - selector: ".recipe-card-footer"\n        count: 12\n        data: { request: recipes, pick: items }\n';
+  const noScenario = `steps:\n  - screen: explorer\n    requests:\n      recipes: GET /api/explore/groups/home/recipes?p=1&n=5\n${expect}`;
+  const noPagination = `scenario: scenarios/maxlimit.yaml\n${noScenario}`;
+  const d = tmpProject({ 'scenarios/maxlimit.yaml': MAX_LIMIT_SCENARIO.replace(/\n {4}pagination: [^\n]*/, ''), 'a.yaml': noScenario, 'b.yaml': noPagination });
+  for (const f of ['a.yaml', 'b.yaml']) {
+    const requested = [];
+    const fetchImpl = async (u) => {
+      requested.push(String(u));
+      return String(u).endsWith('/__atrezzo/reset') ? new Response('{}', { status: 200 }) : five();
+    };
+    const r = await runVerify(loadFlow(join(d, f)), { url: 'http://stub.invalid', driver: 'http', diagnose: true, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.equal(row.obtained, 5);
+    assert.ok(!row.hypotheses.some(STRONG_FULL_SET), `${f}: ${JSON.stringify(row.hypotheses)}`);
+    assert.equal(apiCalls(requested).length, 1, `${f}: no probe request: ${requested.join(' ')}`);
+  }
+});
+
+test('diagnosis B2v2: a passing row triggers no full-set probe (http and playwright)', async () => {
+  const five = '      - selector: ".recipe-card-footer"\n        count: 5\n        data: { request: recipes }\n';
+  await withMaxLimitMock({ 'f.yaml': maxLimitFlow(five) }, async ({ dir: d, url: u, fetchImpl, requested }) => {
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    assert.equal(r.rows[0].status, 'OK');
+    assert.deepEqual(apiCalls(requested), [`${u}/api/explore/groups/home/recipes?page=1&perPage=24`]);
+  });
+  await withMaxLimitMock({ 'f.yaml': maxLimitFlow(five) }, async ({ dir: d, url: u, fetchImpl, requested }) => {
+    const fp = fakePage({ '.recipe-card-footer': 5 });
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'playwright', diagnose: true, pageFactory: fp.factory, fetchImpl });
+    assert.equal(r.rows[0].status, 'OK');
+    assert.equal(apiCalls(requested).length, 1, apiCalls(requested).join(' '));
+  });
+});
+
+test('diagnosis B2v2: playwright skips the probe when the KO is a known navigation failure', async () => {
+  await withMaxLimitMock({ 'f.yaml': maxLimitFlow(ALL_CARDS) }, async ({ dir: d, url: u, fetchImpl, requested }) => {
+    let at = null;
+    const factory = async () => ({
+      page: {
+        goto: async () => { at = `${u}/login`; },
+        url: () => at,
+        waitForLoadState: async () => {},
+        waitForSelector: async () => {},
+        locator: () => ({ count: async () => 5 }),
+      },
+      close: async () => {},
+    });
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'playwright', diagnose: true, pageFactory: factory, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.equal(row.hypotheses?.[0]?.type, 'navigation', JSON.stringify(row.hypotheses));
+    assert.equal(apiCalls(requested).length, 1, `only the step's request: ${apiCalls(requested).join(' ')}`);
+  });
+});
+
+test('diagnosis B2v2: X-Total-Count below the first page length is contradictory; no full-set claim', async () => {
+  await withMaxLimitMock({ 'f.yaml': maxLimitFlow(ALL_CARDS) }, async ({ dir: d, url: u, fetchImpl }) => {
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl: withTotalHeader(fetchImpl, '3') });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.equal(row.obtained, 5);
+    assert.ok(!row.hypotheses.some(STRONG_FULL_SET), JSON.stringify(row.hypotheses));
+  });
+});
+
+test('diagnosis B2v2: a verified over-count is world-mismatch, for count and for max', async () => {
+  // rating 4,5,3,5 over 12 rows: 6 in the world have rating 5; the clamped first page (5 rows) has 2.
+  const cases = [['count: 1', '=1'], ['max: 1', '<=1']];
+  for (const [bound, text] of cases) {
+    const flow = maxLimitFlow(`      - selector: ".five"\n        ${bound}\n        data: { request: recipes, where: { rating: 5 } }\n`);
+    await withMaxLimitMock({ 'f.yaml': flow }, async ({ dir: d, url: u, fetchImpl }) => {
+      const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+      const row = r.rows[0];
+      assert.equal(row.status, 'KO');
+      assert.equal(row.obtained, 2);
+      const w = row.hypotheses.find((h) => h.type === 'world-mismatch');
+      assert.equal(w?.certainty, 'likely', `${bound}: ${JSON.stringify(row.hypotheses)}`);
+      assert.ok(w.evidence.includes(`the world has 6 matching items and ${text} were expected`), w.evidence);
+      assert.ok(!row.hypotheses.some((h) => h.type === 'no-hypothesis'), JSON.stringify(row.hypotheses));
+    });
+  }
+});
+
+// The step's own request (and the mock's reset) go through untouched; every other request (the probe) is rewritten.
+const probeOnly = (fetchImpl, stepUrl, rewrite) => (u, init) => (String(u) === stepUrl || String(u).includes('/__atrezzo/') ? fetchImpl(u, init) : rewrite(u, init));
+const STEP_URL = (u) => `${u}/api/explore/groups/home/recipes?page=1&perPage=24`;
+const FAST_PROBE = { requestMs: 200, totalMs: 600 };
+
+test('diagnosis B2v2: a hanging probe response fails closed within the probe deadline', { timeout: 15_000 }, async () => {
+  const hangingBody = () => new Response(new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{"items":[')); } }), { status: 200, headers: { 'x-total-count': '12' } });
+  const neverAnswers = () => new Promise(() => {}); // ignores the AbortSignal too
+  for (const hang of [hangingBody, neverAnswers]) {
+    await withMaxLimitMock({ 'f.yaml': maxLimitFlow(ALL_CARDS) }, async ({ dir: d, url: u, fetchImpl }) => {
+      const t0 = Date.now();
+      const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, probeLimits: FAST_PROBE, fetchImpl: probeOnly(fetchImpl, STEP_URL(u), hang) });
+      const row = r.rows[0];
+      assert.ok(Date.now() - t0 < 5_000, `${hang.name}: took ${Date.now() - t0} ms`);
+      assert.equal(row.status, 'KO');
+      assert.equal(row.obtained, 5);
+      assert.ok(!row.hypotheses.some(STRONG_FULL_SET), `${hang.name}: ${JSON.stringify(row.hypotheses)}`);
+    });
+  }
+});
+
+/** Probe responses with every item padded by `bytes` characters (same rows, same headers). */
+const padded = (fetchImpl, bytes) => async (u, init) => {
+  const res = await fetchImpl(u, init);
+  const body = await res.json();
+  const pad = 'x'.repeat(bytes);
+  if (Array.isArray(body?.items)) body.items = body.items.map((it) => ({ ...it, pad }));
+  return new Response(JSON.stringify(body), { status: res.status, headers: res.headers });
+};
+
+test('diagnosis B2v2: a probe page over the per-page byte cap fails closed', { timeout: 30_000 }, async () => {
+  // 5 rows of 1.3 MiB: a 6.5 MiB page, above the 5 MiB cap, though it has no more rows than asked.
+  await withMaxLimitMock({ 'f.yaml': maxLimitFlow(ALL_CARDS) }, async ({ dir: d, url: u, fetchImpl }) => {
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl: probeOnly(fetchImpl, STEP_URL(u), padded(fetchImpl, 1.3 * 2 ** 20)) });
+    const row = r.rows[0];
+    assert.equal(row.obtained, 5);
+    assert.ok(!row.hypotheses.some(STRONG_FULL_SET), JSON.stringify(row.hypotheses));
+  });
+});
+
+test('diagnosis B2v2: probe pages adding up past the total byte cap fail closed', { timeout: 60_000 }, async () => {
+  // 30 rows at max_limit 5 = 6 pages of 5 × 0.8 MiB = 4 MiB each: every page under 5 MiB, 24 MiB > 20 MiB.
+  const files = { 'scenarios/maxlimit.yaml': MAX_LIMIT_SCENARIO.replace('total: 12', 'total: 30') };
+  await withMaxLimitMock({ ...files, 'f.yaml': maxLimitFlow(ALL_CARDS.replace('count: 12', 'count: 30')) }, async ({ dir: d, url: u, fetchImpl }) => {
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl: probeOnly(fetchImpl, STEP_URL(u), padded(fetchImpl, 0.8 * 2 ** 20)) });
+    const row = r.rows[0];
+    assert.equal(row.obtained, 5);
+    assert.ok(!row.hypotheses.some(STRONG_FULL_SET), JSON.stringify(row.hypotheses));
+  });
+});
+
+test('diagnosis B2v2: an undeclared lower page cap is followed at the observed size', async () => {
+  // The scenario declares max_limit 5, but the server serves at most 3 rows per page, whatever is asked.
+  await withMaxLimitMock({ 'f.yaml': maxLimitFlow(ALL_CARDS) }, async ({ dir: d, url: u, fetchImpl, requested }) => {
+    const capped = (x, init) => {
+      const v = new URL(String(x));
+      if (v.pathname.startsWith('/api/') && !(Number(v.searchParams.get('perPage')) <= 3)) v.searchParams.set('perPage', '3');
+      return fetchImpl(v.toString(), init);
+    };
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl: capped });
+    const row = r.rows[0];
+    assert.equal(row.obtained, 3);
+    const top = row.hypotheses.find((h) => h.certainty !== 'possible');
+    assert.equal(top?.type, 'pagination-mismatch', JSON.stringify(row.hypotheses));
+    assert.match(top.evidence, /3 of 12 items/);
+    assert.match(top.evidence, /across the full set, 12 match/);
+    assert.ok(apiCalls(requested).length <= 1 + 4, `step + ceil(12 / 3) pages at most: ${apiCalls(requested).join(' ')}`);
+  });
+});
+
 test('diagnose(): dedupe by id, null field and client-side filter', () => {
   const row = { expect: { selector: 'x', count: 3 } };
   const dup = diagnose(row, { obtained: 2, response: { status: 200, headers: {} }, items: [{ id: 1 }, { id: 1 }, { id: 2 }], matched: 3, domCount: 2 });

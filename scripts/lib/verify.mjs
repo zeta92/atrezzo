@@ -71,6 +71,148 @@ function withoutPagination(path, ep) {
   return u.pathname + (u.search || '');
 }
 
+// Hard caps on the probe that rebuilds the full set: diagnosis must never loop unbounded nor ask
+// for (or hold) unbounded pages, whatever max_limit the endpoint declares. `--url` may point at any
+// server, so each probe request also has a deadline and a byte cap, and the whole walk has both too.
+const MAX_PROBE_PAGES = 20;
+const MAX_PROBE_PAGE_SIZE = 1000;
+export const PROBE_LIMITS = Object.freeze({ requestMs: 5_000, totalMs: 15_000, pageBytes: 5 * 2 ** 20, totalBytes: 20 * 2 ** 20 });
+
+/** X-Total-Count as a non-negative integer, or null when absent, empty or malformed. */
+function totalCount(headers) {
+  const raw = header(headers, 'x-total-count');
+  const s = raw === null || raw === undefined ? '' : String(raw).trim();
+  return /^\d+$/.test(s) ? Number(s) : null;
+}
+
+/**
+ * getJson for the diagnosis probe only: aborts at min(requestMs, what is left of the walk's
+ * deadline) and stops reading past min(pageBytes, totalBytes not yet spent). Throws on either;
+ * a fetchImpl that ignores the AbortSignal is raced, so a hung server cannot hold the run.
+ */
+async function getJsonBounded(fetchImpl, url, init, budget) {
+  const ms = Math.min(budget.limits.requestMs, budget.deadline - Date.now());
+  if (ms <= 0) throw new Error('diagnosis probe: out of time');
+  const cap = Math.min(budget.limits.pageBytes, budget.limits.totalBytes - budget.bytes);
+  if (cap <= 0) throw new Error('diagnosis probe: out of bytes');
+  const ac = new AbortController();
+  let timer;
+  const expired = new Promise((_, reject) => { timer = setTimeout(() => { ac.abort(); reject(new Error(`diagnosis probe: no answer within ${ms} ms`)); }, ms); });
+  expired.catch(() => {});
+  const tooLarge = () => new Error(`diagnosis probe: page over ${cap} bytes`);
+  try {
+    const res = await Promise.race([fetchImpl(url, { ...init, signal: ac.signal }), expired]);
+    const declared = Number(header(res.headers, 'content-length'));
+    if (Number.isFinite(declared) && declared > cap) throw tooLarge();
+    let text;
+    if (typeof res.body?.getReader === 'function') {
+      const reader = res.body.getReader();
+      const chunks = [];
+      let n = 0;
+      try {
+        for (;;) {
+          const { done, value } = await Promise.race([reader.read(), expired]);
+          if (done) break;
+          n += value.byteLength;
+          if (n > cap) throw tooLarge();
+          chunks.push(value);
+        }
+      } finally {
+        reader.cancel().catch(() => {});
+      }
+      budget.bytes += n;
+      text = new TextDecoder().decode(Buffer.concat(chunks));
+    } else {
+      text = String(await Promise.race([res.text(), expired]));
+      const n = Buffer.byteLength(text);
+      if (n > cap) throw tooLarge();
+      budget.bytes += n;
+    }
+    let body = null;
+    try { body = JSON.parse(text); } catch { body = text; }
+    return { status: res.status, headers: res.headers, body };
+  } finally {
+    clearTimeout(timer);
+    ac.abort();
+  }
+}
+
+/**
+ * Every row behind the step's request without the client's pagination, or null if that cannot be
+ * proven. `get` is the bounded probe fetch; `response` is the step's own answer to `path`.
+ *
+ * - No endpoint matched: nothing says how (or whether) the server paginates (e.g. a custom
+ *   `?p=&n=`), so nothing bounds a probe or proves a set: null, without a request.
+ * - Endpoint without pagination: the mock answers every row at once, so the step's response is the
+ *   set, if its X-Total-Count says so; no request.
+ * - Paginated endpoint: never the unpaginated request (with max_limit and no default_limit it is
+ *   the whole collection). Page 1 is asked explicitly at min(max_limit, MAX_PROBE_PAGE_SIZE);
+ *   its X-Total-Count says how many rows there are. If the server serves fewer rows than asked
+ *   (an undeclared lower cap), the walk follows that observed size. At most MAX_PROBE_PAGES pages.
+ *
+ * Fails closed (null) on: no usable X-Total-Count, one below what page 1 already carries, or one
+ * that changes during the walk; a page that is not 200, holds more rows than asked or breaks the
+ * byte/time budget; a walk that does not add up to X-Total-Count exactly; or, over several pages,
+ * rows without unique non-null ids (a server that ignores the page number repeats rows and can
+ * still add up).
+ */
+async function fetchFullSet(get, url, path, response, ep, pick) {
+  if (!ep) return null;
+  const p = ep.pagination;
+  if (!p) {
+    const items = extractItems(response.body, pick);
+    return totalCount(response.headers) === items.length ? items : null;
+  }
+  const base = withoutPagination(path, ep);
+  let size = Math.min(p.maxLimit ?? MAX_PROBE_PAGE_SIZE, MAX_PROBE_PAGE_SIZE);
+  const pageUrl = (i, offset) => {
+    const u = new URL(base, 'http://x');
+    u.searchParams.set(p.limit, String(size));
+    if (p.page) u.searchParams.set(p.page, String(i + 1));
+    else u.searchParams.set(p.offset, String(offset));
+    return joinUrl(url, u.pathname + u.search);
+  };
+  const all = [];
+  let total = null;
+  for (let i = 0; ; i++) {
+    if (i >= MAX_PROBE_PAGES) return null;
+    const r = await get(pageUrl(i, all.length)).catch(() => null);
+    if (r?.status !== 200) return null;
+    const chunk = extractItems(r.body, pick);
+    if (chunk.length > size) return null;
+    if (i === 0) {
+      total = totalCount(r.headers);
+      if (total === null || total < chunk.length) return null;
+      if (total === chunk.length) return chunk;
+      if (chunk.length === 0) return null;
+      // Fewer rows than asked, more to come: the server's real cap. Page k at that size is offset
+      // (k - 1) × size however the server turns page numbers into offsets.
+      size = chunk.length;
+      if (Math.ceil(total / size) > MAX_PROBE_PAGES) return null;
+    } else if (totalCount(r.headers) !== total) return null;
+    for (const it of chunk) all.push(it);
+    if (all.length >= total || chunk.length < size) break;
+  }
+  if (all.length !== total) return null;
+  const ids = new Set(all.map((it) => it?.id));
+  return ids.size === total && !ids.has(undefined) && !ids.has(null) ? all : null;
+}
+
+/**
+ * The client's page size, when the endpoint's max_limit cut it down: { param, requested, max, defaulted }.
+ * defaulted: the client sent no page size and the endpoint's default_limit is the one cut.
+ */
+function clampedLimit(path, ep, served) {
+  const p = ep?.pagination;
+  if (!p?.maxLimit || served !== p.maxLimit) return undefined;
+  const raw = new URL(path, 'http://x').searchParams.get(p.limit);
+  if (raw === null) {
+    return p.defaultLimit > p.maxLimit ? { param: p.limit, requested: p.defaultLimit, max: p.maxLimit, defaulted: true } : undefined;
+  }
+  const requested = Number(raw);
+  return Number.isInteger(requested) && requested > p.maxLimit ? { param: p.limit, requested, max: p.maxLimit, defaulted: false } : undefined;
+}
+
 // ---------- playwright ----------
 
 const PW_MODULES = ['playwright', '@playwright/test', 'playwright-core'];
@@ -260,10 +402,12 @@ async function openStep(pw, url, step, headers, storageScript) {
 /**
  * @param {object} flow   result of loadFlow()
  * @param {{ url: string, driver?: 'http'|'playwright', diagnose?: boolean, reset?: boolean, strictConsole?: boolean, headers?: Record<string, string>,
- *           fetchImpl?: typeof fetch, pageFactory?: (opts: {viewport: object|null}) => Promise<{page:any, context?:any, close:()=>Promise<void>}>, cwd?: string }} opts
+ *           fetchImpl?: typeof fetch, pageFactory?: (opts: {viewport: object|null}) => Promise<{page:any, context?:any, close:()=>Promise<void>}>, cwd?: string,
+ *           probeLimits?: Partial<typeof PROBE_LIMITS> }} opts   probeLimits: budget of the --diagnose full-set probe (not the step's requests)
  */
 export async function runVerify(flow, opts) {
   const { url, driver = 'http', diagnose: wantDiag = false, strictConsole = false, clickTimeout: optClickTimeout, fetchImpl = fetch, cwd = process.cwd() } = opts;
+  const probeLimits = { ...PROBE_LIMITS, ...opts.probeLimits };
   if (strictConsole && driver !== 'playwright') {
     throw new AtrezzoError('--strict-console requires --driver playwright (the http driver has no browser console)', { exitCode: EXIT.INVALID });
   }
@@ -307,6 +451,27 @@ export async function runVerify(flow, opts) {
       const fetchOpts = Object.keys(headers).length ? { headers } : undefined;
       const get = (u) => getJson(fetchImpl, u, fetchOpts);
       const responses = {};
+      // The full-set probe of a row with `data`, run only once that row is a KO worth diagnosing
+      // (never for a passing row, nor for one already explained by navigation/click/selector).
+      // One walk per request (and pick) per step, whatever the number of rows that need it.
+      const probes = new WeakMap();
+      const fullSets = new Map();
+      const fullSet = (path, response, ep, pick) => {
+        const key = `${path}\0${pick ?? ''}`;
+        if (!fullSets.has(key)) {
+          const budget = { limits: probeLimits, deadline: Date.now() + probeLimits.totalMs, bytes: 0 };
+          fullSets.set(key, fetchFullSet((u) => getJsonBounded(fetchImpl, u, fetchOpts, budget), url, path, response, ep, pick).catch(() => null));
+        }
+        return fullSets.get(key);
+      };
+      const diagnoseRow = async (row, ctx) => {
+        const probe = probes.get(ctx);
+        if (probe) {
+          const n = await probe();
+          if (n !== null) ctx.fullMatched = n;
+        }
+        row.hypotheses = diagnose(row, ctx);
+      };
       // Under playwright the JSON is fetched too when an assertion declares `data`: a DOM count alone does not prove it.
       // Fetched after the page's navigation and clicks, so it is the world the screen shows.
       const needHttp = driver === 'http' || wantDiag || step.expect.some((e) => e.data);
@@ -367,8 +532,12 @@ export async function runVerify(flow, opts) {
             ctx.items = r.status === 200 ? extractItems(r.body, pick) : [];
             ctx.matched = ctx.items.filter((it) => whereMatch(it, e.data.where)).length;
             if (wantDiag && r.status === 200) {
-              const full = await get(joinUrl(url, withoutPagination(r.path, matchedEp))).catch(() => null);
-              if (full?.status === 200) ctx.fullMatched = extractItems(full.body, pick).filter((it) => whereMatch(it, e.data.where)).length;
+              probes.set(ctx, async () => {
+                const full = await fullSet(r.path, r, matchedEp, pick);
+                return full ? full.filter((it) => whereMatch(it, e.data.where)).length : null;
+              });
+              const clamp = clampedLimit(r.path, matchedEp, ctx.items.length);
+              if (clamp) ctx.clampedLimit = clamp;
             }
           }
           if (pw) {
@@ -484,14 +653,14 @@ export async function runVerify(flow, opts) {
           for (let i = 0; i < stepCtxs.length; i++) {
             const row = rows[stepRowStart + i];
             if (row.status === 'KO' && !row.hypotheses && !row.note.startsWith('same cause as #') && stepCtxs[i]) {
-              row.hypotheses = diagnose(row, stepCtxs[i]);
+              await diagnoseRow(row, stepCtxs[i]);
             }
           }
         }
       } else if (wantDiag) {
         for (let i = 0; i < stepCtxs.length; i++) {
           const row = rows[stepRowStart + i];
-          if (row.status === 'KO' && stepCtxs[i]) row.hypotheses = diagnose(row, stepCtxs[i]);
+          if (row.status === 'KO' && stepCtxs[i]) await diagnoseRow(row, stepCtxs[i]);
         }
       }
     }
