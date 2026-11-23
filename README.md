@@ -61,7 +61,7 @@ $ atrezzo verify flow-broken.yaml --diagnose
 1  order-list  [data-testid=order-row] [data-status=issue]  =3        2         KO
 2  order-list  [data-testid=order-row]                      =12       12        OK
 3  order-list  [data-testid=issue-badge]                    =3        3         OK
-  #1 hypothesis [likely] pagination-mismatch: the response has 12 of 40 items; unpaginated, 3 match the condition, but this page has only 2. Check the client's limit/offset or the endpoint's sort.
+  #1 hypothesis [likely] pagination-mismatch: the response has 12 of 40 items; across the full set, 3 match the condition, but this page has only 2. Check the client's limit/offset or the endpoint's sort.
 
 2 OK · 1 KO · 0 not verified → RED
 ```
