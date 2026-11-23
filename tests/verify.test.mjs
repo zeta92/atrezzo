@@ -434,7 +434,7 @@ test('CLI verify --driver playwright --json: declared redirect outputs redirect 
 
 // ---------- browser console & pageerror capture ----------
 
-function fakeConsolePage({ countsByPath = {}, onVisit, onWaitFor, onCount } = {}) {
+function fakeConsolePage({ countsByPath = {}, onVisit, onWaitFor, onCount, status = 200, redirectTo = null } = {}) {
   const emitter = new EventEmitter();
   let current = '';
   const emitConsole = (type, text) => emitter.emit('console', { type: () => type, text: () => text });
@@ -445,10 +445,10 @@ function fakeConsolePage({ countsByPath = {}, onVisit, onWaitFor, onCount } = {}
         on: (ev, fn) => emitter.on(ev, fn),
         off: (ev, fn) => emitter.off(ev, fn),
         goto: async (u) => {
-          current = u;
-          const path = new URL(u).pathname;
+          current = redirectTo ? new URL(redirectTo, u).toString() : u;
+          const path = new URL(current).pathname;
           await onVisit?.(path, { emitConsole, emitPageError });
-          return { status: () => 200 };
+          return { status: () => status };
         },
         url: () => current,
         waitForLoadState: async () => {},
@@ -513,6 +513,80 @@ test('playwright driver: pageerror during wait_for timeout surfaces page-error i
   assert.equal(r.rows[0].status, 'KO');
   assert.equal(r.rows[0].hypotheses[0].type, 'page-error');
   assert.match(r.rows[0].hypotheses[0].evidence, /RangeError: Invalid array length/);
+});
+
+// B1 (Mealie field report, M10): a wait_for timeout after openStep's route/status checks passed does not prove a navigation failure.
+test('playwright driver: wait_for timeout on the visited URL (HTTP 200, no pageerror) stays KO but is never confirmed navigation', async () => {
+  const flowDir = tmpProject({
+    'stay.yaml': 'steps:\n  - screen: recipe\n    visit: /recipe\n    wait_for: "#ready"\n    expect: [{ selector: "#ready", count: 1 }, { selector: ".ingredient", count: 3 }]\n',
+    'declared.yaml': 'steps:\n  - screen: recipe\n    visit: /recipe\n    redirects_to: /login\n    wait_for: "#ready"\n    expect: [{ selector: "#ready", count: 1 }]\n',
+  });
+  const timeout = () => { throw new Error('Timeout 10000ms exceeded'); };
+  const cases = [
+    // Vue's errorHandler catches the TypeError and only logs it: console.error, not pageerror
+    ['Vue-caught TypeError in console.error', 'stay.yaml', fakeConsolePage({
+      onVisit: (_p, { emitConsole }) => emitConsole('error', "TypeError: Cannot read properties of undefined (reading 'map')"),
+      onWaitFor: timeout,
+    })],
+    // the app never renders #ready and logs nothing: no console.error, no pageerror
+    ['silent render failure (no console diagnostics)', 'stay.yaml', fakeConsolePage({ onWaitFor: timeout })],
+    // landed exactly where the flow declared: the redirect is not the cause either
+    ['declared redirect matched', 'declared.yaml', fakeConsolePage({ redirectTo: '/login', onWaitFor: timeout })],
+  ];
+  for (const [label, file, fp] of cases) {
+    const r = await runVerify(loadFlow(join(flowDir, file)), { url, driver: 'playwright', diagnose: true, pageFactory: fp.factory });
+    assert.equal(r.exitCode, 1, label);
+    assert.ok(r.rows.every((x) => x.status === 'KO'), `${label}: every row of the step is KO`);
+    assert.match(r.rows[0].note, /wait_for "#ready" did not appear within 10 s/, label);
+    const hyps = r.rows[0].hypotheses ?? [];
+    assert.ok(!hyps.some((h) => h.certainty === 'confirmed'), `${label}: no confirmed hypothesis, got ${JSON.stringify(hyps)}`);
+    assert.ok(!hyps.some((h) => /scenario and selectors are not the cause/.test(h.evidence)), `${label}: must not exonerate the scenario/selectors`);
+    assert.deepEqual(hyps.map((h) => [h.type, h.certainty]), [['navigation', 'possible']], label);
+    const [nav] = hyps;
+    // finding: only what was observed — the selector timed out and no uncaught pageerror was captured
+    assert.match(nav.finding ?? '', /wait_for "#ready" timed out after 10 s/, `${label}: finding`);
+    assert.match(nav.finding, /no uncaught pageerror/, `${label}: finding`);
+    // evidence: openStep compares paths and the document status; it must not claim HTTP 200 or "no redirect"
+    assert.match(nav.evidence, /navigation checks did not detect/, `${label}: evidence`);
+    assert.match(nav.evidence, /navigation is unproven/, `${label}: evidence`);
+    assert.doesNotMatch(nav.evidence, /\bloaded\b|HTTP 200|without an HTTP error|no redirect|undeclared redirect/, `${label}: evidence claims more than was observed`);
+  }
+});
+
+test('playwright driver: wait_for timeout + console.error with --strict-console keeps navigation/possible and adds console-error/confirmed', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': 'steps:\n  - screen: recipe\n    visit: /recipe\n    wait_for: "#ready"\n    expect: [{ selector: "#ready", count: 1 }, { selector: ".ingredient", count: 3 }]\n',
+  });
+  const fp = fakeConsolePage({
+    onVisit: (_p, { emitConsole }) => emitConsole('error', "TypeError: Cannot read properties of undefined (reading 'map')"),
+    onWaitFor: () => { throw new Error('Timeout 10000ms exceeded'); },
+  });
+  const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', diagnose: true, strictConsole: true, pageFactory: fp.factory });
+  assert.equal(r.exitCode, 1);
+  assert.ok(r.rows.every((x) => x.status === 'KO'));
+  assert.match(r.rows[0].note, /wait_for "#ready" did not appear within 10 s/);
+  const hyps = r.rows[0].hypotheses ?? [];
+  assert.deepEqual(hyps.map((h) => [h.type, h.certainty]), [['navigation', 'possible'], ['console-error', 'confirmed']]);
+  assert.match(hyps[1].evidence, /console\.error on "recipe" with --strict-console: TypeError: Cannot read properties of undefined \(reading 'map'\)/);
+});
+
+test('playwright driver: wait_for set but an undeclared redirect or HTTP >= 400 document still confirms navigation', async () => {
+  const flowDir = tmpProject({
+    'f.yaml': 'steps:\n  - screen: recipe\n    visit: /recipe\n    wait_for: "#ready"\n    expect: [{ selector: "#ready", count: 1 }]\n',
+  });
+  const timeout = () => { throw new Error('Timeout 10000ms exceeded'); };
+  const vueError = (_p, { emitConsole }) => emitConsole('error', 'TypeError: x is undefined');
+  const cases = [
+    ['undeclared redirect', fakeConsolePage({ redirectTo: '/login', onVisit: vueError, onWaitFor: timeout }), /the app redirected \/recipe → \/login/],
+    ['document HTTP 404', fakeConsolePage({ status: 404, onVisit: vueError, onWaitFor: timeout }), /\/recipe answered HTTP 404/],
+  ];
+  for (const [label, fp, note] of cases) {
+    const r = await runVerify(loadFlow(join(flowDir, 'f.yaml')), { url, driver: 'playwright', diagnose: true, pageFactory: fp.factory });
+    assert.equal(r.exitCode, 1, label);
+    assert.equal(r.rows[0].status, 'KO', label);
+    assert.match(r.rows[0].note, note, label);
+    assert.deepEqual(r.rows[0].hypotheses.map((h) => [h.type, h.certainty]), [['navigation', 'confirmed']], label);
+  }
 });
 
 test('playwright driver: late pageerror during locator traversal still marks step KO', async () => {

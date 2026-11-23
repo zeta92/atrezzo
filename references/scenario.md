@@ -860,6 +860,11 @@ If the flow declares no `scenario`, `verify` does not `reset` or compare hashes:
 
 After opening `visit`, if the final URL is another route (e.g. a redirect to `/login` for lack of a session), the response is HTTP ≥ 400, or `wait_for` does not appear within 10 s, **every assertion of the step is KO** even if the count matches (a `count: 0` on the login screen is not an OK). The report says where it redirected and, with `--diagnose`, adds the `navigation` hypothesis.
 
+What the runtime detects decides how sure that hypothesis is:
+
+- **Route mismatch or main-document HTTP ≥ 400** (an undeclared redirect, a `redirects_to` that did not match, a 404 on the page itself): `navigation` is `confirmed`, and the scenario and selectors are not the cause. The route check compares the final URL's origin and path with `visit`, or with `redirects_to` (plus its query and hash when it declares them); `allow_redirect` accepts any route. The status is the one of the main document, not of the app's API calls.
+- **Only `wait_for` timed out** (`wait_for` is waited for after those checks found nothing): the step is still KO, but the timeout only shows that the selector never appeared. `navigation` is `possible`, with `finding` = the timeout and no uncaught `pageerror` captured; it does not rule out the scenario or the selectors (a render error the framework caught and logged, a failed API call, or a wrong `wait_for` selector fit the same symptom). With `--strict-console`, any `console.error` of the step is also reported as `console-error` (`confirmed`).
+
 #### Expected redirects (`redirects_to` and `allow_redirect`)
 
 When a flow step intentionally verifies an auth guard or a route redirect, declare it on the step:
