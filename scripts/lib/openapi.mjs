@@ -80,10 +80,27 @@ function entityName(raw) {
 }
 const refName = (schema) => (isObj(schema) && typeof schema.$ref === 'string' ? schema.$ref.split('/').pop() : null);
 
+/**
+ * OpenAPI 3.1 nullable union (`anyOf: [T, {type: 'null'}]`, how FastAPI /
+ * Pydantic v2 emit optional fields) -> the raw non-null member T. Only when
+ * there is exactly one non-null member and at least one explicit null one;
+ * anything else (several alternatives, no null, unresolvable members) -> null.
+ */
+function nullableMember(p, deref) {
+  if (p.type !== undefined || !Array.isArray(p.anyOf)) return null;
+  const isNull = (s) => isObj(s) && (s.type === 'null' || (Array.isArray(s.type) && s.type.length === 1 && s.type[0] === 'null'));
+  const resolved = p.anyOf.map((m) => deref(m));
+  if (!resolved.every(isObj)) return null;
+  const others = p.anyOf.filter((_, i) => !isNull(resolved[i]));
+  return others.length === 1 && others.length < p.anyOf.length ? others[0] : null;
+}
+
 /** OpenAPI property -> atrezzo field type ({ type } or { skip: reason }). */
-function fieldType(prop, deref) {
+function fieldType(prop, deref, depth = 0) {
   const p = flatten(prop, deref);
   if (!isObj(p)) return { skip: 'unresolvable schema' };
+  const member = nullableMember(p, deref);
+  if (member) return depth > 20 ? { skip: 'circular nullable anyOf' } : fieldType(member, deref, depth + 1);
   const enumVals = p.enum;
   if (Array.isArray(enumVals) && enumVals.length && enumVals.every((v) => v === null || typeof v !== 'object')) return { type: enumVals.filter((v) => v !== null) };
   const t = Array.isArray(p.type) ? p.type.find((x) => x !== 'null') : p.type;
