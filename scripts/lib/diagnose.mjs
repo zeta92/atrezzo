@@ -319,7 +319,12 @@ export function diagnose(row, ctx) {
     const nullFields = {};
     for (const it of ctx.items) for (const [k, v] of Object.entries(it ?? {})) if (v === null) nullFields[k] = (nullFields[k] ?? 0) + 1;
     const nullRows = ctx.items.filter((it) => Object.values(it ?? {}).some((v) => v === null)).length;
-    if (nullRows > 0) {
+    // Las filas con nulos solo explican filas que faltan: el DOM por debajo de lo que trae el JSON y de
+    // lo esperado (count/min). Los excesos (DOM por encima), los `max` a secas y las corridas solo HTTP
+    // (sin conteo del DOM) nunca cuentan.
+    const lower = exp.count ?? exp.min;
+    const rowsGoMissing = ctx.domCount !== undefined && lower !== undefined && ctx.domCount < lower && ctx.domCount < ctx.matched;
+    if (nullRows > 0 && rowsGoMissing) {
       // Nunca confirmed: que falten justo las filas con nulos cuadra, pero no demuestra por qué.
       const strong = ctx.domCount !== undefined && ctx.domCount === ctx.matched - nullRows;
       add('null-field', strong ? 'high' : 'low', strong ? 'likely' : 'possible', `${nullRows} items with null fields (${Object.entries(nullFields).map(([k, n]) => `${k}: ${n}`).join(', ')}); if the client drops them or crashes rendering them, rows go missing. See references/assumptions.md.`,
