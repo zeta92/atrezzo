@@ -8,8 +8,35 @@
 
 // Parámetros de query que significan «ordena las filas»: si se ignora uno, el arreglo es `sorts:`,
 // no un filtro con ese nombre (declarar `filters: { order: ... }` filtraría, nunca ordenaría).
+// Compared lowercased: `orderBy` (Mealie) is `orderby` here.
 export const SORT_PARAM_NAMES = new Set(['order', 'sort', 'sort_by', 'order_by', 'sortby', 'orderby', 'sort.by', 'sort.order', 'sorts.by', 'sorts.order']);
-const DIRECTION_PARAMS = ['dir', 'direction'];
+// Direction-only names, lowercased (`orderDirection` is `orderdirection`). They are sort parameters only
+// when the query sends them as asc/desc: `dir=left` or `direction=inbound` is an ignored filter, not a sort.
+// Even as a sort parameter, a direction cannot be the `by:` of sorts:.
+const DIRECTION_PARAMS = new Set(['dir', 'direction', 'orderdirection']);
+// Field keys recognised only to infer `by:` for a lone ignored direction (PostgREST `by`, `sortField`).
+// Never sort parameters by themselves: an ignored `by` stays a filter.
+const FIELD_HINT_PARAMS = new Set(['by', 'sortfield']);
+const lc = (n) => String(n).toLowerCase();
+const isSortName = (n) => SORT_PARAM_NAMES.has(lc(n)) || DIRECTION_PARAMS.has(lc(n));
+// Header and query keys are matched without case: the header may spell a key differently from the query.
+const queryRaw = (query, n) => (query ? [...query].filter(([k]) => lc(k) === lc(n)).map(([, v]) => v) : []);
+const queryValues = (query, n) => queryRaw(query, n).map((v) => String(v).trim()).filter(Boolean);
+/** The query's own spelling of a key, for advice the client's code must match. */
+const querySpelling = (query, n) => (query ? [...query.keys()].find((k) => lc(k) === lc(n)) : undefined) ?? n;
+/** Does the query send this key, and only as asc/desc? Then it carries the direction (`dir=desc`, `order=desc`, `sort=desc`), never a field. */
+function actsAsDirection(n, query) {
+  const vals = queryValues(query, n);
+  return vals.length > 0 && vals.every(isDir);
+}
+/** Is this ignored key a sort parameter? A sort name always; a direction-only name only when sent as asc/desc. */
+const isSortKey = (n, query) => SORT_PARAM_NAMES.has(lc(n)) || (DIRECTION_PARAMS.has(lc(n)) && actsAsDirection(n, query));
+/**
+ * A field-sort key the client sent but the mock did not ignore (e.g. honoured by sorts.by), for a lone ignored
+ * direction. `hints` also accepts FIELD_HINT_PARAMS (when that direction is the only ignored sort key).
+ */
+const queryFieldKey = (query, ignored, hints) => (query ? [...new Set(query.keys())].find((k) => (SORT_PARAM_NAMES.has(lc(k)) || (hints && FIELD_HINT_PARAMS.has(lc(k))))
+  && !ignored.some((n) => lc(n) === lc(k)) && queryValues(query, k).some((v) => !isDir(v))) : undefined);
 const LIMIT_PARAMS = ['limit', 'per_page', 'pageSize', 'page_size', 'take'];
 const hasKey = (it, k) => it !== null && typeof it === 'object' && k in it;
 
@@ -53,7 +80,7 @@ function parseSort(query, names) {
   let field = null;
   let desc = null;
   for (const n of names) {
-    for (const raw of query.getAll(n)) {
+    for (const raw of queryRaw(query, n)) {
       const v = String(raw).split(',')[0].trim();
       if (!v) continue;
       if (isDir(v)) { desc ??= v.toLowerCase() === 'desc'; continue; }
@@ -65,46 +92,54 @@ function parseSort(query, names) {
       else if (m[3]) desc = m[3].toLowerCase() === 'desc';
     }
   }
-  // La dirección puede venir aparte: `sort_by=amount&order=desc`, `sort=amount&dir=desc`
+  // La dirección puede venir aparte: `sort_by=amount&order=desc`, `sort=amount&dir=desc`,
+  // `orderBy=rating&orderDirection=desc` (la clave de la query, sin distinguir mayúsculas)
   if (desc === null) {
-    for (const k of [...SORT_PARAM_NAMES, ...DIRECTION_PARAMS]) {
-      const v = query.get(k);
-      if (isDir(v)) { desc = v.toLowerCase() === 'desc'; break; }
+    for (const [k, v] of query) {
+      if (isSortName(k) && isDir(v)) { desc = v.trim().toLowerCase() === 'desc'; break; }
     }
   }
   return field ? { field, desc: !!desc } : null;
 }
 
-function compareValues(a, b) {
-  const na = a === null || a === undefined;
-  const nb = b === null || b === undefined;
-  if (na || nb) return na === nb ? 0 : na ? 1 : -1; // los nulos, al final
-  const x = Number(a);
-  const y = Number(b);
-  if (typeof a !== 'boolean' && typeof b !== 'boolean' && Number.isFinite(x) && Number.isFinite(y) && String(a).trim() !== '' && String(b).trim() !== '') return x - y;
-  const sa = String(a);
-  const sb = String(b);
-  return sa < sb ? -1 : sa > sb ? 1 : 0;
+/** The mock's comparator, exactly (contract.mjs `compare`): nulls last ascending, numbers numerically, everything else as strings. */
+function compareLikeMock(a, b) {
+  if (a === b) return 0;
+  if (a === null || a === undefined) return 1;
+  if (b === null || b === undefined) return -1;
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  return String(a) < String(b) ? -1 : 1;
+}
+
+const rowKey = (it) => (it !== null && typeof it === 'object' && it.id !== undefined && it.id !== null ? `id:${JSON.stringify(it.id)}` : JSON.stringify(it));
+
+/** Dónde cae la página servida dentro del conjunto completo: su offset, o null si no es un tramo contiguo de él. */
+function servedOffset(full, page) {
+  const first = rowKey(page[0]);
+  const at = full.findIndex((it) => rowKey(it) === first);
+  if (at < 0 || at + page.length > full.length) return null;
+  return page.every((it, i) => rowKey(it) === rowKey(full[at + i])) ? at : null;
 }
 
 /**
  * ¿Explica el orden ignorado el fallo? Solo si (1) los items no vienen en el orden pedido y
- * (2) reordenarlos pondría en la primera página las filas esperadas, cuando tal como vienen no.
- * «Primera página» = el `limit` de la query si recorta la respuesta; si no, tantas filas como
- * espera la aserción. Devuelve true, false o null (no se puede comprobar).
+ * (2) reordenarlos pondría en la página las filas esperadas, cuando tal como vienen no.
+ * Con el conjunto completo demostrado (ctx.fullItems), se ordena el conjunto entero y se toma la
+ * misma página que sirvió el servidor (mismo offset y tamaño). Sin él, solo se reordena esta
+ * página: «primera página» = el `limit` de la query si recorta la respuesta; si no, tantas filas
+ * como espera la aserción. Devuelve false, null (no se puede comprobar), true (comprobado sobre
+ * la página), { proof: 'full', total, field, desc, matched, served } (comprobado sobre el conjunto
+ * completo) o { proof: 'unsliced', total } (la página sola cuadra, pero no es un tramo del conjunto
+ * completo demostrado: solo possible).
  */
 function sortCounterfactual(ctx, exp, names) {
   if (!ctx.query || !ctx.items?.length) return null;
   const spec = parseSort(ctx.query, names);
+  const offset = ctx.fullItems?.length ? servedOffset(ctx.fullItems, ctx.items) : null;
+  if (offset !== null) return fullSetSortCounterfactual(ctx, exp, spec, offset);
+  const unsliced = ctx.fullItems?.length > 0;
   if (!spec || !ctx.items.some((it) => hasKey(it, spec.field))) return null;
-  const sign = spec.desc ? -1 : 1;
-  const cmp = (a, b) => {
-    const va = a?.[spec.field];
-    const vb = b?.[spec.field];
-    const nullish = (v) => v === null || v === undefined;
-    if (nullish(va) || nullish(vb)) return compareValues(va, vb); // los nulos, al final en ambas direcciones
-    return sign * compareValues(va, vb);
-  };
+  const cmp = sortComparator(spec);
   const alreadySorted = ctx.items.every((it, i) => i === 0 || cmp(ctx.items[i - 1], it) <= 0);
   if (alreadySorted) return false;
   const limit = LIMIT_PARAMS.map((k) => Number(ctx.query.get(k))).find((n) => Number.isInteger(n) && n > 0);
@@ -114,7 +149,31 @@ function sortCounterfactual(ctx, exp, names) {
   const where = exp.data?.where;
   const topMatches = (list) => list.slice(0, window).filter((it) => whereMatch(it, where)).length;
   const sorted = [...ctx.items].sort(cmp);
-  return !passes(exp, topMatches(ctx.items)) && passes(exp, topMatches(sorted));
+  const fits = !passes(exp, topMatches(ctx.items)) && passes(exp, topMatches(sorted));
+  return fits && unsliced ? { proof: 'unsliced', total: ctx.fullItems.length } : fits;
+}
+
+/** Orders as the mock would: the direction flips the whole comparison, so desc puts nulls first. */
+function sortComparator(spec) {
+  const sign = spec.desc ? -1 : 1;
+  return (a, b) => sign * compareLikeMock(a?.[spec.field], b?.[spec.field]);
+}
+
+function fullSetSortCounterfactual(ctx, exp, spec, offset) {
+  const full = ctx.fullItems;
+  if (!spec || !full.some((it) => hasKey(it, spec.field))) return null;
+  const cmp = sortComparator(spec);
+  if (full.every((it, i) => i === 0 || cmp(full[i - 1], it) <= 0)) return false;
+  const where = exp.data?.where;
+  const count = (list) => list.filter((it) => whereMatch(it, where)).length;
+  // Tie order caveat: Array#sort is stable, so equal keys keep their served order. For the unsorted B3
+  // endpoint that is the world's generation order, as the mock's own sort would see it; an endpoint with a
+  // different default sort could break ties differently, and move tied rows across the page boundary.
+  const page = [...full].sort(cmp).slice(offset, offset + ctx.items.length);
+  const matched = count(page);
+  // served comes from the items, not ctx.matched: a direct caller may omit it.
+  const served = count(ctx.items);
+  return !passes(exp, served) && passes(exp, matched) ? { proof: 'full', total: full.length, field: spec.field, desc: spec.desc, matched, served } : false;
 }
 
 /**
@@ -134,10 +193,14 @@ function filterCounterfactual(ctx, exp, names) {
 
 /**
  * Hipótesis para una aserción fallida.
- * ctx: { expected, obtained, driver, response?, items?, query?: URLSearchParams, matched?, fullMatched?, domCount?,
- *        clampedLimit?: { param, requested, max, defaulted? } (the endpoint's max_limit cut the client's page size,
- *        or its default_limit when defaulted) }
- * fullMatched is only set when the full set was proven (every page, adding up to X-Total-Count).
+ * ctx: { expected, obtained, driver, response?, items?, query?: URLSearchParams, matched?, fullMatched?, fullItems?,
+ *        domCount?, clampedLimit?: { param, requested, max, defaulted? } (the endpoint's max_limit cut the client's
+ *        page size, or its default_limit when defaulted) }
+ * fullMatched and fullItems are only set when the full set was proven (verify.mjs's probe walked every page,
+ * adding up to X-Total-Count): fullItems is that set in served order, fullMatched how many of it match the
+ * assertion's where. fullItems is internal: it feeds the full-set sort counterfactual and never reaches the report.
+ * pagination-mismatch is likely, or possible when an ignored sort is proven over fullItems to explain the page
+ * and no clampedLimit is present.
  * Cada hipótesis: { type, confidence, certainty, evidence, finding? }.
  */
 export function diagnose(row, ctx) {
@@ -150,6 +213,9 @@ export function diagnose(row, ctx) {
   // estar demostrado. Y si un contrafactual ya explica el fallo, el mundo queda descartado como causa.
   let mockIgnored = false;
   let explainedByMock = false;
+  // The ignored order, proven over the full set, explains a short page: then the page size is not the
+  // cause, unless max_limit cut it too (ctx.clampedLimit).
+  let sortProven = false;
   if (r && declaredError(r)) {
     add('declared-error', 'high', 'confirmed', `the scenario declares error: { status: ${r.status} } on this endpoint, so it answers ${r.status} by design (${JSON.stringify(r.body).slice(0, 120)}) and no rows; a step that expects data cannot pass. Expect the error state on the screen, or drop error: from the endpoint.`,
       `the endpoint answered the declared error ${r.status}`);
@@ -161,14 +227,35 @@ export function diagnose(row, ctx) {
     if (ignored) {
       mockIgnored = true;
       const names = String(ignored).split(',').map((s) => s.trim()).filter(Boolean);
-      const isSort = (n) => SORT_PARAM_NAMES.has(n.toLowerCase());
+      const isSort = (n) => isSortKey(n, ctx.query);
       const sorts = names.filter(isSort);
       const rest = names.filter((n) => !isSort(n));
       if (sorts.length) {
-        const fits = sortCounterfactual(ctx, exp, sorts);
-        if (fits) explainedByMock = true;
-        add('ignored-sort', 'medium', fits ? 'likely' : 'possible',
-          `the client orders by ${sorts.map((s) => `\`${s}\``).join(', ')} and the endpoint declares neither sorts: nor a sort: that matches, so the order was ignored. Add sorts: { by: ${sorts[0]}, fields: [<columns>] } (or sort: { by: ... }) to endpoints[]; declaring a filter named ${sorts[0]} would not fix the order.`,
+        // The field key (`by:`) and the direction key (`order:`) are separate, whatever order they arrive in.
+        // Any sort key the query sends only as asc/desc (`order=desc`, `sort=desc`, `dir=desc`) is the direction.
+        const isDirKey = (n) => actsAsDirection(n, ctx.query);
+        const dirKey = sorts.find(isDirKey);
+        const ignoredBy = sorts.find((n) => !isDirKey(n));
+        // A lone ignored direction: the field key may be in the query, not ignored (e.g. sorts: { by } without order:).
+        const queryBy = !ignoredBy && dirKey ? queryFieldKey(ctx.query, names, sorts.length === 1) : undefined;
+        const byKey = ignoredBy ?? queryBy;
+        // Advice in the query's own spelling: the header may list a key lowercased.
+        const spell = (n) => querySpelling(ctx.query, n);
+        const listed = [...sorts.filter((n) => !isDirKey(n)), ...sorts.filter(isDirKey)].map((s) => `\`${s}\``).join(', ');
+        const fits = byKey ? sortCounterfactual(ctx, exp, queryBy ? [queryBy, ...sorts] : sorts) : null;
+        // A page-only fit on a page that is not a slice of the proven full set stays possible.
+        const unsliced = fits?.proof === 'unsliced';
+        if (fits && !unsliced) explainedByMock = true;
+        if (fits?.proof === 'full') sortProven = true;
+        const proof = sortProven ? ` Counterfactual: sorting the full set (${fits.total} items) by ${fits.field} ${fits.desc ? 'desc' : 'asc'} puts ${fits.matched} matching items on this page; as served it has ${fits.served}.`
+          : unsliced ? ` Sorting this page alone would fit the expectation, but the served page is not a slice of the proven full set (${fits.total} items), so the full-set counterfactual could not check it.` : '';
+        const notFilter = `declaring a filter named ${sorts.join(' or ')} would not fix the order.`;
+        const advice = `sorts: { by: ${spell(byKey)}${dirKey ? `, order: ${spell(dirKey)}` : ''}, fields: [<columns>] }`;
+        add('ignored-sort', 'medium', fits && !unsliced ? 'likely' : 'possible', queryBy
+          ? `the client sends the sort direction ${listed} next to the field key \`${queryBy}\` (in the query, not ignored) and the endpoint declares no sort direction that matches, so the direction was ignored. Declare ${advice} on the endpoint in endpoints[] (add order: ${spell(dirKey)} to an existing sorts:); ${notFilter}${proof}`
+          : byKey
+            ? `the client orders by ${listed} and the endpoint declares neither sorts: nor a sort: that matches, so the order was ignored. Add ${advice} (or sort: { by: ... }) to endpoints[]; ${notFilter}${proof}`
+            : `the client sends the sort direction ${listed} and the endpoint declares neither sorts: nor a sort: that matches, so the order was ignored. The field key cannot be inferred from the ignored parameters or the query: add sorts: { by: <the client's field parameter>, order: ${spell(dirKey)}, fields: [<columns>] } to endpoints[]; ${notFilter}`,
           `the mock ignored ${sorts.join(', ')} (x-atrezzo-ignored header)`);
       }
       if (rest.length) {
@@ -188,7 +275,8 @@ export function diagnose(row, ctx) {
         : c.defaulted
           ? `The client sends no ${c.param} and the endpoint's pagination has default_limit: ${c.requested} with max_limit: ${c.max}, so the page is cut to ${c.max}: raise max_limit, lower default_limit or page through.`
           : `The client asks for ${c.param}=${c.requested} and the endpoint's pagination has max_limit: ${c.max}, so the page is cut to ${c.max}: raise max_limit or page through.`;
-      add('pagination-mismatch', 'high', 'likely', `the response has ${ctx.items.length} of ${total} items; across the full set, ${ctx.fullMatched} match the condition, but this page has only ${ctx.matched}. ${fix}`,
+      // A proven ignored order explains the short page, unless max_limit also cut it: both can hold at once.
+      add('pagination-mismatch', 'high', sortProven && !c ? 'possible' : 'likely', `the response has ${ctx.items.length} of ${total} items; across the full set, ${ctx.fullMatched} match the condition, but this page has only ${ctx.matched}. ${fix}`,
         `the page carries ${ctx.items.length} of ${total} items`);
     }
     const ids = ctx.items.map((i) => i?.id).filter((x) => x !== undefined);
