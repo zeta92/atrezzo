@@ -195,7 +195,11 @@ function filterCounterfactual(ctx, exp, names) {
  * Hipótesis para una aserción fallida.
  * ctx: { expected, obtained, driver, response?, items?, query?: URLSearchParams, matched?, fullMatched?, fullItems?,
  *        domCount?, clampedLimit?: { param, requested, max, defaulted? } (the endpoint's max_limit cut the client's
- *        page size, or its default_limit when defaulted) }
+ *        page size, or its default_limit when defaulted),
+ *        pickAbsent?: { pick, request, notObject? } (the flow's explicit data.pick could not be read from the 200
+ *        response: the key is absent, or notObject when the body is not a JSON object),
+ *        envelopeMismatch?: { pick, declared, declaredCount, endpoint, request } (pickAbsent proven: the
+ *        matched endpoint's declared envelope items path exists in the response and holds an array) }
  * fullMatched and fullItems are only set when the full set was proven (verify.mjs's probe walked every page,
  * adding up to X-Total-Count): fullItems is that set in served order, fullMatched how many of it match the
  * assertion's where. fullItems is internal: it feeds the full-set sort counterfactual and never reaches the report.
@@ -207,6 +211,31 @@ export function diagnose(row, ctx) {
   const hyps = [];
   const add = (type, confidence, certainty, evidence, finding) => hyps.push({ type, confidence, certainty, evidence, ...(finding ? { finding } : {}) });
   const exp = row.expect;
+  // The flow's explicit pick is absent and the endpoint's declared envelope list sits elsewhere in
+  // this response: the assertion read a missing key, so count-based heuristics below would reason
+  // over an unread list and must not run.
+  const em = ctx.envelopeMismatch;
+  if (em) {
+    add('envelope-key-mismatch', 'high', 'confirmed',
+      `the flow's data.pick "${em.pick}" is absent from the ${em.request} response, while the scenario's endpoint ${em.endpoint} declares its envelope items at "${em.declared}", which holds ${em.declaredCount} item(s) in this response page: the assertion read an absent key, so the world count was not checked. Align data.pick with envelope.items (or fix envelope.items if the real API answers "${em.pick}") and rerun; pagination or world counts may still differ.`,
+      `data.pick "${em.pick}" is absent; the envelope's items path "${em.declared}" holds ${em.declaredCount} item(s) in this response page`);
+    return hyps;
+  }
+  // The pick was not read and no declared envelope path proves where the list is: possible key
+  // mismatch with no alternate key guessed. Counts over an unread key (X-Total-Count, a "full set"
+  // of 0…) prove nothing, so none of the heuristics below may run.
+  const pa = ctx.pickAbsent;
+  if (pa) {
+    const what = pa.notObject
+      ? `the ${pa.request} response body is not a JSON object, so the flow's data.pick "${pa.pick}" cannot be resolved`
+      : `the flow's data.pick "${pa.pick}" is absent from the ${pa.request} response`;
+    add('envelope-key-mismatch', 'low', 'possible',
+      `${what}, and no envelope items path declared by the scenario holds an array in it, so no alternate key is inferred. The picked key yielded no readable rows, which does not prove the response or world has 0 rows, and the world count was not checked. Compare data.pick with the real response shape (or declare the endpoint's envelope.items).`,
+      pa.notObject
+        ? `the response body is not a JSON object; data.pick "${pa.pick}" cannot be resolved, no alternate key is inferred`
+        : `data.pick "${pa.pick}" is absent; no alternate key is inferred`);
+    return hyps;
+  }
   const target = exp.count ?? exp.min ?? exp.max;
   const r = ctx.response;
   // Si el mock ignoró parámetros, el JSON no es el que el cliente pidió: «el JSON cuadra» deja de

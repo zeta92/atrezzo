@@ -795,7 +795,7 @@ atrezzo harvest <url> --scenario <file> [--storage <file.json|@->] [--until <css
 | `screen` | a screen from `path` |
 | `data.request` | name of a request in the flow step |
 | `data.where` | map field: value (or list) to count in the JSON |
-| `data.pick` | path to the array (`data.items`); default: root array or `data` |
+| `data.pick` | non-empty path to the array (`data.items`); default: root array or `data` (or `envelope.items`). Blank/whitespace-only `data.pick` is rejected (exit 3); an explicit pick absent from a 200 response (or on a non-object body) is KO, never falls back to another key, and skips the full-set probe |
 | `label` | text for the report |
 
 With `--driver http` an assertion without `data` stays **not verified** (exit 2), never OK.

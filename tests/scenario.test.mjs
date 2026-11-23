@@ -51,6 +51,15 @@ test('expect without selector ⇒ error', () => {
   assert.match(e.message, /field "expect\[0\]\.selector": missing/);
 });
 
+test('expect data.pick empty or whitespace-only ⇒ AtrezzoError naming expect[0].data.pick', () => {
+  for (const raw of ['""', '"   "']) {
+    const e = errorOf(() => norm(SCENARIO.replace('data: { request: orders }', `data: { request: orders, pick: ${raw} }`)));
+    assert.ok(e instanceof AtrezzoError);
+    assert.equal(e.exitCode, 3);
+    assert.match(e.message, /field "expect\[0\]\.data\.pick": must be a non-empty path/);
+  }
+});
+
 test('strict validations accumulate, each with its reason', () => {
   const bad = SCENARIO
     .replace('paid: 34', 'paid: 33')
