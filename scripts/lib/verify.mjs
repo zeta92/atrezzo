@@ -307,14 +307,18 @@ export async function runVerify(flow, opts) {
       const fetchOpts = Object.keys(headers).length ? { headers } : undefined;
       const get = (u) => getJson(fetchImpl, u, fetchOpts);
       const responses = {};
-      const needHttp = driver === 'http' || wantDiag;
-      if (needHttp) {
+      // Under playwright the JSON is fetched too when an assertion declares `data`: a DOM count alone does not prove it.
+      // Fetched after the page's navigation and clicks, so it is the world the screen shows.
+      const needHttp = driver === 'http' || wantDiag || step.expect.some((e) => e.data);
+      const fetchResponses = async () => {
+        if (!needHttp) return;
         for (const [name, path] of Object.entries(step.requests)) {
           try { responses[name] = { path, ...(await get(joinUrl(url, path))) }; } catch (e) {
             throw new AtrezzoError(redact(`Network error requesting ${path}: ${e.message}`, headers), { exitCode: EXIT.UNVERIFIABLE });
           }
         }
-      }
+      };
+      if (!pw) await fetchResponses();
       let nav = { fail: null, redirect: null, waitForTimeout: false };
       let clickFail = null;
       let listeners = null;
@@ -348,10 +352,12 @@ export async function runVerify(flow, opts) {
             const clickTimeout = step.clickTimeout ?? optClickTimeout ?? flow.clickTimeout ?? DEFAULT_CLICK_TIMEOUT;
             clickFail = await runStepClicks(pw.page, step, clickTimeout);
           }
+          await fetchResponses();
         }
         for (const e of step.expect) {
           const row = { screen: step.screen, expect: e, status: 'N/V', obtained: null, note: '' };
           const ctx = { driver };
+          let dataFail = false;
           if (e.data && responses[e.data.request]) {
             const r = responses[e.data.request];
             const matchedEp = matchScenarioEndpoint(flow.scenario, r.path);
@@ -371,6 +377,11 @@ export async function runVerify(flow, opts) {
               ctx.domCount = 0;
             }
             row.obtained = ctx.domCount;
+            if (ctx.items && !passes(e, ctx.matched)) {
+              const ignored = header(ctx.response.headers, 'x-atrezzo-ignored');
+              dataFail = true;
+              row.note = `${e.data.request}: the JSON has ${ctx.matched} matching item(s), expected ${expectedText(e)}; the DOM count alone does not prove the assertion` + (ignored ? ` (the mock ignored ${ignored}: x-atrezzo-ignored)` : '');
+            }
           } else if (ctx.items) {
             row.obtained = ctx.matched;
           } else {
@@ -382,7 +393,7 @@ export async function runVerify(flow, opts) {
           ctx.obtained = row.obtained;
           // A declared error is what the scenario asked for: counted as 0 rows, and said so on a KO.
           if (ctx.response && declaredError(ctx.response) && !pw && !passes(e, row.obtained)) row.note = `${e.data.request} answered the error the scenario declares (${ctx.response.status}): 0 rows`;
-          row.status = !nav.fail && !clickFail && !selectorFail && passes(e, row.obtained) ? 'OK' : 'KO';
+          row.status = !nav.fail && !clickFail && !selectorFail && !dataFail && passes(e, row.obtained) ? 'OK' : 'KO';
           if (selectorFail && !nav.fail && !clickFail) {
             if (selectorFailRow === null) { selectorFailRow = rows.length + 1; row.note = selectorFail; } else row.note = `same cause as #${selectorFailRow}`;
             if (wantDiag && selectorFailRow === rows.length + 1) {
