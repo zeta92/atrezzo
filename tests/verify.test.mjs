@@ -145,6 +145,71 @@ test('playwright driver (fake page): KO with client-side filter diagnosis', asyn
   assert.ok(ko.hypotheses.some((h) => h.type === 'render'));
 });
 
+test('playwright driver (fake page): a matching DOM count is not OK when the declared data does not prove it (F8)', async () => {
+  // Conduit F8: `?author=` ignored by the mock, the page showed 5 articles by other authors and the row was OK.
+  const reqPath = '/api/orders?state=issue&limit=3';
+  const res = await fetch(`${url}${reqPath}`);
+  const items = await res.json();
+  assert.match(res.headers.get('x-atrezzo-ignored') ?? '', /state/, 'precondition: the mock ignores ?state=');
+  const matched = items.filter((o) => o.status === 'issue').length;
+  assert.notEqual(matched, 3, 'precondition: the JSON does not hold 3 issue orders');
+  writeFileSync(join(dir, 'flujo-f8.yaml'), FLOW.replace('      issues: GET /api/orders?status=issue\n',
+    `      issues: GET /api/orders?status=issue\n      byState: GET ${reqPath}\n    expect:\n      - selector: "[data-testid=issue-row]"\n        count: 3\n        data: { request: byState, where: { status: issue } }\n`));
+  const fp = fakePage({ '[data-testid=customer-chip]': 3, '[data-testid=order-row]': 12, '[data-testid=badge-issue]': 3, '[data-testid=issue-row]': 3 });
+  const r = await runVerify(loadFlow(join(dir, 'flujo-f8.yaml')), { url, driver: 'playwright', pageFactory: fp.factory });
+  const row = r.rows.find((x) => x.expect.selector === '[data-testid=issue-row]');
+  assert.equal(row.obtained, 3, 'the DOM count matches');
+  assert.equal(row.status, 'KO', 'the JSON has no 3 issue orders: the row cannot be OK');
+  assert.match(row.note, new RegExp(`byState.*${matched}`));
+  assert.equal(r.exitCode, 1);
+  assert.deepEqual(r.rows.filter((x) => x !== row).map((x) => x.status), ['OK', 'OK', 'OK'], 'valid rows stay OK');
+});
+
+test('playwright driver (fake page): the data check reads the mock after the step clicks (F8)', async () => {
+  writeFileSync(join(dir, 'scenarios/borrado.yaml'), `name: borrado
+seed: 1
+world:
+  orders: { total: 3, distribution: { paid: 3 } }
+endpoints:
+  - path: /api/orders
+    entity: orders
+writes:
+  "DELETE /api/orders/:id":
+    expect: { status: 204 }
+`);
+  writeFileSync(join(dir, 'flujo-borrado.yaml'), `scenario: scenarios/borrado.yaml
+steps:
+  - screen: lista
+    visit: /lista
+    click: ["#delete-first"]
+    requests:
+      orders: GET /api/orders
+    expect:
+      - selector: "[data-testid=order-row]"
+        count: 2
+        data: { request: orders }
+`);
+  const flow = loadFlow(join(dir, 'flujo-borrado.yaml'));
+  const visited = [];
+  const page = {
+    goto: async (u) => { visited.push(u); },
+    waitForLoadState: async () => {},
+    waitForSelector: async () => {},
+    locator: (sel) => ({
+      count: async () => (sel === '[data-testid=order-row]' ? 2 : 0),
+      click: async () => {
+        // The app deletes the first order: the mock's world changes as the click lands.
+        const [first] = await (await fetch(`${url}/api/orders`)).json();
+        const del = await fetch(`${url}/api/orders/${first.id}`, { method: 'DELETE' });
+        assert.equal(del.status, 204);
+      },
+    }),
+  };
+  const r = await runVerify(flow, { url, driver: 'playwright', pageFactory: async () => ({ page, close: async () => {} }) });
+  assert.equal(r.rows[0].status, 'OK', r.rows[0].note);
+  assert.equal(r.exitCode, 0);
+});
+
 test('CLI verify --driver playwright without playwright installed ⇒ exit 2, never a false OK', async () => {
   const r = await cliAsync(['verify', 'flow.yaml', '--driver', 'playwright', '--url', url], dir);
   assert.equal(r.code, 2, r.stderr + r.stdout);
