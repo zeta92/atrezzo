@@ -433,6 +433,24 @@ export async function runVerify(flow, opts) {
           for (const r of stepRows) { r.status = 'KO'; delete r.hypotheses; }
           for (let i = 1; i < stepRows.length; i++) stepRows[i].note = `same cause as #${firstRowNum}`;
 
+          // openStep only waits for wait_for after its route (path) and main-document status checks found nothing:
+          // a timeout there shows the selector never appeared, not that navigation failed (Vue-caught errors, a failed boot fetch…).
+          // Only reached without a pageerror (otherwise effectiveNavFail is null and page-error is surfaced).
+          const navHyp = nav.waitForTimeout
+            ? {
+              type: 'navigation', confidence: 'low', certainty: 'possible',
+              evidence: `wait_for "${step.waitFor}" timed out on "${step.screen}" after openStep's navigation checks did not detect a route mismatch or a main-document HTTP error; navigation is unproven, and the scenario and selectors are not ruled out. Check the console, \`atrezzo misses\` and the wait_for selector.`,
+              finding: `wait_for "${step.waitFor}" timed out after 10 s; no uncaught pageerror was captured`,
+            }
+            : null;
+          const consoleHyps = strictConsole
+            ? [...new Set(consoleErrors)].map((msg) => ({
+              type: 'console-error',
+              confidence: 'high',
+              certainty: 'confirmed',
+              evidence: `console.error on "${step.screen}" with --strict-console: ${clip(msg)}`,
+            }))
+            : [];
           const navEvidence = step.redirectsTo
             ? `expected redirect to "${step.redirectsTo}" for step "${step.screen}", but landed elsewhere; the scenario and selectors are not the cause. Fix navigation/guard before looking at anything else.`
             : `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.`;
@@ -454,20 +472,13 @@ export async function runVerify(flow, opts) {
             }
           } else if (effectiveNavFail) {
             firstRow.note = effectiveNavFail;
-            if (wantDiag) firstRow.hypotheses = [{ type: 'navigation', confidence: 'high', certainty: 'confirmed', evidence: navEvidence }];
+            if (wantDiag) firstRow.hypotheses = navHyp ? [navHyp, ...consoleHyps] : [{ type: 'navigation', confidence: 'high', certainty: 'confirmed', evidence: navEvidence }];
           } else if (effectiveClickFail) {
             firstRow.note = effectiveClickFail.note;
             if (wantDiag) firstRow.hypotheses = [{ type: 'click-target-missing', confidence: 'high', certainty: 'confirmed', evidence: clickEvidence }];
           } else {
             firstRow.note = `console.error (--strict-console)${consoleErrors.length > 1 ? ` (${consoleErrors.length})` : ''}: ${clip(consoleErrors[0])}`;
-            if (wantDiag) {
-              firstRow.hypotheses = [...new Set(consoleErrors)].map((msg) => ({
-                type: 'console-error',
-                confidence: 'high',
-                certainty: 'confirmed',
-                evidence: `console.error on "${step.screen}" with --strict-console: ${clip(msg)}`,
-              }));
-            }
+            if (wantDiag) firstRow.hypotheses = consoleHyps;
           }
         } else if (wantDiag) {
           for (let i = 0; i < stepCtxs.length; i++) {
