@@ -28,6 +28,12 @@ const UNSORTED = [
 ];
 const SORTED = [...UNSORTED].sort((a, b) => b.amount - a.amount);
 const issue = { data: { request: 'orders', where: { status: 'issue' } } };
+// Ingredientes de Mealie con campos nulos (unit/food/note), como los del informe de campo.
+const MEALIE_INGREDIENTS = [
+  { id: 1, quantity: 200, unit: { name: 'g' }, food: { name: 'spaghetti' }, note: null },
+  { id: 2, quantity: 2, unit: null, food: { name: 'egg' }, note: null },
+  { id: 3, quantity: null, unit: null, food: null, note: 'pepper to taste' },
+];
 
 const CONDUIT_COMMENTS_ABSENT = { pick: 'comments', request: 'r' };
 const CONDUIT_COMMENTS_MISMATCH = { pick: 'comments', declared: 'data', declaredCount: 5, endpoint: '/api/articles/:slug/comments', request: 'r' };
@@ -210,6 +216,10 @@ const CASES = [
     ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count': '0'}, body: null}, items: [], query: q('page=1&perPage=24'), matched: 0, fullMatched: 0, pickAbsent: MEALIE_ABSENT } },
   { name: 'B4: a 200 body that is not an object, playwright', row: { expect: {selector: '.recipe-card-footer', count: 12, data: {request: 'r', pick: 'items'}} }, cause: null,
     ctx: { obtained: 12, response: {status: 200, headers: {'x-total-count': '12'}, body: '<html></html>'}, items: [], matched: 0, domCount: 12, pickAbsent: { ...MEALIE_ABSENT, notObject: true } } },
+  // B6 (summary.md row 4, kitchen-ui v2 row 4): `.ingredient-list-item` matched 9 DOM copies (normal + cook
+  // mode + print) of 3 JSON ingredients carrying null fields. An over-count: null rows cannot explain it.
+  { name: 'field mealie: 9 DOM copies of 3 ingredients with null fields, playwright', row: { expect: {selector: '.ingredient-list-item', count: 3, data: {request: 'r'}} }, cause: 'render',
+    ctx: { obtained: 9, response: ok(), items: MEALIE_INGREDIENTS, matched: 3, domCount: 9 } },
 ];
 
 const STRONG = new Set(['confirmed', 'likely']);
@@ -454,6 +464,59 @@ test('diagnose(): a body that is not a JSON object says the pick cannot be resol
   assert.match(hyps[0].evidence, /recipes response body is not a JSON object/);
   assert.match(hyps[0].evidence, /data\.pick "items" cannot be resolved/);
   assert.doesNotMatch(hyps[0].evidence + hyps[0].finding, /is absent/);
+});
+
+test('null-field: an over-count (DOM 9 > expected 3) is not explained by null rows (B6)', () => {
+  const hyps = diagnose({ expect: { selector: '.ingredient-list-item', count: 3, data: { request: 'r' } } },
+    { obtained: 9, response: ok(), items: MEALIE_INGREDIENTS, matched: 3, domCount: 9 });
+  assert.ok(!hyps.some((h) => h.type === 'null-field'), JSON.stringify(hyps));
+  const render = hyps.find((h) => h.type === 'render');
+  assert.equal(render?.certainty, 'confirmed', JSON.stringify(hyps));
+  assert.match(render.finding, /the DOM shows 9/);
+  // Also over a max: the DOM is over the bound, nothing goes missing.
+  const overMax = diagnose({ expect: { selector: '.ingredient-list-item', max: 3, data: { request: 'r' } } },
+    { obtained: 9, response: ok(), items: MEALIE_INGREDIENTS, matched: 3, domCount: 9 });
+  assert.ok(!overMax.some((h) => h.type === 'null-field'), JSON.stringify(overMax));
+});
+
+test('null-field: an under-count with null rows still yields it (expected 10, JSON 10, DOM 0)', () => {
+  const items = rows(10, (i) => (i < 3 ? { author: null } : { author: { username: 'u' } }));
+  const hyps = diagnose({ expect: { selector: '.card', count: 10, data: { request: 'r' } } },
+    { obtained: 0, response: ok(), items, matched: 10, domCount: 0 });
+  const nul = hyps.find((h) => h.type === 'null-field');
+  assert.ok(nul && ['possible', 'likely'].includes(nul.certainty), JSON.stringify(hyps));
+  assert.match(nul.finding, /3 items with null fields/);
+  // DOM = JSON − null rows: likely with high confidence, never confirmed.
+  const strongHyps = diagnose({ expect: { selector: '.card', count: 10, data: { request: 'r' } } },
+    { obtained: 7, response: ok(), items, matched: 10, domCount: 7 });
+  const strong = strongHyps.find((h) => h.type === 'null-field');
+  assert.equal(strong?.certainty, 'likely', JSON.stringify(strongHyps));
+  assert.equal(strong.confidence, 'high', JSON.stringify(strongHyps));
+  assert.ok(!strongHyps.some((h) => h.type === 'null-field' && h.certainty === 'confirmed'), JSON.stringify(strongHyps));
+});
+
+test('null-field: a range expectation uses min as the lower bound (min 3, max 5, JSON 3, DOM 1)', () => {
+  const items = [{ id: 1, note: null }, { id: 2, note: 'a' }, { id: 3, note: 'b' }];
+  const hyps = diagnose({ expect: { selector: '.card', min: 3, max: 5, data: { request: 'r' } } },
+    { obtained: 1, response: ok(), items, matched: 3, domCount: 1 });
+  const nul = hyps.find((h) => h.type === 'null-field');
+  // DOM 1 ≠ JSON 3 − 1 null row: it fits loosely, so possible, not likely or confirmed.
+  assert.equal(nul?.certainty, 'possible', JSON.stringify(hyps));
+  assert.match(nul.finding, /1 items with null fields/);
+});
+
+test('null-field: a max-only expectation has no lower bound, so a low DOM is not missing rows', () => {
+  const items = [{ id: 1, note: null }, { id: 2, note: 'a' }, { id: 3, note: 'b' }];
+  const hyps = diagnose({ expect: { selector: '.card', max: 5, data: { request: 'r' } } },
+    { obtained: 1, response: ok(), items, matched: 3, domCount: 1 });
+  assert.ok(!hyps.some((h) => h.type === 'null-field'), JSON.stringify(hyps));
+});
+
+test('null-field: HTTP-only diagnosis (no DOM count) does not claim rows go missing', () => {
+  const hyps = diagnose(expect({ count: 4 }),
+    { obtained: 3, response: ok(), items: [{ id: 1, email: null }, { id: 2, email: 'a' }, { id: 3, email: 'b' }], matched: 3, fullMatched: 3 });
+  assert.ok(!hyps.some((h) => h.type === 'null-field'), JSON.stringify(hyps));
+  assert.equal(hyps.find((h) => h.certainty === 'likely')?.type, 'world-mismatch', JSON.stringify(hyps));
 });
 
 test('verify.mjs reexporta diagnose', () => {
