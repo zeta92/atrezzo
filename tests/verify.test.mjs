@@ -667,6 +667,247 @@ test('diagnose() B3: a served page that is not a contiguous slice of the full se
   assert.doesNotMatch(alone.evidence, /not a slice/, alone.evidence);
 });
 
+// B4 (references/field-reports/mealie, inj-wrong-envelope): the endpoint declares its envelope
+// items at `data`, the flow explicitly picks `items`. The response is { data: [12 rows], ... }, so
+// the pick counts 0 from a key that is not there. That is a proven key mismatch, not a world short
+// of rows; the row stays KO (the user's pick is never swapped for the declared one).
+const WRONG_ENVELOPE_SCENARIO = `name: wrongenv
+seed: 42
+world:
+  recipes:
+    total: 12
+    fields:
+      groupSlug: ["home"]
+endpoints:
+  - path: /api/explore/groups/:group_slug/recipes
+    entity: recipes
+    filters: { ":group_slug": groupSlug }
+    pagination: { param_page: page, param_limit: perPage, default_limit: 24, max_limit: 100 }
+    shape: envelope
+    envelope: { items: data, total: total, page: page, per_page: per_page, total_pages: total_pages }
+  - path: /api/plain/recipes
+    entity: recipes
+  - path: /api/paged/groups/:group_slug/recipes
+    entity: recipes
+    filters: { ":group_slug": groupSlug }
+    pagination: { param_page: page, param_limit: perPage, default_limit: 24 }
+`;
+const wrongEnvFlow = (request, expect) => `scenario: scenarios/wrongenv.yaml
+steps:
+  - screen: explorer
+    visit: /g/home
+    requests:
+      recipes: GET ${request}
+    expect:
+${expect}`;
+const HOME = '/api/explore/groups/home/recipes?page=1&perPage=24';
+const cardsPicking = (pick, count = 12) => `      - selector: ".recipe-card-footer"\n        count: ${count}\n        data: { request: recipes, pick: ${pick} }\n`;
+
+async function withWrongEnvMock(files, fn) {
+  const d = tmpProject({ 'scenarios/wrongenv.yaml': WRONG_ENVELOPE_SCENARIO, ...files });
+  const m = createMockServer({ scenariosDir: join(d, 'scenarios') });
+  const addr = await m.listen(0);
+  const requested = [];
+  const fetchImpl = (u, init) => { requested.push(String(u)); return fetch(u, init); };
+  try { return await fn({ dir: d, url: `http://127.0.0.1:${addr.port}`, fetchImpl, requested }); } finally { await m.close(); }
+}
+
+const assertEnvelopeMismatch = (row) => {
+  const strong = row.hypotheses.filter((h) => h.certainty !== 'possible');
+  assert.deepEqual(strong.map((h) => h.type), ['envelope-key-mismatch'], JSON.stringify(row.hypotheses));
+  const h = strong[0];
+  assert.equal(h.certainty, 'confirmed');
+  assert.equal(h.confidence, 'high');
+  assert.match(h.evidence, /data\.pick "items"/, 'names the flow pick');
+  assert.match(h.evidence, /envelope items at "data"/, 'names the declared envelope path');
+  assert.match(h.evidence, /12 item/, 'says what the declared path holds');
+  assert.match(h.finding, /"items" is absent/);
+  assert.match(h.finding, /"data" holds 12 item/);
+  assert.ok(!row.hypotheses.some((x) => x.type === 'world-mismatch'), 'the world has the 12 rows: no world-mismatch of any certainty');
+  assert.match(row.note, /data\.pick "items" is absent from the response/);
+};
+
+test('diagnosis B4: an explicit pick absent from the declared envelope is envelope-key-mismatch, not world-mismatch (http)', async () => {
+  await withWrongEnvMock({ 'f.yaml': wrongEnvFlow(HOME, cardsPicking('items')) }, async ({ dir: d, url: u, fetchImpl, requested }) => {
+    // Precondition: the real serve engine answers the list under `data`, and there is no `items`.
+    const body = await (await fetch(`${u}${HOME}`)).json();
+    assert.equal(body.data.length, 12);
+    assert.ok(!('items' in body));
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO', 'the user pick is not replaced: the row stays KO');
+    assert.equal(row.obtained, 0);
+    assert.equal(r.exitCode, 1);
+    assertEnvelopeMismatch(row);
+    assert.equal(apiCalls(requested).length, 1, `a row explained by the envelope mismatch runs no full-set probe: ${apiCalls(requested).join(' ')}`);
+  });
+});
+
+test('diagnosis B4: same case under playwright (fake page) is envelope-key-mismatch, not no-hypothesis', async () => {
+  await withWrongEnvMock({ 'f.yaml': wrongEnvFlow(HOME, cardsPicking('items')) }, async ({ dir: d, url: u, fetchImpl }) => {
+    // As in Mealie: the client reads `items`, finds nothing and renders no card.
+    const fp = fakePage({ '.recipe-card-footer': 0 });
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'playwright', diagnose: true, pageFactory: fp.factory, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.equal(row.obtained, 0);
+    assertEnvelopeMismatch(row);
+  });
+});
+
+test('diagnosis B4: under playwright a matching DOM does not make an absent pick OK (F8)', async () => {
+  await withWrongEnvMock({ 'f.yaml': wrongEnvFlow(HOME, cardsPicking('items')) }, async ({ dir: d, url: u, fetchImpl }) => {
+    const fp = fakePage({ '.recipe-card-footer': 12 });
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'playwright', diagnose: true, pageFactory: fp.factory, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.obtained, 12, 'the DOM count matches');
+    assert.equal(row.status, 'KO', 'the declared pick does not prove the 12 rows: the row cannot be OK');
+    assertEnvelopeMismatch(row);
+  });
+});
+
+test('diagnosis B4: an absent pick never proves an expectation of 0 rows', async () => {
+  await withWrongEnvMock({ 'f.yaml': wrongEnvFlow(HOME, cardsPicking('items', 0)) }, async ({ dir: d, url: u, fetchImpl }) => {
+    for (const driver of ['http', 'playwright']) {
+      const fp = fakePage({ '.recipe-card-footer': 0 });
+      const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver, diagnose: true, pageFactory: fp.factory, fetchImpl });
+      const row = r.rows[0];
+      assert.equal(row.status, 'KO', `${driver}: 0 counted from a missing key is not 0 rows`);
+      assert.equal(r.exitCode, 1);
+      assert.equal(row.hypotheses?.[0]?.type, 'envelope-key-mismatch', `${driver}: ${JSON.stringify(row.hypotheses)}`);
+    }
+  });
+});
+
+test('diagnosis B4 control: the declared pick is OK, and a present pick holding an empty list is no key mismatch', async () => {
+  const empty = '/api/explore/groups/nobody/recipes?page=1&perPage=24';
+  await withWrongEnvMock({
+    'ok.yaml': wrongEnvFlow(HOME, cardsPicking('data')),
+    'empty.yaml': wrongEnvFlow(empty, cardsPicking('data', 3)),
+    'empty0.yaml': wrongEnvFlow(empty, cardsPicking('data', 0)),
+  }, async ({ dir: d, url: u, fetchImpl }) => {
+    const ok = await runVerify(loadFlow(join(d, 'ok.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    assert.equal(ok.rows[0].status, 'OK');
+    assert.equal(ok.exitCode, 0);
+    // `data` exists and is [] (no recipe in group "nobody"): the world really has no rows.
+    const body = await (await fetch(`${u}${empty}`)).json();
+    assert.deepEqual(body.data, []);
+    for (const driver of ['http', 'playwright']) {
+      const fp = fakePage({ '.recipe-card-footer': 0 });
+      const r = await runVerify(loadFlow(join(d, 'empty.yaml')), { url: u, driver, diagnose: true, pageFactory: fp.factory, fetchImpl });
+      const row = r.rows[0];
+      assert.equal(row.status, 'KO');
+      assert.ok(!row.hypotheses.some((h) => h.type === 'envelope-key-mismatch'), `${driver}: ${JSON.stringify(row.hypotheses)}`);
+      assert.doesNotMatch(row.note, /absent/);
+      if (driver === 'http') {
+        const w = row.hypotheses.find((h) => h.type === 'world-mismatch');
+        assert.equal(w?.certainty, 'likely', JSON.stringify(row.hypotheses));
+        assert.match(w.evidence, /the world has 0 matching items and =3 were expected/);
+      }
+      const zero = await runVerify(loadFlow(join(d, 'empty0.yaml')), { url: u, driver, pageFactory: fp.factory, fetchImpl });
+      assert.equal(zero.rows[0].status, 'OK', `${driver}: an empty list under a present key proves 0 rows`);
+    }
+  });
+});
+
+const anyApiCalls = (requested) => requested.filter((x) => new URL(x).pathname.startsWith('/api/'));
+
+// An unproven absence: the pick is absent but no declared envelope path holding an array proves
+// where the list is. Only a possible envelope-key-mismatch, never a guessed key, never a count.
+const assertPossiblePickMismatch = (row, label = '') => {
+  const all = JSON.stringify(row.hypotheses);
+  assert.deepEqual(row.hypotheses.map((h) => [h.type, h.certainty, h.confidence]), [['envelope-key-mismatch', 'possible', 'low']], `${label} ${all}`);
+  assert.ok(!row.hypotheses.some((h) => h.type === 'world-mismatch' || h.type === 'no-hypothesis'), `${label} ${all}`);
+  const [h] = row.hypotheses;
+  assert.match(h.evidence, /data\.pick "items"/, `${label} names the flow pick`);
+  assert.match(h.evidence, /no alternate key is inferred/, `${label} says no key is guessed`);
+  for (const s of [row.note, h.evidence, h.finding]) assert.doesNotMatch(s, /"data"/, `${label} no alternative key is suggested: ${s}`);
+};
+
+test('diagnosis B4: without a declared envelope it does not guess another key: possible envelope-key-mismatch, no no-hypothesis', async () => {
+  // /api/plain/recipes answers a bare array: no envelope metadata to compare the pick with.
+  await withWrongEnvMock({ 'f.yaml': wrongEnvFlow('/api/plain/recipes', cardsPicking('items')) }, async ({ dir: d, url: u, fetchImpl, requested }) => {
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.equal(row.obtained, 0);
+    assert.match(row.note, /data\.pick "items" is absent from the response/);
+    assertPossiblePickMismatch(row);
+    assert.equal(anyApiCalls(requested).length, 1, `an unread key runs no full-set probe: ${anyApiCalls(requested).join(' ')}`);
+  });
+});
+
+test('diagnosis B4: a paginated bare array with X-Total-Count 0 and an absent pick is not world-mismatch (no probe)', async () => {
+  // Reviewer's case: no envelope declared, the pick is absent, the page is [] and X-Total-Count is 0.
+  // Counting an unread key over the "full set" would give 0 and claim the world is short.
+  const path = '/api/paged/groups/nobody/recipes?page=1&perPage=24';
+  await withWrongEnvMock({ 'f.yaml': wrongEnvFlow(path, cardsPicking('items')) }, async ({ dir: d, url: u, fetchImpl, requested }) => {
+    const res = await fetch(`${u}${path}`);
+    assert.deepEqual(await res.json(), [], 'precondition: an empty bare array');
+    assert.equal(res.headers.get('x-total-count'), '0', 'precondition: X-Total-Count 0');
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'http', diagnose: true, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.equal(r.exitCode, 1);
+    assertPossiblePickMismatch(row);
+    assert.equal(anyApiCalls(requested).length, 1, `one API request, no full-set probe: ${anyApiCalls(requested).join(' ')}`);
+  });
+});
+
+test('diagnosis B4: a 200 body that is not a JSON object cannot resolve the pick (not "absent"), stays KO, no probe', async () => {
+  for (const [label, text, type] of [['html', '<!doctype html><html><body>app shell</body></html>', 'text/html'], ['null', 'null', 'application/json'], ['string', '"ok"', 'application/json']]) {
+    await withWrongEnvMock({ 'f.yaml': wrongEnvFlow(HOME, cardsPicking('items')) }, async ({ dir: d, url: u, requested }) => {
+      const fetchImpl = (x, init) => {
+        requested.push(String(x));
+        return new URL(String(x)).pathname.startsWith('/api/') ? Promise.resolve(new Response(text, { status: 200, headers: { 'content-type': type, 'x-total-count': '12' } })) : fetch(x, init);
+      };
+      for (const driver of ['http', 'playwright']) {
+        requested.length = 0;
+        const fp = fakePage({ '.recipe-card-footer': 12 });
+        const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver, diagnose: true, pageFactory: fp.factory, fetchImpl });
+        const row = r.rows[0];
+        assert.equal(row.status, 'KO', `${label}/${driver}`);
+        assert.match(row.note, /cannot resolve data\.pick "items": the response body is not a JSON object/, `${label}/${driver}: ${row.note}`);
+        assert.doesNotMatch(row.note, /absent/, `${label}/${driver}: not falsely "absent"`);
+        assertPossiblePickMismatch(row, `${label}/${driver}`);
+        assert.match(row.hypotheses[0].evidence, /not a JSON object/, `${label}/${driver}`);
+        assert.doesNotMatch(row.hypotheses[0].evidence, /is absent/, `${label}/${driver}`);
+        assert.equal(anyApiCalls(requested).length, 1, `${label}/${driver}: no full-set probe: ${anyApiCalls(requested).join(' ')}`);
+      }
+    });
+  }
+});
+
+test('diagnosis B4: under playwright a pageerror keeps page-error as the only hypothesis; the note cross-references the absent pick', async () => {
+  await withWrongEnvMock({ 'f.yaml': wrongEnvFlow(HOME, cardsPicking('items')) }, async ({ dir: d, url: u, fetchImpl }) => {
+    const fp = fakeConsolePage({
+      countsByPath: { '/g/home': { '.recipe-card-footer': 0 } },
+      onVisit: (_path, { emitPageError }) => emitPageError(new TypeError("Cannot read properties of undefined (reading 'map')")),
+    });
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'playwright', diagnose: true, pageFactory: fp.factory, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.deepEqual(row.hypotheses.map((h) => h.type), ['page-error'], JSON.stringify(row.hypotheses));
+    assert.match(row.note, /^uncaught page error: TypeError: Cannot read properties of undefined/);
+    assert.match(row.note, /; also: data\.pick "items" is absent from the recipes response$/, row.note);
+  });
+});
+
+test('diagnosis B4: under playwright a navigation blocker keeps navigation as the only hypothesis; the note cross-references the absent pick', async () => {
+  await withWrongEnvMock({ 'f.yaml': wrongEnvFlow(HOME, cardsPicking('items')) }, async ({ dir: d, url: u, fetchImpl }) => {
+    const fp = fakeRedirectPage({
+      redirectTo: '/login',
+      countsByPath: { '/login': { '.recipe-card-footer': 0 } },
+    });
+    const r = await runVerify(loadFlow(join(d, 'f.yaml')), { url: u, driver: 'playwright', diagnose: true, pageFactory: fp.factory, fetchImpl });
+    const row = r.rows[0];
+    assert.equal(row.status, 'KO');
+    assert.deepEqual(row.hypotheses.map((h) => h.type), ['navigation'], JSON.stringify(row.hypotheses));
+    assert.match(row.note, /the app redirected \/g\/home → \/login/);
+    assert.match(row.note, /; also: data\.pick "items" is absent from the recipes response$/, row.note);
+  });
+});
+
 test('diagnose(): dedupe by id, null field and client-side filter', () => {
   const row = { expect: { selector: 'x', count: 3 } };
   const dup = diagnose(row, { obtained: 2, response: { status: 200, headers: {} }, items: [{ id: 1 }, { id: 1 }, { id: 2 }], matched: 3, domCount: 2 });

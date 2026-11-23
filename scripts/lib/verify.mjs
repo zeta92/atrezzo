@@ -24,6 +24,44 @@ function extractItems(body, pick) {
   return v === undefined || v === null ? [] : [v];
 }
 
+/** Whether a dotted path exists as own keys in body (a key holding null or [] exists). */
+function hasPath(body, path) {
+  let v = body;
+  for (const k of path.split('.')) {
+    if (v === null || typeof v !== 'object' || !Object.hasOwn(v, k)) return false;
+    v = v[k];
+  }
+  return true;
+}
+
+/** Where the scenario puts an envelope endpoint's list (formatEnvelope's key), or null for other shapes. */
+function declaredItemsPath(ep) {
+  return ep?.shape === 'envelope' ? (ep.envelope?.items ?? ep.pick ?? 'data') : null;
+}
+
+/**
+ * The flow's explicit `data.pick` cannot be read from a 200 response. A body that is not a JSON object
+ * (HTML, a string, null…) has no keys at all: { pick, notObject: true }, never "absent". Otherwise the
+ * pick is absent; with the matched endpoint's declared envelope list at another path that holds an
+ * array, that is a proven key mismatch: { pick, declared, declaredCount, endpoint }. Without that
+ * metadata: { pick } only (no guessed key).
+ * null when there is no explicit pick or it is present (even holding an empty list).
+ */
+function pickMismatch(body, pick, ep) {
+  if (!pick) return null;
+  if (body === null || typeof body !== 'object') return { pick, notObject: true };
+  if (hasPath(body, pick)) return null;
+  const declared = declaredItemsPath(ep);
+  if (!declared || declared === pick || !hasPath(body, declared)) return { pick };
+  let list = body;
+  for (const k of declared.split('.')) list = list[k];
+  return Array.isArray(list) ? { pick, declared, declaredCount: list.length, endpoint: ep.path } : { pick };
+}
+
+const pickCrossRef = (pa) => (pa.notObject
+  ? `; also: data.pick "${pa.pick}" cannot be resolved (the ${pa.request} response body is not a JSON object)`
+  : `; also: data.pick "${pa.pick}" is absent from the ${pa.request} response`);
+
 function joinUrl(base, path) {
   return new URL(path, base.endsWith('/') ? base : `${base}/`).toString().replace(/([^:]\/)\/+/g, '$1');
 }
@@ -535,7 +573,21 @@ export async function runVerify(flow, opts) {
             ctx.query = new URL(r.path, 'http://x').searchParams;
             ctx.items = r.status === 200 ? extractItems(r.body, pick) : [];
             ctx.matched = ctx.items.filter((it) => whereMatch(it, e.data.where)).length;
-            if (wantDiag && r.status === 200) {
+            // An explicit pick the response does not have counts 0 from nothing: it proves no count
+            // (not even 0), so the row stays KO; the user's pick is never swapped for another key.
+            const absent = r.status === 200 ? pickMismatch(r.body, e.data.pick, matchedEp) : null;
+            if (absent) {
+              dataFail = true;
+              row.note = absent.notObject
+                ? `${e.data.request}: cannot resolve data.pick "${absent.pick}": the response body is not a JSON object`
+                : `${e.data.request}: data.pick "${absent.pick}" is absent from the response` +
+                  (absent.declared ? `; the scenario's envelope holds the list at "${absent.declared}" (${absent.declaredCount} item(s) in this response page)` : '');
+              ctx.pickAbsent = { pick: absent.pick, request: e.data.request, ...(absent.notObject ? { notObject: true } : {}) };
+              if (absent.declared) ctx.envelopeMismatch = { ...absent, request: e.data.request };
+            }
+            // Any unread explicit pick (proven mismatch or not) skips the full-set probe: counts taken
+            // from a key the response does not have cannot establish a world mismatch.
+            if (wantDiag && r.status === 200 && !ctx.pickAbsent) {
               probes.set(ctx, () => fullSet(r.path, r, matchedEp, pick));
               const clamp = clampedLimit(r.path, matchedEp, ctx.items.length);
               if (clamp) ctx.clampedLimit = clamp;
@@ -547,7 +599,7 @@ export async function runVerify(flow, opts) {
               ctx.domCount = 0;
             }
             row.obtained = ctx.domCount;
-            if (ctx.items && !passes(e, ctx.matched)) {
+            if (ctx.items && !dataFail && !passes(e, ctx.matched)) {
               const ignored = header(ctx.response.headers, 'x-atrezzo-ignored');
               dataFail = true;
               row.note = `${e.data.request}: the JSON has ${ctx.matched} matching item(s), expected ${expectedText(e)}; the DOM count alone does not prove the assertion` + (ignored ? ` (the mock ignored ${ignored}: x-atrezzo-ignored)` : '');
@@ -566,6 +618,7 @@ export async function runVerify(flow, opts) {
           row.status = !nav.fail && !clickFail && !selectorFail && !dataFail && passes(e, row.obtained) ? 'OK' : 'KO';
           if (selectorFail && !nav.fail && !clickFail) {
             if (selectorFailRow === null) { selectorFailRow = rows.length + 1; row.note = selectorFail; } else row.note = `same cause as #${selectorFailRow}`;
+            if (ctx.pickAbsent) row.note += pickCrossRef(ctx.pickAbsent);
             if (wantDiag && selectorFailRow === rows.length + 1) {
               row.hypotheses = [{ type: 'navigation', confidence: 'high', certainty: 'confirmed', evidence: `what was counted is not the "${step.screen}" screen; the scenario and selectors are not the cause. Fix navigation/session before looking at anything else.` }];
             }
@@ -650,6 +703,14 @@ export async function runVerify(flow, opts) {
             firstRow.note = `console.error (--strict-console)${consoleErrors.length > 1 ? ` (${consoleErrors.length})` : ''}: ${clip(consoleErrors[0])}`;
             if (wantDiag) firstRow.hypotheses = consoleHyps;
           }
+          // Precedence: step blockers (page-error, navigation, click-target-missing, strict console-error)
+          // outrank a data.pick mismatch, so the blocker keeps its primary hypothesis (no
+          // envelope-key-mismatch is added). The unreadable pick is still a fact about the JSON,
+          // so each affected row's note cross-references it for the next run once the blocker is fixed.
+          stepRows.forEach((r, i) => {
+            const pa = stepCtxs[i]?.pickAbsent;
+            if (pa) r.note += pickCrossRef(pa);
+          });
         } else if (wantDiag) {
           for (let i = 0; i < stepCtxs.length; i++) {
             const row = rows[stepRowStart + i];

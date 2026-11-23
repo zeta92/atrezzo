@@ -29,6 +29,11 @@ const UNSORTED = [
 const SORTED = [...UNSORTED].sort((a, b) => b.amount - a.amount);
 const issue = { data: { request: 'orders', where: { status: 'issue' } } };
 
+const CONDUIT_COMMENTS_ABSENT = { pick: 'comments', request: 'r' };
+const CONDUIT_COMMENTS_MISMATCH = { pick: 'comments', declared: 'data', declaredCount: 5, endpoint: '/api/articles/:slug/comments', request: 'r' };
+const MEALIE_ABSENT = { pick: 'items', request: 'r' };
+const MEALIE_MISMATCH = { pick: 'items', declared: 'data', declaredCount: 12, endpoint: '/api/explore/groups/:group_slug/recipes', request: 'r' };
+
 const CASES = [
   // --- declared-error / non-200 ---
   { name: 'error declarado 500', row: expect({ count: 3 }), cause: 'declared-error',
@@ -128,7 +133,9 @@ const CASES = [
   // Each one comes from a real `verify --diagnose` run against the Conduit front end with one cause injected
   // into the scenario; ctx is what verify passed to diagnose() (items trimmed to the keys that matter, same
   // hypotheses before and after trimming). `cause: null` = no hypothesis type names the injected cause
-  // (an ignored pagination parameter, a wrong envelope key); nothing stronger than `possible` is right there.
+  // (an ignored pagination parameter); nothing stronger than `possible` is right there.
+  // The comments wrong-envelope cases are recorded as verify builds them since B4: the flow picks
+  // `comments`, the endpoint declares envelope.items `data`, so ctx.envelopeMismatch proves it (no probe).
   // The null-author case: verify reports page-error for it (the browser crash wins); this is diagnose() on its data.
   { name: 'field: ?author=<username> ignored (a filter through the author), http', row: { expect: {selector: '.article-preview', count: 5, data: {request: 'r', where: {author_id: 3}}} }, cause: 'undeclared-filter',
     ctx: { obtained: 2, response: {status: 200, headers: {'x-total-count':'23', 'x-atrezzo-ignored':'author'}, body: null}, items: [{id: 21, author_id: 2, author: {username: 'bob'}}, {id: 15, author_id: 3, author: {username: 'carol'}}, {id: 20, author_id: 3, author: {username: 'carol'}}, {id: 9, author_id: 4, author: {username: 'dave'}}, {id: 23, author_id: 2, author: {username: 'bob'}}], query: q('author=carol&limit=5&offset=0'), matched: 2, fullMatched: 7 } },
@@ -160,10 +167,12 @@ const CASES = [
     ctx: { obtained: 10, response: {status: 200, headers: {'x-total-count':'16', 'x-atrezzo-ignored':'offset'}, body: null}, items: [{id: 21}, {id: 15}, {id: 20}, {id: 23}, {id: 17}, {id: 19}, {id: 10}, {id: 1}, {id: 22}, {id: 5}], query: q('limit=10&offset=10'), matched: 10, fullMatched: 10 } },
   { name: 'field: offset ignored, playwright (the front end never sends offset either: upstream #197)', row: { expect: {selector: '.article-preview', count: 6, data: {request: 'r'}} }, cause: null, truths: ['undeclared-filter'],
     ctx: { obtained: 10, response: {status: 200, headers: {'x-total-count':'16', 'x-atrezzo-ignored':'offset'}, body: null}, items: [{id: 21}, {id: 15}, {id: 20}, {id: 23}, {id: 17}, {id: 19}, {id: 10}, {id: 1}, {id: 22}, {id: 5}], query: q('limit=10&offset=10'), matched: 10, fullMatched: 10, domCount: 10 } },
-  { name: 'field: comments envelope uses data, the client reads comments, http', row: { expect: {selector: '.card .card-text', count: 5, data: {request: 'r'}} }, cause: null,
-    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'5'}, body: null}, items: [], matched: 0, fullMatched: 0 } },
-  { name: 'field: wrong envelope key, playwright', row: { expect: {selector: '.card .card-text', count: 5, data: {request: 'r'}} }, cause: null,
-    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'5'}, body: null}, items: [], matched: 0, fullMatched: 0, domCount: 0 } },
+  { name: 'field: comments envelope uses data, the client reads comments, http', row: { expect: {selector: '.card .card-text', count: 5, data: {request: 'r', pick: 'comments'}} }, cause: 'envelope-key-mismatch',
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'5'}, body: null}, items: [], matched: 0,
+      pickAbsent: CONDUIT_COMMENTS_ABSENT, envelopeMismatch: CONDUIT_COMMENTS_MISMATCH } },
+  { name: 'field: wrong envelope key, playwright', row: { expect: {selector: '.card .card-text', count: 5, data: {request: 'r', pick: 'comments'}} }, cause: 'envelope-key-mismatch',
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count':'5'}, body: null}, items: [], matched: 0, domCount: 0,
+      pickAbsent: CONDUIT_COMMENTS_ABSENT, envelopeMismatch: CONDUIT_COMMENTS_MISMATCH } },
   { name: 'field: upstream #197, the feed pager never sends offset (real front-end bug), playwright', row: { expect: {selector: '.article-preview', count: 6, data: {request: 'r'}} }, cause: 'render',
     ctx: { obtained: 10, response: {status: 200, headers: {'x-total-count': '16'}, body: null}, items: [{id:13}, {id:7}, {id:12}, {id:2}, {id:8}, {id:16}], query: q('limit=10&offset=10'), matched: 6, fullMatched: 16, domCount: 10 } },
 
@@ -185,6 +194,22 @@ const CASES = [
     ctx: { obtained: 2, response: {status: 200, headers: {'x-total-count': '12'}, body: null}, items: rows(5, (i) => ({ rating: [4, 5, 3, 5][i % 4] })), query: q('page=1&perPage=24'), matched: 2, fullMatched: 6, clampedLimit: { param: 'perPage', requested: 24, max: 5 } } },
   { name: 'clamped page, verified world over the max, http', row: { expect: {selector: '.five', max: 1, data: {request: 'r', where: {rating: 5}}} }, cause: 'world-mismatch',
     ctx: { obtained: 2, response: {status: 200, headers: {'x-total-count': '12'}, body: null}, items: rows(5, (i) => ({ rating: [4, 5, 3, 5][i % 4] })), query: q('page=1&perPage=24'), matched: 2, fullMatched: 6 } },
+
+  // --- F5 field cases: Mealie B4 / inj-wrong-envelope: envelope.items is `data`, the flow picks `items` ---
+  // verify proves the pick absent and the declared list present (ctx.envelopeMismatch) and skips the probe.
+  { name: 'field mealie: flow picks items, the envelope declares data, http', row: { expect: {selector: '.recipe-card-footer', count: 12, data: {request: 'r', pick: 'items'}} }, cause: 'envelope-key-mismatch',
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count': '12'}, body: null}, items: [], query: q('page=1&perPage=24'), matched: 0,
+      pickAbsent: MEALIE_ABSENT, envelopeMismatch: MEALIE_MISMATCH } },
+  { name: 'field mealie: flow picks items, the envelope declares data, playwright', row: { expect: {selector: '.recipe-card-footer', count: 12, data: {request: 'r', pick: 'items'}} }, cause: 'envelope-key-mismatch',
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count': '12'}, body: null}, items: [], query: q('page=1&perPage=24'), matched: 0, domCount: 0,
+      pickAbsent: MEALIE_ABSENT, envelopeMismatch: MEALIE_MISMATCH } },
+  // Unproven absence: the pick is absent (or the body is not an object) and no declared envelope path
+  // holds an array. Only a possible envelope-key-mismatch is honest (cause: null, nothing strong); the
+  // count heuristics must not run on the unread key, even with X-Total-Count 0 and a "full set" of 0.
+  { name: 'B4: absent pick on a paginated bare array, X-Total-Count 0, http', row: { expect: {selector: '.recipe-card-footer', count: 12, data: {request: 'r', pick: 'items'}} }, cause: null,
+    ctx: { obtained: 0, response: {status: 200, headers: {'x-total-count': '0'}, body: null}, items: [], query: q('page=1&perPage=24'), matched: 0, fullMatched: 0, pickAbsent: MEALIE_ABSENT } },
+  { name: 'B4: a 200 body that is not an object, playwright', row: { expect: {selector: '.recipe-card-footer', count: 12, data: {request: 'r', pick: 'items'}} }, cause: null,
+    ctx: { obtained: 12, response: {status: 200, headers: {'x-total-count': '12'}, body: '<html></html>'}, items: [], matched: 0, domCount: 12, pickAbsent: { ...MEALIE_ABSENT, notObject: true } } },
 ];
 
 const STRONG = new Set(['confirmed', 'likely']);
@@ -215,7 +240,7 @@ const rate = ({ hit, n }) => (n ? hit / n : 1);
 test('corpus: al menos 25 casos y todos los tipos cubiertos', () => {
   assert.ok(CASES.length >= 25, `${CASES.length} casos`);
   const seen = new Set(CASES.flatMap((c) => diagnose(c.row, c.ctx).map((h) => h.type)));
-  for (const t of ['declared-error', 'non-200-response', 'render', 'pagination-mismatch', 'dedupe-by-id', 'null-field', 'ignored-sort', 'undeclared-filter', 'client-side-filter', 'world-mismatch', 'no-data', 'no-hypothesis']) {
+  for (const t of ['declared-error', 'non-200-response', 'envelope-key-mismatch', 'render', 'pagination-mismatch', 'dedupe-by-id', 'null-field', 'ignored-sort', 'undeclared-filter', 'client-side-filter', 'world-mismatch', 'no-data', 'no-hypothesis']) {
     assert.ok(seen.has(t), `ningún caso produce ${t}`);
   }
 });
@@ -361,6 +386,74 @@ test('B3 hardening: a lowercased ignored header matches the query key and the ad
   assert.ok(s.evidence.includes('sorts: { by: orderBy, order: orderDirection, fields: [<columns>] }'), s.evidence);
   assert.match(s.evidence, /by rating desc puts 2 matching items/, s.evidence);
   assert.ok(!hyps.some((h) => h.type === 'undeclared-filter'), JSON.stringify(hyps));
+});
+
+test('corpus B4: envelope-key-mismatch is confirmed only with a declared alternate array path, possible otherwise', () => {
+  const b4 = CASES.filter((c) => c.ctx.pickAbsent);
+  assert.ok(b4.length >= 6, `${b4.length} B4 cases`);
+  for (const c of b4) {
+    const hyps = diagnose(c.row, c.ctx);
+    const all = JSON.stringify(hyps);
+    // The absent pick alone explains the row: one hypothesis, and no count heuristic over the unread key.
+    assert.deepEqual(hyps.map((h) => h.type), ['envelope-key-mismatch'], `${c.name}: ${all}`);
+    const [h] = hyps;
+    if (c.ctx.envelopeMismatch) {
+      assert.equal(c.cause, 'envelope-key-mismatch', c.name);
+      assert.deepEqual([h.certainty, h.confidence], ['confirmed', 'high'], c.name);
+    } else {
+      assert.equal(c.cause, null, `${c.name}: an unproven absence names no strong cause`);
+      assert.deepEqual([h.certainty, h.confidence], ['possible', 'low'], c.name);
+    }
+  }
+  // Scores stay honest: the B4 cases are counted like any other (confirmed precision 1, top-1 hits).
+  const { stats, misses } = evaluate();
+  assert.equal(rate(stats.confirmed), 1, misses.join('\n'));
+  assert.ok(!misses.some((m) => /«(field: comments|field: wrong envelope|field mealie: flow picks|B4: )/.test(m)), misses.join('\n'));
+});
+
+test('diagnose(): confirmed envelope-key-mismatch scopes declaredCount to the response page and does not rule out world/pagination causes', () => {
+  const row = expect({ count: 12, data: { request: 'recipes', pick: 'items' } });
+  const hyps = diagnose(row, {
+    obtained: 0,
+    response: ok({ 'x-total-count': '12' }),
+    items: [],
+    matched: 0,
+    pickAbsent: { pick: 'items', request: 'recipes' },
+    envelopeMismatch: { pick: 'items', declared: 'data', declaredCount: 5, endpoint: '/api/explore/groups/:group_slug/recipes', request: 'recipes' },
+  });
+  assert.deepEqual(hyps.map((h) => [h.type, h.certainty, h.confidence]), [['envelope-key-mismatch', 'confirmed', 'high']], JSON.stringify(hyps));
+  const [h] = hyps;
+  assert.match(h.evidence, /5 item\(s\) in this response( page)?/, h.evidence);
+  assert.match(h.finding, /"data" holds 5 item\(s\) in this response( page)?/, h.finding);
+  assert.match(h.evidence, /world count was not checked|pagination or world/, h.evidence);
+  for (const s of [h.evidence, h.finding]) {
+    assert.doesNotMatch(s, /world is not the cause|not the world|do not regenerate/i, s);
+  }
+});
+
+test('diagnose(): an absent pick with no alternate metadata is a possible envelope-key-mismatch, not no-hypothesis, and guesses no key', () => {
+  const row = expect({ count: 12, data: { request: 'recipes', pick: 'items' } });
+  // fullMatched 0 and X-Total-Count 0 would make world-mismatch likely; an unread key proves no count.
+  const hyps = diagnose(row, { obtained: 0, response: ok({ 'x-total-count': '0' }), items: [], matched: 0, fullMatched: 0, pickAbsent: { pick: 'items', request: 'recipes' } });
+  assert.deepEqual(hyps.map((h) => [h.type, h.certainty, h.confidence]), [['envelope-key-mismatch', 'possible', 'low']], JSON.stringify(hyps));
+  const [h] = hyps;
+  assert.match(h.evidence, /data\.pick "items" is absent from the recipes response/);
+  assert.match(h.evidence, /no alternate key is inferred/);
+  assert.match(h.evidence, /yielded no readable rows/);
+  assert.match(h.evidence, /does not prove the response or world has 0 rows/);
+  assert.match(h.evidence, /world count was not checked/);
+  assert.doesNotMatch(h.evidence, /The 0 rows come from a key that was not read/);
+  assert.match(h.finding, /"items" is absent; no alternate key is inferred/);
+  for (const s of [h.evidence, h.finding]) assert.doesNotMatch(s, /"data"|envelope items at/, s);
+});
+
+test('diagnose(): a body that is not a JSON object says the pick cannot be resolved, not that it is absent', () => {
+  const row = expect({ count: 12, data: { request: 'recipes', pick: 'items' } });
+  const hyps = diagnose(row, { obtained: 0, response: { status: 200, headers: {}, body: '<html></html>' }, items: [], matched: 0, pickAbsent: { pick: 'items', request: 'recipes', notObject: true } });
+  assert.deepEqual(hyps.map((h) => [h.type, h.certainty]), [['envelope-key-mismatch', 'possible']], JSON.stringify(hyps));
+  assert.match(hyps[0].evidence, /recipes response body is not a JSON object/);
+  assert.match(hyps[0].evidence, /data\.pick "items" cannot be resolved/);
+  assert.doesNotMatch(hyps[0].evidence + hyps[0].finding, /is absent/);
 });
 
 test('verify.mjs reexporta diagnose', () => {

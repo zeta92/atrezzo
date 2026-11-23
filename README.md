@@ -72,9 +72,9 @@ Each hypothesis carries a certainty, so a hunch never reads like a fact:
 
 | certainty | means | what to do |
 |---|---|---|
-| `confirmed` | proven by the response and the DOM (`declared-error`, `non-200-response`, `render`, `page-error`, `click-target-missing`, `console-error`; `navigation` when the runtime detected a route mismatch or a main-document HTTP ≥ 400) | act on it |
+| `confirmed` | demonstrated by the response, declared scenario contract, or DOM (`declared-error`, `non-200-response`, `envelope-key-mismatch`, `render`, `page-error`, `click-target-missing`, `console-error`; `navigation` when the runtime detected a route mismatch or a main-document HTTP ≥ 400) | act on it |
 | `likely` | the probable cause, checked against the data (`pagination-mismatch`, `client-side-filter`, `world-mismatch`; `dedupe-by-id`, `null-field`, `ignored-sort` and `undeclared-filter` only when the counts fit) | verify it before changing anything |
-| `possible` | fits the symptom, not checked (`no-data`, `no-hypothesis`; `navigation` when only `wait_for` timed out; `pagination-mismatch` when sorting the proven full set by the ignored order explains the page and no `max_limit` cut it; and the rest when the counts do not fit) | do not touch the scenario for it |
+| `possible` | fits the symptom, not checked (`no-data`, `no-hypothesis`; `navigation` when only `wait_for` timed out; `pagination-mismatch` when sorting the proven full set by the ignored order explains the page and no `max_limit` cut it; `envelope-key-mismatch` when `data.pick` cannot be read but no declared envelope path holds the list; and the rest when the counts do not fit) | do not touch the scenario for it |
 
 A `wait_for` timeout still makes every assertion of the step KO. If the runtime detected neither a route mismatch nor a main-document HTTP ≥ 400, the timeout only shows that the selector never appeared: `navigation` is `possible` (its `finding` is the timeout, with no uncaught `pageerror` captured), and it does not rule out the scenario or the selectors.
 
@@ -160,7 +160,7 @@ A mock built endpoint by endpoint is a set of canned responses. They drift apart
 - **A world, not responses.** The scenario declares entities and their distribution. A seeded PRNG builds the world with one stream per entity. The same seed gives the same bytes. Generation never calls `Math.random()` or `Date.now()`, and a test checks this. Every foreign key points to a row that exists (or is null where the scenario asks for `nulls:`), and the writes keep it that way: deleting a parent with children answers `409` and a child with a foreign key that does not exist answers `422`.
 - **Endpoints are projections.** An endpoint declares filters, pagination, sort order, joins, counts, and envelopes over the world. `serve` and the MSW handlers use the same engine. `world` copies it next to the data as `runtime.mjs`, and you commit and review it like any other code.
 - **The scenario carries its assertions.** `expect` says what the screen must show (`=12` rows, `3` badges) and which request feeds each count. That link lets `verify` tell a data problem from a rendering problem.
-- **Diagnosis, not regeneration.** A failed count produces typed hypotheses: `pagination-mismatch`, `client-side-filter`, `dedupe-by-id`, `undeclared-filter`, `ignored-sort` (the client orders and the endpoint declares no `sorts:`), `null-field`, `navigation`, `page-error`, `console-error`, `click-target-missing`, and others. The skills forbid hand-writing data JSON: you change the scenario and regenerate.
+- **Diagnosis, not regeneration.** A failed count produces typed hypotheses: `pagination-mismatch`, `envelope-key-mismatch` (the flow's `data.pick` cannot be read from the 200 response; `confirmed` when the endpoint's declared envelope holds the list under another key in this response page—fixing the pick may still leave pagination or world issues once rerun—`possible` with no alternate key guessed otherwise; the row stays KO and skips the full-set probe either way), `client-side-filter`, `dedupe-by-id`, `undeclared-filter`, `ignored-sort` (the client orders and the endpoint declares no `sorts:`), `null-field`, `navigation`, `page-error`, `console-error`, `click-target-missing`, and others. The skills forbid hand-writing data JSON: you change the scenario and regenerate.
 
 ### What scenarios and flows cover
 
@@ -451,7 +451,7 @@ The whole user surface is now in English. There is no backward compatibility (pr
 | `misses.json` entry | `ejemplo` | `example` |
 | response header | `x-atrezzo-escenario` | `x-atrezzo-scenario` |
 | `verify --json` hypotheses | `{ tipo, confianza, evidencia }`, `alta`/`media`/`baja` | `{ type, confidence, evidence }`, `high`/`medium`/`low` (later also `certainty` and `finding`; `confidence` is legacy) |
-| hypothesis types | `respuesta-no-200`, `filtro-no-declarado`, `paginacion-desalineada`, `deduplicacion-por-id`, `campo-nulo`, `filtro-en-cliente`, `mundo-distinto`, `sin-datos`, `sin-hipotesis`, `navegacion` | `non-200-response`, `undeclared-filter`, `pagination-mismatch`, `dedupe-by-id`, `null-field`, `client-side-filter`, `world-mismatch`, `no-data`, `no-hypothesis`, `navigation` (`render` unchanged) |
+| hypothesis types | `respuesta-no-200`, `filtro-no-declarado`, `paginacion-desalineada`, `deduplicacion-por-id`, `campo-nulo`, `filtro-en-cliente`, `mundo-distinto`, `sin-datos`, `sin-hipotesis`, `navegacion` | `non-200-response`, `undeclared-filter`, `pagination-mismatch`, `dedupe-by-id`, `null-field`, `client-side-filter`, `world-mismatch`, `no-data`, `no-hypothesis`, `navigation` (`render` unchanged; `envelope-key-mismatch` added later; no Spanish counterpart) |
 | Prism example key | `escenario` (`Prefer: example=escenario`) | `scenario` |
 | Prism operationIds | `listar_*`, `detalle_*` | `list_*`, `detail_*` |
 | WireMock 501 body | `generadas` | `generated` |

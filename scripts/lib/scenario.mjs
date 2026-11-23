@@ -71,7 +71,11 @@ function normalizeExpect(item, field, issues) {
         if (!isObj(item.data.where)) issues.add(`${field}.data.where`, 'must be a map field: value');
         else d.where = item.data.where;
       }
-      if (item.data.pick !== undefined) d.pick = String(item.data.pick);
+      if (item.data.pick !== undefined) {
+        const pick = String(item.data.pick);
+        if (pick.trim() === '') issues.add(`${field}.data.pick`, 'must be a non-empty path');
+        else d.pick = pick;
+      }
       out.data = d;
     }
   }
