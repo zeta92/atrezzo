@@ -127,6 +127,124 @@ test('import without an argument uses workspace.contract from the config', () =>
   assert.match(r.stdout, /Imported api\/openapi\.yaml/);
 });
 
+// OpenAPI 3.1 as FastAPI / Pydantic v2 emits it: optional fields are
+// `anyOf: [<non-null schema>, {type: 'null'}]` with no top-level `type`.
+const json200 = (schema) => ({ 200: { description: 'ok', content: { 'application/json': { schema } } } });
+const nullable = (schema, extra = {}) => ({ anyOf: [schema, { type: 'null' }], ...extra });
+const listSpec31 = (properties, schemas = {}) => ({
+  openapi: '3.1.0', info: { title: 'Recipes' },
+  paths: { '/api/recipes': { get: { responses: json200({ type: 'array', items: { $ref: '#/components/schemas/Recipe' } }) } } },
+  components: { schemas: { Recipe: { type: 'object', properties: { id: { type: 'integer' }, ...properties } }, ...schemas } },
+});
+
+test('import OpenAPI 3.1: nullable anyOf [T, null] fields keep the non-null type (B5)', () => {
+  const spec = listSpec31({
+    name: { type: 'string' },
+    description: nullable({ type: 'string' }, { title: 'Description', default: null }),
+    dateAdded: nullable({ type: 'string', format: 'date-time' }),
+    rating: nullable({ type: 'integer' }),
+    owner_uid: nullable({ type: 'string', format: 'uuid' }),
+    status: nullable({ $ref: '#/components/schemas/Status' }),
+    image: nullable({ $ref: '#/components/schemas/ImageUrl' }),
+  }, {
+    Status: { type: 'string', enum: ['draft', 'published'] },
+    ImageUrl: { type: 'string', format: 'uri' },
+  });
+  const r = inferScenario(spec, { name: 'recipes', file: 'recipes.json' });
+  const recipes = r.doc.entities.find((e) => e.name === 'recipes');
+  assert.deepEqual(recipes.skipped, []);
+  assert.deepEqual(recipes.fields, {
+    name: 'string', description: 'string', dateAdded: 'date', rating: 'integer', owner_uid: 'uuid', status: ['draft', 'published'], image: 'url',
+  });
+  assert.deepEqual(r.doc.endpoints.map((e) => e.path), ['/api/recipes']);
+
+  // The written scenario is valid and world generates the typed fields.
+  const dir = tmpProject({ 'recipes.json': JSON.stringify(spec) });
+  const c = cli(['import', 'recipes.json', '--name', 'recipes'], dir);
+  assert.equal(c.code, 0, c.stdout + c.stderr);
+  assert.match(c.stdout, /Written: atrezzo\/scenarios\/recipes\.yaml \(valid scenario\)/);
+  assert.doesNotMatch(c.stdout, /skipped:|no type/);
+  const rows = generateWorld(loadScenario(join(dir, 'atrezzo/scenarios/recipes.yaml'))).entities.recipes;
+  assert.ok(rows.length > 0);
+  for (const row of rows) {
+    assert.deepEqual(Object.keys(row), ['id', 'name', 'description', 'dateAdded', 'rating', 'owner_uid', 'status', 'image']);
+    assert.ok(Number.isInteger(row.rating));
+    assert.ok(!Number.isNaN(Date.parse(row.dateAdded)), row.dateAdded);
+    assert.ok(['draft', 'published'].includes(row.status));
+  }
+});
+
+test('import OpenAPI 3.1: ambiguous, null-less or malformed anyOf unions stay skipped (B5 guard)', () => {
+  const spec = listSpec31({
+    name: { type: 'string' },
+    multi: { anyOf: [{ type: 'string' }, { type: 'integer' }, { type: 'null' }] },
+    no_null: { anyOf: [{ type: 'string' }, { type: 'integer' }] },
+    single_no_null: { anyOf: [{ type: 'string' }] },
+    only_null: { anyOf: [{ type: 'null' }, { type: 'null' }] },
+    empty_union: { anyOf: [] },
+    broken_member: nullable({ $ref: '#/components/schemas/Missing' }),
+    junk_member: { anyOf: ['string', { type: 'null' }] },
+    loop: { $ref: '#/components/schemas/Loop' },
+    tags: nullable({ type: 'array', items: { type: 'string' } }),
+    author: nullable({ $ref: '#/components/schemas/Author' }),
+  }, {
+    Loop: nullable({ $ref: '#/components/schemas/Loop' }),
+    Author: { type: 'object', properties: { name: { type: 'string' } } },
+  });
+  const r = inferScenario(spec, { name: 'recipes', file: 'recipes.json' });
+  const recipes = r.doc.entities.find((e) => e.name === 'recipes');
+  assert.deepEqual(recipes.fields, { name: 'string' });
+  assert.deepEqual(recipes.skipped, [
+    'multi (no type)', 'no_null (no type)', 'single_no_null (no type)', 'only_null (no type)', 'empty_union (no type)',
+    'broken_member (no type)', 'junk_member (no type)', 'loop (circular nullable anyOf)', 'tags (nested array)', 'author (nested object)',
+  ]);
+  assert.ok(r.notes.some((n) => /broken \$ref: #\/components\/schemas\/Missing/.test(n)));
+});
+
+// Explicit-null variants already supported by nullableMember; each test pins
+// one detection branch so removing it fails exactly that test.
+const recipeEntity = (spec) => inferScenario(spec, { name: 'recipes', file: 'recipes.json' }).doc.entities.find((e) => e.name === 'recipes');
+
+test('import OpenAPI 3.1: null member reached through a local $ref (B5)', () => {
+  const recipes = recipeEntity(listSpec31({
+    contact: { anyOf: [{ type: 'string', format: 'email' }, { $ref: '#/components/schemas/Null' }] },
+  }, { Null: { type: 'null' } }));
+  assert.deepEqual(recipes.skipped, []);
+  assert.deepEqual(recipes.fields, { contact: 'email' });
+});
+
+test('import OpenAPI 3.1: null member spelled as type array [null] (B5)', () => {
+  const recipes = recipeEntity(listSpec31({
+    rating: { anyOf: [{ type: 'integer' }, { type: ['null'] }] },
+  }));
+  assert.deepEqual(recipes.skipped, []);
+  assert.deepEqual(recipes.fields, { rating: 'integer' });
+});
+
+test('import OpenAPI 3.1: double-wrapped nullable anyOf unwraps to the inner type (B5)', () => {
+  const recipes = recipeEntity(listSpec31({
+    owner_uid: nullable(nullable({ type: 'string', format: 'uuid' })),
+  }));
+  assert.deepEqual(recipes.skipped, []);
+  assert.deepEqual(recipes.fields, { owner_uid: 'uuid' });
+});
+
+test('import OpenAPI 3.0: nullable: true and anyOf without null are unchanged (B5 guard)', () => {
+  const spec = {
+    openapi: '3.0.3',
+    paths: { '/api/items': { get: { responses: json200({ type: 'array', items: { type: 'object', properties: {
+      id: { type: 'integer' },
+      seen_at: { type: 'string', format: 'date-time', nullable: true },
+      kind: { type: 'string', enum: ['a', 'b', null], nullable: true },
+      count: { type: 'integer', nullable: true },
+      either: { anyOf: [{ type: 'string' }, { type: 'integer' }] },
+    } } }) } } },
+  };
+  const items = inferScenario(spec, { name: 'items' }).doc.entities.find((e) => e.name === 'items');
+  assert.deepEqual(items.fields, { seen_at: 'date', kind: ['a', 'b'], count: 'integer' });
+  assert.deepEqual(items.skipped, ['either (no type)']);
+});
+
 test('scenario: typed fields replace the template ones and types are validated', () => {
   const base = { name: 'x', seed: 1, endpoints: [{ path: '/api/users', entity: 'users' }] };
   const sc = normalizeScenario({ ...base, world: { users: { total: 3, fields: { username: 'string', active: 'boolean', uid: 'uuid', role: ['a', 'b'] } } } });

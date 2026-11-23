@@ -120,6 +120,8 @@ Ignored (3):
 Written: atrezzo/scenarios/shop.yaml (valid scenario)
 ```
 
+OpenAPI 3.1 nullable unions (`anyOf: [T, {type: 'null'}]`) are typed by their non-null member `T`, but the generated scenario/world values stay non-null (nullability is not propagated), same as OpenAPI 3.0 `nullable: true` fields.
+
 ### A missing route becomes a task
 
 The app asks for a route the scenario does not declare. The mock answers with a 404 that says what to do, and records the request:
