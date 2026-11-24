@@ -1,13 +1,14 @@
 // Project inspection: stack detection (for init) and health report (doctor).
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { CONFIG_FILE, loadConfig, runtimeList } from './config.mjs';
 import { loadScenario } from './scenario.mjs';
 import { generateWorld } from './world.mjs';
 import { missesFile, readMisses } from './misses.mjs';
 import { chromePath } from './env.mjs';
 import { degradations, STATE_LABEL } from './capabilities.mjs';
+import { DEFAULT_FIXTURES_DIR, resolveEffectiveDirs } from './passthrough.mjs';
 
 function readPkg(dir) {
   const f = join(dir, 'package.json');
@@ -42,13 +43,14 @@ function resolvable(dir, mod) {
 }
 
 /** Returns { checks: [{ok, label, detail}], ok } — ok=false if any blocking check fails. */
-export function doctor(dir) {
+export function doctor(dir, { scenariosDir = null, fixturesDir = null } = {}) {
+  const resolvedDir = resolve(dir);
   const checks = [];
   const add = (level, label, detail = '') => checks.push({ level, label, detail });
   const major = Number(process.versions.node.split('.')[0]);
   add(major >= 22 ? 'ok' : 'error', `Node ${process.versions.node}`, major >= 22 ? '' : 'Node >= 22 is required');
 
-  const info = detectProject(dir);
+  const info = detectProject(resolvedDir);
   add('info', `stack: ${info.stack}`, info.hasPackageJson ? `package manager: ${info.packageManager}` : 'no package.json');
   if (info.dataLayer.length) add('info', `data layer: ${info.dataLayer.join(', ')}`);
   if (info.contracts.length) add('info', `contracts found: ${info.contracts.join(', ')}`);
@@ -56,7 +58,7 @@ export function doctor(dir) {
 
   let cfg = null;
   try {
-    cfg = loadConfig(dir);
+    cfg = loadConfig(resolvedDir);
     if (cfg._missing) add('warn', `${CONFIG_FILE} not found`, 'run: atrezzo init');
     else {
       add('ok', `${CONFIG_FILE} valid`);
@@ -66,43 +68,89 @@ export function doctor(dir) {
     add('error', `${CONFIG_FILE} invalid`, e.message);
   }
 
-  add(resolvable(dir, 'msw') ? 'ok' : 'warn', `msw ${resolvable(dir, 'msw') ? 'installed' : 'not installed'}`, 'browser/test handlers (optional: serve does not need it)');
-  const pwMod = ['playwright', '@playwright/test', 'playwright-core'].find((m) => resolvable(dir, m));
+  add(resolvable(resolvedDir, 'msw') ? 'ok' : 'warn', `msw ${resolvable(resolvedDir, 'msw') ? 'installed' : 'not installed'}`, 'browser/test handlers (optional: serve does not need it)');
+  const pwMod = ['playwright', '@playwright/test', 'playwright-core'].find((m) => resolvable(resolvedDir, m));
   add(pwMod ? 'ok' : 'warn', pwMod ? `${pwMod} installed` : 'playwright not installed', `verify playwright driver (optional)${pwMod === 'playwright-core' ? `; Chromium: ${chromePath() || '/usr/bin/chromium'}` : ''}`);
 
-  if (cfg && !cfg._missing) {
-    const sdir = join(dir, cfg.scenariosDir);
-    if (!existsSync(sdir)) add('error', `${cfg.scenariosDir} is missing`, 'run: atrezzo init');
-    else {
-      const files = readdirSync(sdir).filter((f) => /\.(ya?ml|json)$/.test(f)).sort();
-      if (!files.length) add('warn', `no scenarios in ${cfg.scenariosDir}`, 'use /atrezzo:scene');
-      for (const f of files) {
-        try {
-          const sc = loadScenario(join(sdir, f), { fixturesDir: join(dir, cfg.fixturesDir) });
-          const ds = generateWorld(sc);
-          for (const ep of sc.endpoints ?? []) {
-            const rows = ds.entities?.[ep.entity] ?? [];
-            if (rows.length < 2) continue;
-            for (const p of ep.params ?? []) {
-              if (!p.field) continue;
-              const distinct = new Set(rows.map((r) => r?.[p.field] ?? null));
-              if (distinct.size === 1) {
-                add('warn', `${sc.name}: endpoint "${ep.path}" binds ":${p.name}" to "${p.field}" with a single value across ${rows.length} rows`,
-                  `the parameter cannot select one row (every row answers): give "${p.field}" several distinct values (values: [...]) or drop the parameter`);
+  const hasProjectConfig = Boolean(cfg && !cfg._missing);
+  const hasScenariosOverride = scenariosDir !== null && scenariosDir !== undefined;
+  const hasFixturesOverride = fixturesDir !== null && fixturesDir !== undefined;
+
+  if (hasProjectConfig || hasScenariosOverride || hasFixturesOverride) {
+    let effective = null;
+    try {
+      effective = resolveEffectiveDirs({
+        // Pass the loaded config even when it is the `_missing` default so the default
+        // scenariosDir/fixturesDir still resolve (e.g. `doctor --fixtures` with no config).
+        cfg,
+        dir: resolvedDir,
+        scenarios: hasScenariosOverride ? scenariosDir : null,
+        fixtures: hasFixturesOverride ? fixturesDir : null,
+      });
+    } catch (e) {
+      add('error', 'bundle config invalid', e.message);
+    }
+
+    if (effective) {
+      const { scenariosDir: sdir, fixturesDir: fdir, scenariosSource, fixturesSource } = effective;
+      if (sdir) add('info', `scenarios: ${sdir}`, `from ${scenariosSource}`);
+      if (fdir) add('info', `fixtures: ${fdir}`, `from ${fixturesSource}`);
+
+      // Validate the effective fixtures directory. An explicit --fixtures that is missing/invalid
+      // blocks; a custom project-config or bundle-config one only warns. The implicit default
+      // (bundle discovery fallback, or a project config pointing at <config dir>/DEFAULT_FIXTURES_DIR)
+      // is not diagnosed on its own: scenarios that consume fixtures still fail on their missing files.
+      const isImplicitDefault = fixturesSource === 'bundle'
+        || (fixturesSource === 'atrezzo.config.json'
+          && fdir === resolve(cfg?._dir ?? resolvedDir, DEFAULT_FIXTURES_DIR));
+      if (fdir && !isImplicitDefault) {
+        const level = hasFixturesOverride ? 'error' : 'warn';
+        if (!existsSync(fdir)) add(level, 'fixtures directory is missing', `${fdir} (from ${fixturesSource})`);
+        else if (!statSync(fdir).isDirectory()) add(level, 'fixtures path is not a directory', `${fdir} (from ${fixturesSource})`);
+      }
+
+      if (sdir) {
+        if (!existsSync(sdir)) {
+          if (hasScenariosOverride) add('error', 'scenarios directory is missing', `${sdir} (from --scenarios)`);
+          else add('error', `${cfg.scenariosDir} is missing`, 'run: atrezzo init');
+        } else if (!statSync(sdir).isDirectory()) {
+          add('error', 'scenarios path is not a directory', sdir);
+        } else {
+          const files = readdirSync(sdir).filter((f) => /\.(ya?ml|json)$/.test(f)).sort();
+          if (!files.length) add('warn', `no scenarios in ${hasScenariosOverride ? sdir : cfg.scenariosDir}`, 'use /atrezzo:scene');
+          for (const f of files) {
+            try {
+              const sc = loadScenario(join(sdir, f), { fixturesDir: fdir });
+              const ds = generateWorld(sc);
+              for (const ep of sc.endpoints ?? []) {
+                const rows = ds.entities?.[ep.entity] ?? [];
+                if (rows.length < 2) continue;
+                for (const p of ep.params ?? []) {
+                  if (!p.field) continue;
+                  const distinct = new Set(rows.map((r) => r?.[p.field] ?? null));
+                  if (distinct.size === 1) {
+                    add('warn', `${sc.name}: endpoint "${ep.path}" binds ":${p.name}" to "${p.field}" with a single value across ${rows.length} rows`,
+                      `the parameter cannot select one row (every row answers): give "${p.field}" several distinct values (values: [...]) or drop the parameter`);
+                  }
+                }
               }
+              if (hasProjectConfig) {
+                for (const rt of runtimeList(cfg).filter((r) => r !== 'builtin')) {
+                  for (const d of degradations(sc, rt)) {
+                    add('warn', `${sc.name} × ${rt}: ${d.id}`, `${STATE_LABEL[d.state]}${d.note ? ` — ${d.note}` : ''}`);
+                  }
+                }
+                const gen = join(resolvedDir, cfg.generatedDir, `${sc.name}.json`);
+                let state = 'not generated';
+                if (existsSync(gen)) state = JSON.parse(readFileSync(gen, 'utf8')).hash === ds.hash ? 'generated, up to date' : 'generated, STALE (atrezzo world)';
+                add(state === 'generated, up to date' ? 'ok' : 'warn', `scenario ${f}`, state);
+              } else {
+                add('ok', `scenario ${f}`, 'valid');
+              }
+            } catch (e) {
+              add('error', `scenario ${f} invalid`, e.message);
             }
           }
-          for (const rt of runtimeList(cfg).filter((r) => r !== 'builtin')) {
-            for (const d of degradations(sc, rt)) {
-              add('warn', `${sc.name} × ${rt}: ${d.id}`, `${STATE_LABEL[d.state]}${d.note ? ` — ${d.note}` : ''}`);
-            }
-          }
-          const gen = join(dir, cfg.generatedDir, `${sc.name}.json`);
-          let state = 'not generated';
-          if (existsSync(gen)) state = JSON.parse(readFileSync(gen, 'utf8')).hash === ds.hash ? 'generated, up to date' : 'generated, STALE (atrezzo world)';
-          add(state === 'generated, up to date' ? 'ok' : 'warn', `scenario ${f}`, state);
-        } catch (e) {
-          add('error', `scenario ${f} invalid`, e.message);
         }
       }
     }

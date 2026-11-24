@@ -295,12 +295,12 @@ node scripts/cli.mjs init [--dir .] [--runtime auto|builtin|msw|supabase|prism|w
 node scripts/cli.mjs runtimes
 node scripts/cli.mjs import [<openapi.yaml|json>] [--name api] [--base /api] [--format yaml|json] [--force]
 node scripts/cli.mjs world <scenario.yaml> [--out dir]
-node scripts/cli.mjs serve [--scenario demo] [--port 4010] [--static dir] [--runtime builtin] [--on-miss log|stub] [--latency ms]
+node scripts/cli.mjs serve [--scenario demo] [--port 4010] [--static dir] [--scenarios dir] [--fixtures dir] [--runtime builtin] [--on-miss log|stub] [--latency ms]
 node scripts/cli.mjs misses [--json] [--clear]
 node scripts/cli.mjs harvest <url> --scenario <file> [--storage <file.json|@->] [--until <css|text=…>] [--rounds 5] [--types <file.ts>] [--write]
 node scripts/cli.mjs record <url> --scenario <file> --endpoint <path> [--fixture <name>] [--header "Name: value"|@-]… [--write]
 node scripts/cli.mjs verify <flow.yaml> [--url …] [--driver http|playwright] [--header "Name: value"|@-]… [--click-timeout <ms>] [--diagnose] [--strict-console] [--no-reset] [--json]
-node scripts/cli.mjs doctor
+node scripts/cli.mjs doctor [--dir .] [--scenarios dir] [--fixtures dir]
 ```
 
 - `init` detects a monorepo (pnpm/npm/yarn workspaces, turbo, nx, lerna) or `client/`+`server/` folders, the runtime, and the `baseUrl` the front end calls, and **prints what it found, why, and which alternatives there were**. With two front ends or none, it does not guess: candidate table and exit 2.
@@ -310,6 +310,8 @@ node scripts/cli.mjs doctor
 Exit codes: `0` OK · `1` assertion failed · `2` not verifiable (no mock, no playwright, or an assertion without data; **never** reported as OK) · `3` invalid input.
 
 `serve` exposes `GET /api/<resource>?limit=&offset=&<filters>`, the `/<resource>/:id` detail, `POST /__atrezzo/reset {"scenario":"x"}`, `POST /__atrezzo/reload` (rereads the current scenario's YAML), `GET /__atrezzo/state` and `GET|DELETE /__atrezzo/misses`. It uses the same engine (`scripts/lib/contract.mjs`) as the MSW handlers: `world` copies it byte for byte as `runtime.mjs`.
+
+**Path semantics (`--dir`, `--scenarios`, `--fixtures`).** `--dir` selects the project directory (where `atrezzo.config.json` and its `scenariosDir`/`fixturesDir` live). `--scenarios <dir>` and `--fixtures <dir>` resolve relative to the current working directory. `--fixtures` is an explicit override with highest precedence; passing an external `--scenarios <dir>` without `--fixtures` auto-discovers bundle-local fixtures (bounded to that bundle, never walking unrelated ancestors): a bundle-local `atrezzo.config.json` `fixturesDir` wins first; otherwise an existing `atrezzo/fixtures/` is preferred over `fixtures/`, defaulting to `atrezzo/fixtures/` if neither exists; without overrides, `atrezzo.config.json` `fixturesDir` is preserved. `serve` keeps using the same resolved fixtures directory across `POST /__atrezzo/reload` and `POST /__atrezzo/reset`, and `doctor` accepts the same `--scenarios`/`--fixtures` flags to validate the effective paths and flag missing directories.
 
 </details>
 

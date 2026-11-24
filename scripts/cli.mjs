@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // atrezzo CLI.
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { resolve, join, relative, dirname } from 'node:path';
 import { AtrezzoError, EXIT } from './lib/errors.mjs';
 import { loadConfig, runtimeList } from './lib/config.mjs';
@@ -21,6 +21,7 @@ import { parseHeaderArgs, headerLines } from './lib/headers.mjs';
 import { parseStorageJson } from './lib/storage.mjs';
 import { runHarvest, formatHarvestReport } from './lib/harvest.mjs';
 import { recordEndpoint, formatRecordReport } from './lib/record.mjs';
+import { resolveEffectiveDirs } from './lib/passthrough.mjs';
 
 const HELP = `atrezzo — API mocks from application states
 
@@ -38,12 +39,18 @@ Commands:
       prism <scenario>.openapi.yaml · wiremock mappings/ + __files/ · builtin nothing else.
       Prints "Degraded in <runtime>" for each capability the scenario uses that a configured runtime does
       not reproduce. --strict turns that into exit 3, checked before anything is written.
-  serve [--scenario <name>] [--port 4010] [--host 127.0.0.1] [--static <dir>] [--scenarios <dir>] [--runtime builtin]
+  serve [--scenario <name>] [--port 4010] [--host 127.0.0.1] [--static <dir>] [--scenarios <dir>] [--fixtures <dir>] [--runtime builtin]
         [--on-miss log|stub] [--latency <ms>]
       HTTP server with the projections (builtin/msw runtimes). With another runtime it prints how to
       start it and exits with 2. Control: POST /__atrezzo/reset {"scenario":"x"}, POST /__atrezzo/reload,
       GET /__atrezzo/state, GET|DELETE /__atrezzo/misses. Anything outside the contract is recorded
       as a gap; --on-miss stub answers an empty 200 ([] or {}) with x-atrezzo-stub instead of 404.
+      --scenarios <dir> and --fixtures <dir> resolve relative to the current working directory.
+      --fixtures always overrides the fixtures directory; an external --scenarios <dir> without
+      --fixtures auto-discovers bundle-local fixtures/, atrezzo/fixtures/, or a bundle-local
+      atrezzo.config.json fixturesDir (bounded to the bundle, never walking unrelated ancestors);
+      without overrides, the project config fixturesDir is preserved. Reset and reload keep using
+      the same resolved fixtures directory.
       --static <dir> serves the built front end; a GET that asks for HTML (a browser navigation to a
       client-side route such as /copilot) and matches no file or endpoint gets <dir>/index.html (SPA
       fallback). fetch/JSON requests, unknown API paths, missing assets and writes keep the 404.
@@ -86,8 +93,10 @@ Commands:
       A flow's storage: block (local/session) seeds localStorage/sessionStorage before each step's visit
       (playwright driver; ignored with a warning under http). Only the keys are printed.
       Playwright driver: playwright or playwright-core; system Chromium or ATREZZO_CHROME=/path.
-  doctor [--dir .]
-      What is installed, what is missing, and whether the config and scenarios are valid.
+  doctor [--dir .] [--scenarios <dir>] [--fixtures <dir>]
+      What is installed, what is missing, and whether the config, scenarios and passthrough fixtures
+      are valid. --scenarios and --fixtures resolve relative to the current working directory using
+      the same precedence and bounded bundle discovery as serve, and report effective or missing paths.
 
 Exit codes: 0 OK · 1 assertion failed · 2 not verifiable (missing tool or mock) · 3 invalid input`;
 
@@ -268,7 +277,18 @@ async function cmdServe({ flags }) {
     out('  to serve anyway with the built-in server: atrezzo serve --runtime builtin');
     return EXIT.UNVERIFIABLE;
   }
-  const scenariosDir = resolve(flags.scenarios ?? join(cfg._dir, cfg.scenariosDir));
+  if (flags.scenarios !== undefined && !String(flags.scenarios).trim()) throw new AtrezzoError('Option --scenarios needs a value');
+  if (flags.fixtures !== undefined && !String(flags.fixtures).trim()) throw new AtrezzoError('Option --fixtures needs a value');
+  const { scenariosDir, fixturesDir } = resolveEffectiveDirs({
+    cfg,
+    dir: cfg._dir,
+    scenarios: flags.scenarios ?? null,
+    fixtures: flags.fixtures ?? null,
+  });
+  if (flags.fixtures !== undefined) {
+    if (!existsSync(fixturesDir)) throw new AtrezzoError(`Fixtures directory ${fixturesDir} does not exist`);
+    if (!statSync(fixturesDir).isDirectory()) throw new AtrezzoError(`Fixtures path ${fixturesDir} is not a directory`);
+  }
   const staticDir = flags.static ?? (cfg.mock.static ? join(cfg._dir, cfg.mock.static) : null);
   const port = Number(flags.port ?? cfg.mock.port);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new AtrezzoError(`invalid --port: ${flags.port}`);
@@ -276,7 +296,7 @@ async function cmdServe({ flags }) {
   if (!Number.isInteger(latency) || latency > MAX_LATENCY) throw new AtrezzoError(`invalid --latency: ${flags.latency} (milliseconds, an integer between 0 and ${MAX_LATENCY})`);
   const mock = createMockServer({
     scenariosDir, scenario: flags.scenario, staticDir: staticDir && resolve(staticDir),
-    generatedDir: join(cfg._dir, cfg.generatedDir), fixturesDir: join(cfg._dir, cfg.fixturesDir),
+    generatedDir: join(cfg._dir, cfg.generatedDir), fixturesDir,
     log: (s) => out(`  ${s}`), missesFile: missesFile(cfg), onMiss: flags['on-miss'] ?? 'log', latency,
   });
   let addr;
@@ -438,8 +458,13 @@ function cmdMisses({ flags }) {
 }
 
 function cmdDoctor({ flags }) {
+  if (flags.scenarios !== undefined && !String(flags.scenarios).trim()) throw new AtrezzoError('Option --scenarios needs a value');
+  if (flags.fixtures !== undefined && !String(flags.fixtures).trim()) throw new AtrezzoError('Option --fixtures needs a value');
   const dir = resolve(flags.dir ?? '.');
-  const r = doctor(dir);
+  const r = doctor(dir, {
+    scenariosDir: flags.scenarios ?? null,
+    fixturesDir: flags.fixtures ?? null,
+  });
   const icon = { ok: 'OK   ', warn: 'WARN ', error: 'ERROR', info: '·    ' };
   out(`atrezzo doctor · ${dir}`);
   for (const c of r.checks) out(`  ${icon[c.level]} ${c.label}${c.detail ? ` — ${c.detail}` : ''}`);
