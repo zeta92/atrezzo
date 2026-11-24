@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { loadScenario, normalizeScenario } from '../scripts/lib/scenario.mjs';
@@ -10,10 +10,12 @@ import { generateWorld, scenarioHash } from '../scripts/lib/world.mjs';
 import { createMockServer } from '../scripts/lib/serve.mjs';
 import { recordEndpoint } from '../scripts/lib/record.mjs';
 import { getAdapter } from '../scripts/lib/runtimes/index.mjs';
-import { DEFAULT_CONFIG } from '../scripts/lib/config.mjs';
+import { DEFAULT_CONFIG, loadConfig } from '../scripts/lib/config.mjs';
 import { AtrezzoError, EXIT } from '../scripts/lib/errors.mjs';
+import { resolveEffectiveDirs, resolveFixturesDir } from '../scripts/lib/passthrough.mjs';
 import { SCENARIO, tmpProject, cli, cliAsync } from './helpers.mjs';
-import { request, postJson } from './helpers/http.mjs';
+import { getJson, request, postJson } from './helpers/http.mjs';
+import { startServe } from './helpers/serve.mjs';
 
 const MARKET_FIXTURE = {
   status: 200,
@@ -591,4 +593,479 @@ endpoints:
       label,
     );
   }
+});
+
+test('serve --scenarios discovers sibling external fixtures when --dir points to a project with its own fixturesDir', async () => {
+  const externalBody = { id: 'ord-44', source: 'external-bundle', status: 'confirmed' };
+  const root = tmpProject({
+    'project/atrezzo.config.json': JSON.stringify({
+      ...DEFAULT_CONFIG,
+      runtime: 'builtin',
+    }, null, 2),
+    'bundle/scenarios/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+    'bundle/fixtures/order.json': JSON.stringify({
+      status: 200,
+      contentType: 'application/json; charset=utf-8',
+      body: externalBody,
+    }, null, 2),
+  });
+
+  const srv = await startServe(root, ['--dir', 'project', '--scenarios', 'bundle/scenarios']);
+  try {
+    const res = await getJson(`${srv.url}/api/order`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'application/json; charset=utf-8');
+    assert.deepEqual(res.body, externalBody);
+  } finally {
+    srv.stop();
+  }
+});
+
+test('serve --fixtures is a CWD-relative override that beats project config, bundle config and sibling fixtures, and persists across reload/reset', async () => {
+  const projectBody = { id: 'ord-project', source: 'project' };
+  const bundleConfigBody = { id: 'ord-bundle-cfg', source: 'bundle-config' };
+  const siblingBody = { id: 'ord-sibling', source: 'bundle-sibling' };
+  const overrideBody = { id: 'ord-override', source: 'explicit-override', version: 1 };
+  const secondOverrideBody = { id: 'inv-override', source: 'explicit-override' };
+
+  const root = tmpProject({
+    'project/atrezzo.config.json': JSON.stringify({
+      ...DEFAULT_CONFIG,
+      runtime: 'builtin',
+      fixturesDir: 'project-fixtures',
+    }, null, 2),
+    'project/atrezzo/scenarios/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+    'project/project-fixtures/order.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: projectBody }),
+    'bundle/atrezzo.config.json': JSON.stringify({
+      ...DEFAULT_CONFIG,
+      runtime: 'builtin',
+      scenariosDir: 'scenarios',
+      fixturesDir: 'bundle-cfg-fixtures',
+    }, null, 2),
+    'bundle/scenarios/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+    'bundle/scenarios/invoice.yaml': `name: invoice
+seed: 1
+endpoints:
+  - path: /api/invoice
+    passthrough:
+      fixture: invoice
+`,
+    'bundle/bundle-cfg-fixtures/order.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: bundleConfigBody }),
+    'bundle/fixtures/order.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: siblingBody }),
+    'override-fixtures/order.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: overrideBody }),
+    'override-fixtures/invoice.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: secondOverrideBody }),
+  });
+
+  // 1) --fixtures beats bundle config, bundle sibling, and project config (with --scenarios)
+  const srv = await startServe(root, ['--dir', 'project', '--scenarios', 'bundle/scenarios', '--fixtures', 'override-fixtures', '--scenario', 'order']);
+  try {
+    const res = await getJson(`${srv.url}/api/order`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.body, overrideBody);
+
+    // Reload picks up updated fixture from the same resolved override dir
+    const updatedBody = { ...overrideBody, version: 2 };
+    writeFileSync(
+      join(root, 'override-fixtures/order.json'),
+      JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: updatedBody }),
+    );
+    const reloaded = await postJson(`${srv.url}/__atrezzo/reload`);
+    assert.equal(reloaded.status, 200);
+    assert.deepEqual((await getJson(`${srv.url}/api/order`)).body, updatedBody);
+
+    // Reset to another scenario in the same bundle still uses the same resolved override dir
+    const reset = await postJson(`${srv.url}/__atrezzo/reset`, JSON.stringify({ scenario: 'invoice' }));
+    assert.equal(reset.status, 200);
+    assert.deepEqual((await getJson(`${srv.url}/api/invoice`)).body, secondOverrideBody);
+  } finally {
+    srv.stop();
+  }
+
+  // 2) --fixtures beats project config even without --scenarios
+  const srvProject = await startServe(root, ['--dir', 'project', '--fixtures', 'override-fixtures']);
+  try {
+    const res = await getJson(`${srvProject.url}/api/order`);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.source, 'explicit-override');
+  } finally {
+    srvProject.stop();
+  }
+
+  // 3) Missing explicit --fixtures fails loudly (exit 3)
+  const missing = cli(['serve', '--dir', 'project', '--fixtures', 'does-not-exist'], root);
+  assert.equal(missing.code, EXIT.INVALID);
+  assert.match(missing.stderr, /Fixtures directory.*does-not-exist.*does not exist/);
+});
+
+test('serve fixture resolution: project config vs sibling fixture distinction, bundle layouts, and bounded discovery', async () => {
+  const projectCustomBody = { source: 'project-config-fixtures' };
+  const projectSiblingBody = { source: 'project-sibling-decoy' };
+  const bundleAtrezzoBody = { source: 'bundle-atrezzo-fixtures' };
+  const bundleConfigBody = { source: 'bundle-config-fixtures' };
+
+  const root = tmpProject({
+    // Project with custom fixturesDir AND a decoy sibling atrezzo/fixtures/
+    'project/atrezzo.config.json': JSON.stringify({
+      ...DEFAULT_CONFIG,
+      runtime: 'builtin',
+      fixturesDir: 'custom-fixtures',
+    }, null, 2),
+    'project/atrezzo/scenarios/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+    'project/custom-fixtures/order.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: projectCustomBody }),
+    'project/atrezzo/fixtures/order.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: projectSiblingBody }),
+
+    // External bundle nested INSIDE project/ with its own atrezzo/fixtures (must NOT walk up to project/atrezzo.config.json)
+    'project/nested-atrezzo-bundle/scenarios/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+    'project/nested-atrezzo-bundle/atrezzo/fixtures/order.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: bundleAtrezzoBody }),
+
+    // External bundle nested INSIDE project/ with bundle-local config fixturesDir
+    'project/configured-bundle/atrezzo.config.json': JSON.stringify({
+      ...DEFAULT_CONFIG,
+      runtime: 'builtin',
+      scenariosDir: 'scenarios',
+      fixturesDir: 'bundle-custom',
+    }, null, 2),
+    'project/configured-bundle/scenarios/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+    'project/configured-bundle/bundle-custom/order.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: bundleConfigBody }),
+    'project/configured-bundle/fixtures/order.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: { source: 'bundle-sibling-decoy' } }),
+
+    // External bundle nested INSIDE project/ with NO fixtures at all (must fail against bundle path, NOT walk up to project/custom-fixtures)
+    'project/missing-bundle/scenarios/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+  });
+
+  // 1) Without --scenarios: preserves project config fixturesDir (NOT sibling project/atrezzo/fixtures)
+  const srvDefault = await startServe(root, ['--dir', 'project']);
+  try {
+    assert.deepEqual((await getJson(`${srvDefault.url}/api/order`)).body, projectCustomBody);
+  } finally {
+    srvDefault.stop();
+  }
+
+  // 1b) Passing --scenarios equal to project's own configured scenariosDir also preserves project config fixturesDir
+  const srvSameScenarios = await startServe(root, ['--dir', 'project', '--scenarios', 'project/atrezzo/scenarios']);
+  try {
+    assert.deepEqual((await getJson(`${srvSameScenarios.url}/api/order`)).body, projectCustomBody);
+  } finally {
+    srvSameScenarios.stop();
+  }
+
+  // 2) External bundle with bundle/atrezzo/fixtures nested inside project: discovers bundle/atrezzo/fixtures and keeps it on reload/reset
+  const srvBundleAtrezzo = await startServe(root, ['--dir', 'project', '--scenarios', 'project/nested-atrezzo-bundle/scenarios']);
+  try {
+    assert.deepEqual((await getJson(`${srvBundleAtrezzo.url}/api/order`)).body, bundleAtrezzoBody);
+    const updatedBundleBody = { source: 'bundle-atrezzo-fixtures-reloaded' };
+    writeFileSync(
+      join(root, 'project/nested-atrezzo-bundle/atrezzo/fixtures/order.json'),
+      JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: updatedBundleBody }),
+    );
+    assert.equal((await postJson(`${srvBundleAtrezzo.url}/__atrezzo/reload`)).status, 200);
+    assert.deepEqual((await getJson(`${srvBundleAtrezzo.url}/api/order`)).body, updatedBundleBody);
+    assert.equal((await postJson(`${srvBundleAtrezzo.url}/__atrezzo/reset`, JSON.stringify({ scenario: 'order' }))).status, 200);
+    assert.deepEqual((await getJson(`${srvBundleAtrezzo.url}/api/order`)).body, updatedBundleBody);
+  } finally {
+    srvBundleAtrezzo.stop();
+  }
+
+  // 3) External bundle with bundle-local atrezzo.config.json: honours bundle config fixturesDir
+  const srvBundleCfg = await startServe(root, ['--dir', 'project', '--scenarios', 'project/configured-bundle/scenarios']);
+  try {
+    assert.deepEqual((await getJson(`${srvBundleCfg.url}/api/order`)).body, bundleConfigBody);
+  } finally {
+    srvBundleCfg.stop();
+  }
+
+  // 4) Bounded discovery: missing bundle fixture fails with bundle path, never walks up to project/atrezzo.config.json
+  const missingRes = cli(['serve', '--dir', 'project', '--scenarios', 'project/missing-bundle/scenarios'], root);
+  assert.equal(missingRes.code, EXIT.INVALID);
+  assert.match(missingRes.stderr, /missing-bundle\/atrezzo\/fixtures\/order\.json/);
+  assert.doesNotMatch(missingRes.stderr, /custom-fixtures/);
+});
+
+test('external bundle config fixturesDir escaping the bundle root via .. is rejected, never honoured', () => {
+  const root = tmpProject({
+    'project/atrezzo.config.json': JSON.stringify({ ...DEFAULT_CONFIG, runtime: 'builtin' }, null, 2),
+    'workspace/bundle/atrezzo.config.json': JSON.stringify({
+      ...DEFAULT_CONFIG,
+      runtime: 'builtin',
+      scenariosDir: 'scenarios',
+      fixturesDir: '../../outside',
+    }, null, 2),
+    'workspace/bundle/scenarios/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+    // Target of the escape exists, so an unguarded resolver would happily serve it.
+    'outside/order.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: { source: 'outside-bundle' } }),
+  });
+
+  assert.throws(
+    () => resolveEffectiveDirs({
+      dir: join(root, 'project'),
+      scenarios: join(root, 'workspace/bundle/scenarios'),
+    }),
+    (err) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /fixturesDir/);
+      assert.match(err.message, /\.\.\/\.\.\/outside/);
+      assert.match(err.message, /escap\w*.*bundle/i);
+      return true;
+    },
+  );
+});
+
+test('external bundle atrezzo/fixtures symlinked outside the bundle root is rejected, never followed', () => {
+  const root = tmpProject({
+    'project/atrezzo.config.json': JSON.stringify({ ...DEFAULT_CONFIG, runtime: 'builtin' }, null, 2),
+    'workspace/bundle/scenarios/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+    // Target of the symlink exists, so an unguarded resolver would happily serve it.
+    'outside/fixtures/order.json': JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: { source: 'outside-bundle' } }),
+  });
+  mkdirSync(join(root, 'workspace/bundle/atrezzo'), { recursive: true });
+  // 'junction' keeps this working on Windows without symlink privileges; ignored on POSIX.
+  symlinkSync(join(root, 'outside/fixtures'), join(root, 'workspace/bundle/atrezzo/fixtures'), 'junction');
+
+  assert.throws(
+    () => resolveEffectiveDirs({
+      dir: join(root, 'project'),
+      scenarios: join(root, 'workspace/bundle/scenarios'),
+    }),
+    (err) => {
+      assert.ok(err instanceof AtrezzoError, `expected AtrezzoError, got ${err?.constructor?.name}: ${err?.message}`);
+      assert.match(err.message, /atrezzo[\\/]fixtures/);
+      assert.match(err.message, /escap\w*.*bundle/i);
+      return true;
+    },
+  );
+});
+
+test('#44 external bundle (atrezzo/scenarios and flat scenarios layouts): atrezzo/fixtures (DEFAULT_FIXTURES_DIR) keeps precedence over sibling fixtures and is the default when neither exists', () => {
+  const scenarioYaml = `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`;
+  const fixtureJson = JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: { source: 'x' } });
+  const root = tmpProject({
+    'project/atrezzo.config.json': JSON.stringify({ ...DEFAULT_CONFIG, runtime: 'builtin' }, null, 2),
+    // (a) both bundle/atrezzo/fixtures and sibling bundle/fixtures exist
+    'both/atrezzo/scenarios/order.yaml': scenarioYaml,
+    'both/atrezzo/fixtures/order.json': fixtureJson,
+    'both/fixtures/order.json': fixtureJson,
+    // (b) neither exists
+    'neither/atrezzo/scenarios/order.yaml': scenarioYaml,
+    // Flat layout <bundle>/scenarios:
+    // (c) both bundle/atrezzo/fixtures and sibling bundle/fixtures exist
+    'flat-both/scenarios/order.yaml': scenarioYaml,
+    'flat-both/atrezzo/fixtures/order.json': fixtureJson,
+    'flat-both/fixtures/order.json': fixtureJson,
+    // (d) neither exists
+    'flat-neither/scenarios/order.yaml': scenarioYaml,
+  });
+
+  const both = resolveEffectiveDirs({
+    dir: join(root, 'project'),
+    scenarios: join(root, 'both/atrezzo/scenarios'),
+  });
+  assert.equal(both.fixturesDir, join(root, 'both/atrezzo/fixtures'));
+
+  const neither = resolveEffectiveDirs({
+    dir: join(root, 'project'),
+    scenarios: join(root, 'neither/atrezzo/scenarios'),
+  });
+  assert.equal(neither.fixturesDir, join(root, 'neither/atrezzo/fixtures'));
+
+  const flatBoth = resolveEffectiveDirs({
+    dir: join(root, 'project'),
+    scenarios: join(root, 'flat-both/scenarios'),
+  });
+  assert.equal(flatBoth.fixturesDir, join(root, 'flat-both/atrezzo/fixtures'));
+
+  const flatNeither = resolveEffectiveDirs({
+    dir: join(root, 'project'),
+    scenarios: join(root, 'flat-neither/scenarios'),
+  });
+  assert.equal(flatNeither.fixturesDir, join(root, 'flat-neither/atrezzo/fixtures'));
+});
+
+test('#44 external bundle with scenariosDir not literally named "scenarios" (<bundle>/mock-scenarios): atrezzo/fixtures (DEFAULT_FIXTURES_DIR) keeps precedence over sibling fixtures and is the default when neither exists', () => {
+  const scenarioYaml = `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`;
+  const fixtureJson = JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: { source: 'x' } });
+  const root = tmpProject({
+    'project/atrezzo.config.json': JSON.stringify({ ...DEFAULT_CONFIG, runtime: 'builtin' }, null, 2),
+    // (a) both bundle/atrezzo/fixtures and sibling bundle/fixtures exist
+    'other-both/mock-scenarios/order.yaml': scenarioYaml,
+    'other-both/atrezzo/fixtures/order.json': fixtureJson,
+    'other-both/fixtures/order.json': fixtureJson,
+    // (b) neither exists
+    'other-neither/mock-scenarios/order.yaml': scenarioYaml,
+  });
+
+  const otherBoth = resolveEffectiveDirs({
+    dir: join(root, 'project'),
+    scenarios: join(root, 'other-both/mock-scenarios'),
+  });
+  assert.equal(otherBoth.fixturesDir, join(root, 'other-both/atrezzo/fixtures'));
+
+  const otherNeither = resolveEffectiveDirs({
+    dir: join(root, 'project'),
+    scenarios: join(root, 'other-neither/mock-scenarios'),
+  });
+  assert.equal(otherNeither.fixturesDir, join(root, 'other-neither/atrezzo/fixtures'));
+});
+
+test('resolveFixturesDir keeps the bounded ancestor project config lookup for scenarios outside scenariosDir', () => {
+  const dir = tmpProject({
+    'atrezzo.config.json': JSON.stringify({
+      ...DEFAULT_CONFIG,
+      runtime: 'builtin',
+      fixturesDir: 'custom-fixtures',
+    }, null, 2),
+    'specs/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+  });
+
+  assert.equal(
+    resolveFixturesDir(join(dir, 'specs/order.yaml')),
+    join(dir, 'custom-fixtures'),
+  );
+});
+
+test('#44 resolveFixturesDir without config: the scenario directory\'s own fixtures/ beats the parent sibling fixtures/', () => {
+  const fixtureJson = JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: { source: 'x' } });
+  const dir = tmpProject({
+    'specs/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+    'specs/fixtures/order.json': fixtureJson,
+    'fixtures/order.json': fixtureJson,
+  });
+
+  assert.equal(
+    resolveFixturesDir(join(dir, 'specs/order.yaml')),
+    join(dir, 'specs/fixtures'),
+  );
+});
+
+test('#44 resolveFixturesDir without config: a root-level scenario with no fixture dirs defaults to <project>/atrezzo/fixtures, not the project parent', () => {
+  const dir = tmpProject({
+    'order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+  });
+
+  assert.equal(
+    resolveFixturesDir(join(dir, 'order.yaml')),
+    join(dir, 'atrezzo/fixtures'),
+  );
+});
+
+test('#44 resolveFixturesDir without config: <scenarioDir>/atrezzo/fixtures (documented default layout) beats <scenarioDir>/fixtures', () => {
+  const fixtureJson = JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: { source: 'x' } });
+  const dir = tmpProject({
+    'specs/order.yaml': `name: order
+seed: 1
+endpoints:
+  - path: /api/order
+    passthrough:
+      fixture: order
+`,
+    'specs/atrezzo/fixtures/order.json': fixtureJson,
+    'specs/fixtures/order.json': fixtureJson,
+  });
+
+  assert.equal(
+    resolveFixturesDir(join(dir, 'specs/order.yaml')),
+    join(dir, 'specs/atrezzo/fixtures'),
+  );
+});
+
+test('#44 resolveEffectiveDirs with a valid project config and --scenarios pointing at the project dir keeps the config fixturesDir instead of discovering from the parent', () => {
+  const fixtureJson = JSON.stringify({ status: 200, contentType: 'application/json; charset=utf-8', body: { source: 'x' } });
+  const root = tmpProject({
+    'fixtures/order.json': fixtureJson,
+    'atrezzo/fixtures/order.json': fixtureJson,
+    'app/atrezzo.config.json': JSON.stringify({
+      ...DEFAULT_CONFIG,
+      runtime: 'builtin',
+      fixturesDir: 'custom-fixtures',
+    }, null, 2),
+    'app/custom-fixtures/order.json': fixtureJson,
+  });
+  const project = join(root, 'app');
+
+  const dirs = resolveEffectiveDirs({ cfg: loadConfig(project), dir: project, scenarios: project });
+  assert.equal(dirs.fixturesDir, join(project, 'custom-fixtures'));
+  assert.equal(dirs.fixturesSource, 'atrezzo.config.json');
 });

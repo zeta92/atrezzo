@@ -1,7 +1,7 @@
 // Passthrough-and-patch: load frozen HTTP fixtures and apply dot-path patches
 // without altering the rest of the captured response.
-import { existsSync, readFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { AtrezzoError, EXIT } from './errors.mjs';
 import { CONFIG_FILE, loadConfig } from './config.mjs';
 
@@ -22,32 +22,230 @@ export function normalizeFixtureName(raw) {
 }
 
 /**
+ * Bounded auto-discovery of fixtures for a scenarios directory (e.g. an external bundle).
+ * Never recursively searches or walks arbitrary ancestors outside the bundle root.
+ *
+ * Bundle config `fixturesDir` always wins (and may not escape the bundle root). Otherwise an
+ * existing `atrezzo/fixtures` (DEFAULT_FIXTURES_DIR) is preferred over a sibling `fixtures`, and
+ * `atrezzo/fixtures` is the fallback path when neither exists.
+ *
+ * Supported bundle layouts:
+ * - `<bundle>/atrezzo/scenarios` → bundle root `<bundle>` (bundle config, `atrezzo/fixtures`, `fixtures`)
+ * - `<bundle>/scenarios`         → bundle root `<bundle>` (bundle config, `atrezzo/fixtures`, `fixtures`)
+ * - `<bundle>/<other-name>`      → bundle root `<bundle>` (config in the scenarios dir, or in `<bundle>`
+ *                                  when its `scenariosDir` points here; then `<bundle>/atrezzo/fixtures`,
+ *                                  `<dir>/atrezzo/fixtures`, `<bundle>/fixtures`, `<dir>/fixtures`)
+ */
+const isInside = (root, p) => {
+  const rel = relative(root, p);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+};
+
+/**
+ * Physical containment: the deepest existing component of `candidate` below the bundle root
+ * (checked with lstat, so a dangling symlink counts as existing) must have a real path inside the
+ * real bundle root. Dangling/unresolvable symlinks fail closed. Throws AtrezzoError otherwise.
+ */
+function assertPhysicallyInside(bundleRoot, candidate, label) {
+  const root = resolve(bundleRoot);
+  for (let p = resolve(candidate); p !== root && isInside(root, p); p = dirname(p)) {
+    try {
+      lstatSync(p);
+    } catch {
+      continue; // missing: check its parent
+    }
+    let real = null;
+    let realRoot = root;
+    try {
+      real = realpathSync(p);
+      realRoot = realpathSync(root);
+    } catch {
+      real = null;
+    }
+    if (real === null || !isInside(realRoot, real)) {
+      throw new AtrezzoError(
+        `${label} ${candidate} rejected — it escapes the bundle root ${root} ` +
+        `(${real === null ? `${p} is a dangling symlink or cannot be resolved` : `${p} resolves to ${real}`})`,
+        { exitCode: EXIT.INVALID },
+      );
+    }
+    return;
+  }
+}
+
+export function discoverBundleFixturesDir(scenariosDir, { excludeConfigDir = null } = {}) {
+  const sdir = resolve(scenariosDir);
+  const name = basename(sdir);
+  const parent = dirname(sdir);
+  const excluded = excludeConfigDir ? resolve(excludeConfigDir) : null;
+
+  const configFixturesAt = (root, requireMatch = false) => {
+    if (!existsSync(join(root, CONFIG_FILE))) return null;
+    const mustMatch = requireMatch || (excluded !== null && root === excluded);
+    let cfg;
+    try {
+      cfg = loadConfig(root);
+    } catch (e) {
+      if (mustMatch && excluded !== null && root === excluded) return null;
+      throw e;
+    }
+    if (mustMatch && resolve(root, cfg.scenariosDir) !== sdir) return null;
+    const raw = cfg.fixturesDir ?? DEFAULT_FIXTURES_DIR;
+    const dir = resolve(root, raw);
+    if (root !== excluded) {
+      const rel = relative(root, dir);
+      if (isAbsolute(raw) || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+        throw new AtrezzoError(
+          `Bundle config ${join(root, CONFIG_FILE)}: fixturesDir ${JSON.stringify(raw)} rejected — ` +
+          `it escapes the bundle root ${root} (must be a relative path inside the bundle)`,
+          { exitCode: EXIT.INVALID },
+        );
+      }
+      assertPhysicallyInside(root, dir, `Bundle config ${join(root, CONFIG_FILE)}: fixturesDir`);
+    }
+    return { dir, source: 'bundle config' };
+  };
+
+  // First existing candidate wins; otherwise fall back to the preferred DEFAULT_FIXTURES_DIR path.
+  // Every candidate (and the fallback) must also stay physically inside the bundle root.
+  const firstExisting = (candidates, fallback, bundleRoot) => {
+    for (const candidate of candidates) {
+      assertPhysicallyInside(bundleRoot, candidate, 'Bundle fixtures candidate');
+      if (existsSync(candidate)) return { dir: candidate, source: 'bundle' };
+    }
+    assertPhysicallyInside(bundleRoot, fallback, 'Bundle fixtures candidate');
+    return { dir: fallback, source: 'bundle' };
+  };
+
+  if (name === 'scenarios' && basename(parent) === 'atrezzo') {
+    const bundleRoot = dirname(parent);
+    const fromCfg = configFixturesAt(bundleRoot);
+    if (fromCfg) return fromCfg;
+    const preferred = join(bundleRoot, DEFAULT_FIXTURES_DIR);
+    return firstExisting([preferred, join(bundleRoot, 'fixtures')], preferred, bundleRoot);
+  }
+
+  if (name === 'scenarios') {
+    const bundleRoot = parent;
+    const fromCfg = configFixturesAt(bundleRoot);
+    if (fromCfg) return fromCfg;
+    const preferred = join(bundleRoot, DEFAULT_FIXTURES_DIR);
+    return firstExisting([preferred, join(bundleRoot, 'fixtures')], preferred, bundleRoot);
+  }
+
+  const fromOwnCfg = configFixturesAt(sdir);
+  if (fromOwnCfg) return fromOwnCfg;
+  if (parent !== sdir) {
+    const fromParentCfg = configFixturesAt(parent, true);
+    if (fromParentCfg) return fromParentCfg;
+  }
+  const bundleRoot = parent;
+  const preferred = join(bundleRoot, DEFAULT_FIXTURES_DIR);
+  return firstExisting(
+    [...new Set([
+      preferred,
+      join(sdir, DEFAULT_FIXTURES_DIR),
+      join(bundleRoot, 'fixtures'),
+      join(sdir, 'fixtures'),
+    ])],
+    preferred,
+    bundleRoot,
+  );
+}
+
+/**
+ * Resolve effective scenarios and fixtures directories from project config and optional CLI overrides.
+ * Precedence for fixturesDir:
+ * 1. Explicit `fixtures` override (resolved relative to CWD)
+ * 2. When `scenarios` is omitted, or resolves to the project's configured `scenariosDir` or the project
+ *    directory itself: project config `fixturesDir`
+ * 3. When `scenarios` points to an external bundle: bounded bundle-local discovery
+ */
+export function resolveEffectiveDirs({ cfg = null, dir = process.cwd(), scenarios = null, fixtures = null } = {}) {
+  const projectDir = resolve(cfg?._dir ?? dir);
+  const hasProjectConfig = Boolean(cfg && !cfg._missing);
+  const projectScenariosDir = cfg ? resolve(projectDir, cfg.scenariosDir) : null;
+  const projectFixturesDir = cfg ? resolve(projectDir, cfg.fixturesDir) : null;
+
+  const hasScenariosOverride = scenarios !== null && scenarios !== undefined;
+  const hasFixturesOverride = fixtures !== null && fixtures !== undefined;
+
+  const scenariosDir = hasScenariosOverride ? resolve(scenarios) : projectScenariosDir;
+  const scenariosSource = hasScenariosOverride
+    ? '--scenarios'
+    : (hasProjectConfig ? 'atrezzo.config.json' : 'default');
+
+  if (hasFixturesOverride) {
+    return {
+      scenariosDir,
+      fixturesDir: resolve(fixtures),
+      scenariosSource,
+      fixturesSource: '--fixtures',
+    };
+  }
+
+  if (hasScenariosOverride) {
+    if (hasProjectConfig && (scenariosDir === projectScenariosDir || scenariosDir === projectDir)) {
+      return {
+        scenariosDir,
+        fixturesDir: projectFixturesDir,
+        scenariosSource,
+        fixturesSource: 'atrezzo.config.json',
+      };
+    }
+    const discovered = discoverBundleFixturesDir(scenariosDir, { excludeConfigDir: projectDir });
+    return {
+      scenariosDir,
+      fixturesDir: discovered.dir,
+      scenariosSource,
+      fixturesSource: discovered.source,
+    };
+  }
+
+  return {
+    scenariosDir,
+    fixturesDir: projectFixturesDir,
+    scenariosSource,
+    fixturesSource: hasProjectConfig ? 'atrezzo.config.json' : 'default',
+  };
+}
+
+/**
  * Determine the fixtures directory for a scenario file when no explicit directory was given.
- * Checks `atrezzo.config.json` up to two parent levels, then sibling `atrezzo/fixtures` or `fixtures`.
+ * Precedence:
+ * 1. `explicitDir` (resolved relative to CWD)
+ * 2. Pseudo/missing scenario paths → default fixtures dir relative to CWD
+ * 3. Legacy bounded ancestor lookup: the first `atrezzo.config.json` found in the scenario's
+ *    directory or its first two parents (at most three directories), using that config's
+ *    `fixturesDir` resolved relative to the config directory
+ * 4. Scenario directory named `scenarios` → bounded bundle discovery (`discoverBundleFixturesDir`)
+ * 5. Otherwise the first existing of `<dir>/atrezzo/fixtures`, `<dir>/fixtures`, `<parent>/atrezzo/fixtures`,
+ *    `<parent>/fixtures`; default `<dir>/atrezzo/fixtures` (no arbitrary ancestor walks)
  */
 export function resolveFixturesDir(scenarioFile, explicitDir = null) {
   if (explicitDir) return resolve(explicitDir);
   if (!scenarioFile || scenarioFile.startsWith('<')) return resolve(DEFAULT_FIXTURES_DIR);
 
-  const absFile = resolve(scenarioFile);
-  const startDir = dirname(absFile);
-  for (const candidate of [startDir, dirname(startDir), dirname(dirname(startDir))]) {
+  const startDir = dirname(resolve(scenarioFile));
+  const candidates = [startDir, dirname(startDir), dirname(dirname(startDir))];
+  for (const candidate of new Set(candidates)) {
     if (existsSync(join(candidate, CONFIG_FILE))) {
       const cfg = loadConfig(candidate);
-      return join(candidate, cfg.fixturesDir ?? DEFAULT_FIXTURES_DIR);
+      return resolve(candidate, cfg.fixturesDir ?? DEFAULT_FIXTURES_DIR);
     }
   }
 
-  if (basename(startDir) === 'scenarios') {
-    const base = dirname(startDir);
-    if (basename(base) === 'atrezzo') return join(base, 'fixtures');
-    if (existsSync(join(base, 'atrezzo', 'fixtures'))) return join(base, 'atrezzo', 'fixtures');
-    if (existsSync(join(base, 'fixtures'))) return join(base, 'fixtures');
-    return join(base, DEFAULT_FIXTURES_DIR);
-  }
+  if (basename(startDir) === 'scenarios') return discoverBundleFixturesDir(startDir).dir;
 
-  if (existsSync(join(startDir, 'fixtures')) && !existsSync(join(startDir, 'atrezzo', 'fixtures'))) {
-    return join(startDir, 'fixtures');
+  const parentDir = dirname(startDir);
+  const localCandidates = [
+    join(startDir, DEFAULT_FIXTURES_DIR),
+    join(startDir, 'fixtures'),
+    join(parentDir, DEFAULT_FIXTURES_DIR),
+    join(parentDir, 'fixtures'),
+  ];
+  for (const candidate of localCandidates) {
+    if (existsSync(candidate)) return candidate;
   }
   return join(startDir, DEFAULT_FIXTURES_DIR);
 }

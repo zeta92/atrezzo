@@ -8,6 +8,7 @@ import { loadScenario, scenarioNameFromFile, MAX_LATENCY } from './scenario.mjs'
 import { generateWorld } from './world.mjs';
 import { createEngine } from './contract.mjs';
 import { createMissStore, guessShape, isMutation, missKey, safeSearch } from './misses.mjs';
+import { discoverBundleFixturesDir } from './passthrough.mjs';
 
 export const ON_MISS = ['log', 'stub'];
 const wait = (ms) => new Promise((ok) => { setTimeout(ok, ms); });
@@ -42,6 +43,7 @@ export function underApiPrefix(endpoints, pathname) {
 /** Map of scenario name -> file, by file basename and by `name:` field. */
 export function listScenarios(dir) {
   if (!existsSync(dir)) throw new AtrezzoError(`Scenarios directory ${dir} does not exist`);
+  if (!statSync(dir).isDirectory()) throw new AtrezzoError(`Scenarios path ${dir} is not a directory`);
   const out = {};
   for (const f of readdirSync(dir).sort()) {
     if (!/\.(ya?ml|json)$/.test(f)) continue;
@@ -118,6 +120,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
   if (!ON_MISS.includes(onMiss)) throw new AtrezzoError(`--on-miss must be ${ON_MISS.join(' or ')} (got "${onMiss}")`);
   if (!Number.isInteger(latency) || latency < 0 || latency > MAX_LATENCY) throw new AtrezzoError(`--latency must be an integer between 0 and ${MAX_LATENCY} ms (got "${latency}")`);
   const misses = createMissStore(missesFile);
+  const resolvedFixturesDir = fixturesDir ? resolve(fixturesDir) : discoverBundleFixturesDir(scenariosDir).dir;
   let available = listScenarios(scenariosDir);
   const pick = (name) => {
     available = listScenarios(scenariosDir);
@@ -129,7 +132,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
     if (!available[name]) throw new AtrezzoError(`Scenario "${name}" not found in ${scenariosDir} (available: ${[...new Set(Object.values(available).map(scenarioNameFromFile))].join(', ') || 'none'})`);
     return available[name];
   };
-  let state = buildState(pick(scenario), fixturesDir);
+  let state = buildState(pick(scenario), resolvedFixturesDir);
 
   const send = (res, status, body, headers = {}, hasBody = body !== null) => {
     // hasBody false (or body null without hasBody) = no body (e.g. a count-only answer); text/binary goes verbatim, JSON values go through JSON.stringify.
@@ -267,7 +270,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
       }
       if (url.pathname === '/__atrezzo/reload') {
         if (req.method !== 'POST') return send(res, 405, { error: 'use POST' }, { ...JSON_CT, allow: 'POST' });
-        const nextState = buildState(pick(state.dataset.scenario), fixturesDir);
+        const nextState = buildState(pick(state.dataset.scenario), resolvedFixturesDir);
         closeAllStreams();
         state = nextState;
         log(`reload → ${state.dataset.scenario} (hash ${state.dataset.hash})`);
@@ -277,7 +280,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         if (req.method !== 'POST') return send(res, 405, { error: 'use POST' }, { allow: 'POST' });
         const body = await readBody(req);
         const name = body.scenario ?? url.searchParams.get('scenario') ?? state.dataset.scenario;
-        const nextState = buildState(pick(name), fixturesDir);
+        const nextState = buildState(pick(name), resolvedFixturesDir);
         closeAllStreams();
         state = nextState;
         log(`reset → ${state.dataset.scenario}`);
