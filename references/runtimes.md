@@ -41,13 +41,13 @@ In a monorepo the signals of the root, the front end and the backend add up (e.g
 
 ### builtin (`atrezzo serve`)
 
-- **Does**: serves the projections over HTTP (`GET /api/x?filter=&limit=&offset=`, `/:id` detail, envelopes, `X-Total-Count`), `passthrough` fixtures with `patch` overrides (`atrezzo record`), declared `writes` (`POST`/`PUT`/`PATCH`/`DELETE` against the in-memory world), declared PostgREST functions (`rpc:` on `POST /rpc/<fn>` and `/rest/v1/rpc/<fn>`), and declared SSE `streams` (`Content-Type: text/event-stream`), switches or resets scenarios without restarting (`POST /__atrezzo/reset {"scenario":"x"}`), rereads the YAML (`POST /__atrezzo/reload`), serves static files with `--static`, and records gaps (`atrezzo misses`).
+- **Does**: serves the projections over HTTP (`GET /api/x?filter=&limit=&offset=`, `/:id` detail, envelopes, `X-Total-Count`), `passthrough` fixtures with `patch` overrides (`atrezzo record`), declared `writes` (`POST`/`PUT`/`PATCH`/`DELETE` against the in-memory world, including body-conditioned `cases` branches), declared PostgREST functions (`rpc:` on `POST /rpc/<fn>` and `/rest/v1/rpc/<fn>`), and declared SSE `streams` (`Content-Type: text/event-stream`), switches or resets scenarios without restarting (`POST /__atrezzo/reset {"scenario":"x"}`), rereads the YAML (`POST /__atrezzo/reload`), serves static files with `--static`, and records gaps (`atrezzo misses`).
 - **Does not**: undeclared writes (405, recorded as a gap), business logic, or RLS.
 - **Start**: `atrezzo serve --scenario orders --port 4010`.
 
 ### msw
 
-- **Does**: `world` writes `<scenario>.handlers.mjs`, which imports the JSON and `runtime.mjs` and projects with the same engine as `serve` (declared `writes` and `rpc` functions included: one `http.post('*/rpc/:fn')` handler covers `/rpc/<fn>` and `/rest/v1/rpc/<fn>`). With `workspace.front`, the handlers go to `<front>/src/mocks/atrezzo/` with relative imports to `atrezzo/.generated/`; otherwise to `.generated/`.
+- **Does**: `world` writes `<scenario>.handlers.mjs`, which imports the JSON and `runtime.mjs` and projects with the same engine as `serve` (declared `writes`, body-conditioned `writes.*.cases`, and `rpc` functions included: one `http.post('*/rpc/:fn')` handler covers `/rpc/<fn>` and `/rest/v1/rpc/<fn>`). With `workspace.front`, the handlers go to `<front>/src/mocks/atrezzo/` with relative imports to `atrezzo/.generated/`; otherwise to `.generated/`.
 - **Does not**: install msw (use `init --install`, which announces it) or register the worker for you.
 - **Start**:
   ```js
@@ -68,7 +68,7 @@ Supabase has no mock layer: its API is PostgREST over Postgres. The "runtime" is
   - `reset.sh`: applies both with `psql`, is idempotent and **refuses a connection string that does not look local** unless you add `--allow-remote` (exit 2).
   - `README.md`: steps with the Supabase CLI or standalone Postgres + PostgREST.
   - Your `supabase/seed.sql` is left alone.
-- **Does not**: project with the atrezzo engine. PostgREST handles filters, sorting, pagination (`Range`, `limit/offset`) and embeds; the scenario routes (`/api/orders`) do not exist there (supabase-js queries `/rest/v1/<entity>`). The data is identical; the response shape is PostgREST's. It does not simulate RLS or auth either: with RLS on, `anon` only sees what your policies allow. If your migrations already create the tables with other columns, `seed.sql` fails with `column … does not exist` (the scenario does not match your schema; adjust it).
+- **Does not**: project with the atrezzo engine. PostgREST handles filters, sorting, pagination (`Range`, `limit/offset`) and embeds; the scenario routes (`/api/orders`) do not exist there (supabase-js queries `/rest/v1/<entity>`). The data is identical; the response shape is PostgREST's. It does not evaluate declarative `writes` / `writes.*.cases` predicates or mock fallback/422 branches, nor does it simulate RLS or auth: with RLS on, `anon` only sees what your policies allow. If your migrations already create the tables with other columns, `seed.sql` fails with `column … does not exist` (the scenario does not match your schema; adjust it).
 - **Start**:
   ```bash
   supabase start
@@ -85,7 +85,7 @@ If you do not want to run Postgres, you can point the app's Supabase URL (in you
 ### prism
 
 - **Does**: `world` writes `<generatedDir>/<scenario>.openapi.yaml` (OpenAPI 3.1) from the scenario endpoints: one schema per entity with `required` = fields never null in the world, filter and pagination parameters, `X-Total-Count`, `/{id}` detail with 404 (detail path parameter schema is `type: string` for string-ID entities and `type: integer, minimum: 1` otherwise), and `examples` computed by the engine (the projection without a query, plus one per value of the first filter with ≤ 10 values, e.g. `status-issue`).
-- **Does not**: filter or paginate. Prism returns the default example for **any** query (`?status=issue` returns all 40 orders); another example only with the `Prefer: example=status-issue` header. The detail always returns the first id (`/api/orders/999` → 200 with id 1) unless you send `Prefer: code=404`. With `-d` (dynamic) it generates data that is not the world. Filters are declared as `string` without `enum` because with an enum Prism would reject the `a,b` lists the engine accepts.
+- **Does not**: filter or paginate, or emit `writes` / `writes.*.cases` routes (they answer 404 without a 501). Prism returns the default example for **any** query (`?status=issue` returns all 40 orders); another example only with the `Prefer: example=status-issue` header. The detail always returns the first id (`/api/orders/999` → 200 with id 1) unless you send `Prefer: code=404`. With `-d` (dynamic) it generates data that is not the world. Filters are declared as `string` without `enum` because with an enum Prism would reject the `a,b` lists the engine accepts.
 - **Does (Prism's own)**: validate requests against the parameters: `?limit=abc` → 400.
 - **Start**: with `@stoplight/prism-cli` already among your project's dev dependencies, `prism mock atrezzo/.generated/orders.openapi.yaml --port 4010`.
 
@@ -101,7 +101,7 @@ WireMock cannot run the projection: Handlebars has no sane way to filter + sort 
   - pages of `default_limit`/`max_limit` (`limit=N` and `limit=N&offset=k`, up to 50 pages);
   - **the exact requests of the flows** (`flow.yaml` files whose `scenario` points here), e.g. `?status=issue&limit=12`.
   Body and `X-Total-Count` come from the engine: the same bytes as `serve`. The `/{id}` detail uses **response templating**: `bodyFileName: "<scenario>/<endpoint>/id/{{request.pathSegments.[n]}}.json"` with `transformers: ["response-template"]` declared in the mapping (detail mapping IDs are ASCII URL-unreserved strings or numbers, and regex metacharacters in `urlPathPattern` are escaped); unknown ids return 404.
-- **Does not**: combined filters, `a,b` lists, other sort orders or pages not enumerated. Those requests fall into a low-priority mapping that answers **501** with `{"error": …, "generated": [...]}`: never a wrong page. If a screen requests a new combination, add it to a flow and run `world` again. It does not emit `X-Atrezzo-Ignored` either. Do not mix two scenarios in the same `mappings/` folder (routes clash): each scenario is its own root.
+- **Does not**: combined filters, `a,b` lists, other sort orders or pages not enumerated, or `writes` / `writes.*.cases` routes (write routes are not emitted and answer 404). Unenumerated GET combinations fall into a low-priority mapping that answers **501** with `{"error": …, "generated": [...]}`: never a wrong page. If a screen requests a new combination, add it to a flow and run `world` again. It does not emit `X-Atrezzo-Ignored` either. Do not mix two scenarios in the same `mappings/` folder (routes clash): each scenario is its own root.
 - **Start**:
   ```bash
   docker run --rm -p 4010:8080 -v "/path/to/your/project/atrezzo/.generated/wiremock/orders:/home/wiremock" wiremock/wiremock:3.13.2

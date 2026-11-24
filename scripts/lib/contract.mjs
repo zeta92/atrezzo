@@ -602,22 +602,62 @@ export function createEngine(dataset) {
     }
     return out;
   }
+  const sameJson = (a, b) => JSON.stringify(canonicalValue(a)) === JSON.stringify(canonicalValue(b));
+
+  function matchesCaseWhen(payload, when) {
+    return Object.entries(when).every(([k, expected]) => {
+      if (!Object.hasOwn(payload, k)) return false;
+      const actual = payload[k];
+      return Array.isArray(expected)
+        ? expected.some((candidate) => sameJson(actual, candidate))
+        : sameJson(actual, expected);
+    });
+  }
+
   function handleWrite(wMatch, pathname, body) {
     const { w, params } = wMatch;
     if (body !== undefined && body !== null && (typeof body !== 'object' || Array.isArray(body))) {
       return json(400, { error: 'request body must be a JSON object' });
     }
     const payload = body && typeof body === 'object' ? body : {};
-    const status = w.expect.status;
+
+    let selected = null;
+    if (w.cases?.length) {
+      for (const c of w.cases) {
+        if (matchesCaseWhen(payload, c.when)) {
+          selected = { expect: c.expect, mutate: c.mutate ?? null, params: c.params ?? [] };
+          break;
+        }
+      }
+      if (!selected) {
+        if (w.expect) {
+          selected = { expect: w.expect, mutate: w.mutate ?? null, params: w.params ?? [] };
+        } else {
+          return json(422, {
+            error: `${w.method} ${w.path}: request body did not match any declared case in scenario "${dataset.scenario}" (${w.cases.length} ${w.cases.length === 1 ? 'case' : 'cases'} checked, no fallback)`,
+            atrezzo: {
+              write: `${w.method} ${w.path}`,
+              scenario: dataset.scenario,
+              unmatchedCase: true,
+              cases: w.cases.length,
+            },
+          });
+        }
+      }
+    } else {
+      selected = { expect: w.expect, mutate: w.mutate ?? null, params: w.params ?? [] };
+    }
+
+    const status = selected.expect.status;
     const respond = (defaultBody) => {
-      if (w.expect.body !== undefined) return json(status, w.expect.body === null ? null : JSON.parse(JSON.stringify(w.expect.body)));
-      if (w.expect.echo) return json(status, defaultBody);
+      if (selected.expect.body !== undefined) return json(status, selected.expect.body === null ? null : JSON.parse(JSON.stringify(selected.expect.body)));
+      if (selected.expect.echo) return json(status, defaultBody);
       return json(status, status === 204 || status === 205 || status === 304 ? null : {});
     };
 
-    if (!w.mutate) return respond(canonicalValue(payload));
+    if (!selected.mutate) return respond(canonicalValue(payload));
 
-    const { entity, action, set, where: whereCond } = w.mutate;
+    const { entity, action, set, where: whereCond } = selected.mutate;
     const rows = workingEntities[entity];
     const curUser = getCurrentUser();
     const resolveVal = (v) => (typeof v === 'string' && v.startsWith('$user.') ? (curUser ? (curUser[v.slice(6)] ?? null) : null) : v);
@@ -653,7 +693,7 @@ export function createEngine(dataset) {
       for (const [k, v] of Object.entries(payload)) {
         if (k !== 'id') raw[k] = v;
       }
-      for (const p of w.params ?? []) {
+      for (const p of selected.params) {
         if (p.field !== null) raw[p.field] = coerceParam(p.field, params[p.name]);
       }
       for (const [k, v] of Object.entries(set ?? {})) raw[k] = resolveVal(v);
@@ -683,7 +723,7 @@ export function createEngine(dataset) {
       return respond(formatWriteRow(created));
     }
 
-    const bound = (w.params ?? []).filter((p) => p.field !== null);
+    const bound = selected.params.filter((p) => p.field !== null);
     let indices = [];
     if (!bound.length && !whereCond && payload.id === undefined) {
       if (match(pathname)?.ep.shape === 'object') {

@@ -237,7 +237,14 @@ function cmdWorld({ pos, flags }) {
     for (const d of degraded) out(`Degraded in ${d.rt}: ${d.id} (${STATE_LABEL[d.state]})${d.note ? ` — ${d.note}` : ''}`);
   }
   for (const w of scenario.writes ?? []) {
-    const bits = [`→ ${w.expect.status}${w.expect.echo ? ' (echo)' : ''}`];
+    const bits = [];
+    if (w.cases?.length) {
+      bits.push(`${w.cases.length} ${w.cases.length === 1 ? 'case' : 'cases'}`);
+      if (w.expect) bits.push(`fallback → ${w.expect.status}${w.expect.echo ? ' (echo)' : ''}`);
+      else bits.push('no fallback → 422');
+    } else {
+      bits.push(`→ ${w.expect.status}${w.expect.echo ? ' (echo)' : ''}`);
+    }
     if (w.mutate) {
       bits.push(`${w.mutate.action} ${w.mutate.entity}`);
       if (w.mutate.set) bits.push(`set: ${Object.keys(w.mutate.set).join(',')}`);
@@ -313,7 +320,14 @@ async function cmdServe({ flags }) {
     out(`  GET ${ep.path}${notes.length ? `  (${notes.join(' · ')})` : ''}`);
   }
   for (const w of d.writes ?? []) {
-    const notes = [`→ ${w.expect.status}`];
+    const notes = [];
+    if (w.cases?.length) {
+      notes.push(`${w.cases.length} ${w.cases.length === 1 ? 'case' : 'cases'}`);
+      if (w.expect) notes.push(`fallback → ${w.expect.status}`);
+      else notes.push('no fallback → 422');
+    } else {
+      notes.push(`→ ${w.expect.status}`);
+    }
     if (w.mutate) notes.push(`${w.mutate.action} ${w.mutate.entity}${w.inferred ? `, inferred from GET ${w.inferred}` : ''}`);
     out(`  ${w.method} ${w.path}  (${notes.join(' · ')})`);
   }

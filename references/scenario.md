@@ -59,7 +59,7 @@ expect:
 | `auth` | map | optional; `{ user: { entity, id } }` seeds the current user for `$user.<field>` filters |
 | `world` | map | required, at least one entity |
 | `endpoints` | list | required, at least one |
-| `writes` | map | optional; `<METHOD> /path`: `{ expect, mutate }` for `POST`/`PUT`/`PATCH`/`DELETE` |
+| `writes` | map | optional; `<METHOD> /path`: `{ expect, mutate, cases }` for `POST`/`PUT`/`PATCH`/`DELETE` |
 | `streams` | map | optional; `/path`: `{ interval, events, loop }` for SSE (`text/event-stream`) in `serve` |
 | `rpc` | map | optional; `<function>`: `{ expect, body, match }` for PostgREST functions (`POST /rpc/<fn>`, `/rest/v1/rpc/<fn>`) |
 | `entry` | string | optional; with `path`, it must be its first element |
@@ -671,10 +671,35 @@ writes:
       expect: { status: 200 }
       mutate: false
   ```
+- **Body-conditioned branches (`cases`)**: a write rule may declare an ordered, non-empty `cases` list to choose the response and mutation from the raw JSON request body on the same `<METHOD> /path` route:
+
+  ```yaml
+  writes:
+    "POST /api/users":
+      cases:
+        - when: { email: ["taken@example.com", "reserved@example.com"] }
+          expect: { status: 409, body: { errors: { email: ["has already been taken"] } } }
+          mutate: false
+        - when: { role: "admin", invite: "VIP" }
+          expect: { status: 201, echo: true }
+          mutate: { entity: users, action: create, set: { role: "admin" } }
+        - when: { role: "admin" }
+          expect: { status: 403, body: { error: "invite required" } }
+          mutate: false
+      expect: { status: 201, echo: true }          # optional rule-level fallback
+      mutate: { entity: users, set: { role: "member" } }
+  ```
+
+  - **Case shape**: every entry requires a non-empty `when` map, a complete `expect` map (with explicit `status` `200..599`; never inherited from rule-level `expect` or defaulted from the HTTP method), and an explicit `mutate` map (`{ entity, action, set, where }`) or `mutate: false` (mutation is **never** inferred inside a case, preventing error branches from accidentally mutating data). On stateless branches (`mutate: false`), `echo: true` reflects the entire request body; do not use `echo: true` for error responses on requests containing credentials (use a static `expect.body` instead).
+  - **Matching (`when`)**: compares keys on the raw JSON request body object (before `mutate.set`, path-param injection, or entity schema filtering) using exact JSON equality (strict types: `1` ≠ `"1"`, `true` ≠ `"true"`, explicit `null` ≠ missing key; nested objects compare key-order-independently). Every key in `when` must exist on the request body object; because `when` is always non-empty, bodyless requests cannot match any case (they fall through to the rule-level fallback if declared, or return the unmatched `422`). A list value means **any-of**; exact array equality can be written as a nested singleton list (e.g. `tags: [[a, b]]` matches `["a", "b"]`). Multiple keys in `when` are ANDed. Cases are evaluated in declaration order and the **first matching case wins**.
+  - **Fallback vs unmatched 422**: when rule-level `expect`/`mutate` is present alongside `cases`, it acts as the fallback if no case matches. When no case matches and no fallback is declared, the engine returns a deterministic `422` diagnostic (`{ error, atrezzo: { write, scenario, unmatchedCase: true, cases } }`, where `atrezzo.cases` is the number of cases checked, not the case list) without echoing any part of the request body and without mutating the world.
+  - **Branch-specific path parameters**: `:param` segments in the route path are validated and bound per mutating branch against that branch's `mutate.entity` (`mutate: false` branches do not require path parameters to bind).
+  - **Validation & compatibility**: rejects empty/non-list `cases`, empty `when` or empty any-of lists, missing/incomplete `expect`, missing `mutate`, unbound path params on a mutating branch, duplicate `when` predicates, and statically unreachable cases shadowed by an earlier broader predicate (put more specific overlapping cases first). When `cases` is absent, normalized scenarios and hashes are completely unchanged.
+  - **Runtimes**: full parity between `atrezzo serve` (`builtin`) and generated `msw` handlers (both run `runtime.mjs`). `supabase`, `prism`, and `wiremock` do not execute declarative `cases` predicates (`write-cases` is reported as degraded in `world`, `doctor`, and `references/capabilities.md`).
 - **Response body**: `expect.body` when declared, else the resulting row(s) with `echo: true`, else `{}` (no body for `204`/`205`/`304`). In `serve`, an undeclared method on a contract route answers `405` with `Allow` and an unknown route answers `404`. Both are recorded as gaps, and their `atrezzo` payload lists `endpoints` and the declared `writes`.
 - **Determinism**: no `Math.random()` or wall clock is used. Numeric and default entities assign sequential integer `id`s independently (`maxId + 1`), while entities with explicit string `ids` use the caller-supplied `id` verbatim; mutated rows keep only declared entity schema fields in canonical schema order (formatted like reads when a GET endpoint exists, ignoring unknown request fields), stateless `echo: true` sorts payload keys deterministically, and `GET` projections preserve deterministic sort order across mutations.
 - **Session & reset**: `serve` and MSW handlers keep mutations in memory across subsequent reads in the same session (`embed` and `counts` indexes are invalidated automatically). `POST /__atrezzo/reset` (in both `serve` and MSW handlers, plus `reset()` exported from `<scenario>.handlers.mjs`) restores the world and ID counters to their initial seeded state.
-- **Validation (scenario error, exit 3)**: rejects empty `writes`, route keys without an explicit `POST`/`PUT`/`PATCH`/`DELETE` method, duplicate write routes, unknown `mutate.entity`, unknown fields in `set`/`where`, `id` in `set`, unbound `:param` segments, `set` on `delete`, `where` on `create`, and `echo: true`/`body` with `204`. Scenarios without `writes` keep their exact behaviour and hash.
+- **Validation (scenario error, exit 3)**: rejects empty `writes`, route keys without an explicit `POST`/`PUT`/`PATCH`/`DELETE` method, duplicate write routes, unknown `mutate.entity`, unknown fields in `set`/`where`, `id` in `set`, unbound `:param` segments (per mutating branch), `set` on `delete`, `where` on `create`, `echo: true`/`body` with `204`, and invalid/duplicate/unreachable `cases`. Scenarios without `writes` (or without `cases`) keep their exact behaviour and hash.
 
 ### PostgREST functions (`rpc`)
 

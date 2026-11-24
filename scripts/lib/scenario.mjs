@@ -1584,10 +1584,270 @@ function writeTargetEndpoint(method, path, endpoints) {
   return null;
 }
 
+function isJsonValue(v) {
+  if (v === null || typeof v === 'string' || typeof v === 'boolean') return true;
+  if (typeof v === 'number') return Number.isFinite(v);
+  if (Array.isArray(v)) return v.every(isJsonValue);
+  if (isObj(v)) return Object.values(v).every(isJsonValue);
+  return false;
+}
+
+function canonicalJsonValue(v) {
+  if (Array.isArray(v)) return v.map(canonicalJsonValue);
+  if (isObj(v)) {
+    const out = {};
+    for (const k of Object.keys(v).sort()) out[k] = canonicalJsonValue(v[k]);
+    return out;
+  }
+  return v;
+}
+
+const canonicalJsonKey = (v) => JSON.stringify(canonicalJsonValue(v));
+
+function whenSubsumes(earlier, later) {
+  return Object.entries(earlier).every(([k, ev]) => {
+    if (!Object.hasOwn(later, k)) return false;
+    const eSet = new Set((Array.isArray(ev) ? ev : [ev]).map(canonicalJsonKey));
+    const lVals = Array.isArray(later[k]) ? later[k] : [later[k]];
+    return lVals.every((lv) => eSet.has(canonicalJsonKey(lv)));
+  });
+}
+
+function parseWriteExpect(rawExpect, method, ef, issues, { requireComplete = false } = {}) {
+  if (rawExpect === undefined) {
+    if (requireComplete) {
+      issues.add(ef, 'required; must be a map { status, echo, body }');
+      return null;
+    }
+    return {
+      status: method === 'POST' ? 201 : method === 'DELETE' ? 204 : 200,
+      ...(method !== 'DELETE' ? { echo: true } : {}),
+    };
+  }
+  if (!isObj(rawExpect)) {
+    issues.add(ef, `must be a map { status, echo, body }; got ${typeName(rawExpect)}`);
+    return requireComplete ? null : { status: 200 };
+  }
+  issues.unknownKeys(rawExpect, ['status', 'echo', 'body'], ef);
+  let echo = false;
+  if (rawExpect.echo !== undefined) {
+    if (typeof rawExpect.echo !== 'boolean') issues.add(`${ef}.echo`, 'must be true or false');
+    else echo = rawExpect.echo;
+  }
+  const hasBody = rawExpect.body !== undefined;
+  if (echo && hasBody) issues.add(ef, 'use "echo: true" or "body", not both');
+  let status;
+  if (rawExpect.status !== undefined) {
+    if (!isInt(rawExpect.status) || rawExpect.status < 200 || rawExpect.status > 599) {
+      issues.add(`${ef}.status`, `must be an integer HTTP status between 200 and 599; got ${JSON.stringify(rawExpect.status)}`);
+      status = 200;
+    } else {
+      status = rawExpect.status;
+    }
+  } else if (requireComplete) {
+    issues.add(`${ef}.status`, 'required; must be an integer HTTP status between 200 and 599');
+    status = 200;
+  } else {
+    status = method === 'POST' ? 201 : (method === 'DELETE' && !echo && !hasBody) ? 204 : 200;
+  }
+  if (NO_BODY_STATUSES.has(status) && (echo || (hasBody && rawExpect.body !== null))) {
+    issues.add(ef, `status ${status} cannot have a response body`);
+  }
+  const expect = { status };
+  if (echo) expect.echo = true;
+  if (hasBody) expect.body = rawExpect.body;
+  return expect;
+}
+
+function parseWriteMutate(rawMutate, method, path, paramNames, branchField, mf, byName, auth, authDeclared, issues) {
+  let mutate = null;
+  const params = [];
+  if (!isObj(rawMutate)) {
+    issues.add(mf, `must be a map { entity, action, set, where } or false (stateless); got ${typeName(rawMutate)}`);
+    return { mutate, params };
+  }
+  issues.unknownKeys(rawMutate, ['entity', 'action', 'set', 'where'], mf);
+  const entityName = rawMutate.entity;
+  let spec = null;
+  if (typeof entityName !== 'string' || !entityName) {
+    issues.add(`${mf}.entity`, `required; a declared world entity (declared: ${Object.keys(byName).join(', ') || 'none'})`);
+  } else if (!Object.hasOwn(byName, entityName)) {
+    issues.add(`${mf}.entity`, `"${entityName}" is not declared in world (declared: ${Object.keys(byName).join(', ') || 'none'})`);
+  } else {
+    spec = byName[entityName];
+  }
+
+  let action = method === 'POST' ? 'create' : method === 'DELETE' ? 'delete' : 'update';
+  if (rawMutate.action !== undefined) {
+    if (!WRITE_ACTIONS.includes(rawMutate.action)) {
+      issues.add(`${mf}.action`, `must be ${WRITE_ACTIONS.map((a) => `"${a}"`).join(', ')}; got ${JSON.stringify(rawMutate.action)}`);
+    } else {
+      action = rawMutate.action;
+    }
+  }
+
+  const fields = spec ? entityFields(spec) : [];
+  if (spec && paramNames) {
+    for (const pname of paramNames) {
+      const boundField = writeParamField(pname, path, spec);
+      if (!boundField) {
+        issues.add(branchField, `parameter ":${pname}" does not match any field of "${spec.name}" (fields: ${fields.join(', ')})`);
+      } else {
+        params.push({ name: pname, field: boundField });
+      }
+    }
+  }
+
+  let set;
+  if (rawMutate.set !== undefined) {
+    const sf = `${mf}.set`;
+    if (action === 'delete') {
+      issues.add(sf, '"set" cannot be used with delete');
+    } else if (!isObj(rawMutate.set) || !Object.keys(rawMutate.set).length) {
+      issues.add(sf, 'must be a non-empty map field: value');
+    } else {
+      set = {};
+      for (const [sk, sv] of Object.entries(rawMutate.set)) {
+        const sff = `${sf}.${sk}`;
+        if (spec && !fields.includes(sk)) {
+          issues.add(sff, `field "${sk}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
+        } else if (sk === 'id') {
+          issues.add(sff, '"id" is managed by atrezzo and cannot be set in mutate.set');
+        } else if (typeof sv === 'string' && sv.startsWith('$')) {
+          const userField = parseUserToken(sv, sff, byName, auth, authDeclared, issues, spec ? sk : null, spec);
+          if (userField) set[sk] = sv;
+        } else if (!isScalar(sv)) {
+          issues.add(sff, 'must be a scalar value or "$user.<field>"');
+        } else {
+          set[sk] = sv;
+        }
+      }
+    }
+  }
+
+  let where;
+  if (rawMutate.where !== undefined) {
+    const wf = `${mf}.where`;
+    if (action === 'create') {
+      issues.add(wf, '"where" cannot be used with create');
+    } else if (!isObj(rawMutate.where) || !Object.keys(rawMutate.where).length) {
+      issues.add(wf, 'must be a non-empty map field: value');
+    } else {
+      where = {};
+      for (const [wk, wv] of Object.entries(rawMutate.where)) {
+        const wff = `${wf}.${wk}`;
+        if (spec && !fields.includes(wk)) {
+          issues.add(wff, `field "${wk}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
+          continue;
+        }
+        const parsed = parseScalarOrList(wv, wff, issues);
+        if (parsed === undefined) continue;
+        const candidates = Array.isArray(parsed) ? parsed : [parsed];
+        let ok = true;
+        for (const v of candidates) {
+          if (typeof v === 'string' && v.startsWith('$')) {
+            if (!parseUserToken(v, wff, byName, auth, authDeclared, issues, spec ? wk : null, spec)) ok = false;
+          }
+        }
+        if (ok) where[wk] = parsed;
+      }
+    }
+  }
+
+  if (spec) {
+    mutate = { entity: spec.name, action };
+    if (set) mutate.set = set;
+    if (where) mutate.where = where;
+  }
+  return { mutate, params };
+}
+
+function normalizeWriteCases(rawCases, method, path, paramNames, f, byName, auth, authDeclared, issues) {
+  const cfRoot = `${f}.cases`;
+  if (!Array.isArray(rawCases) || !rawCases.length) {
+    issues.add(cfRoot, 'must be a non-empty list of { when, expect, mutate }');
+    return [];
+  }
+  const out = [];
+  const seenWhens = [];
+  rawCases.forEach((rawCase, i) => {
+    const cf = `${cfRoot}[${i}]`;
+    if (!isObj(rawCase)) {
+      issues.add(cf, `must be a map { when, expect, mutate }; got ${typeName(rawCase)}`);
+      return;
+    }
+    issues.unknownKeys(rawCase, ['when', 'expect', 'mutate'], cf);
+
+    let when = null;
+    if (!isObj(rawCase.when) || !Object.keys(rawCase.when).length) {
+      issues.add(`${cf}.when`, 'required; must be a non-empty map <field>: <value | [values]>');
+    } else {
+      const parsedWhen = {};
+      let whenOk = true;
+      for (const [wk, wv] of Object.entries(rawCase.when)) {
+        const wff = `${cf}.when.${wk}`;
+        if (!wk || FORBIDDEN_ENVELOPE_SEGMENTS.has(wk)) {
+          issues.add(wff, `invalid predicate key ${JSON.stringify(wk)}`);
+          whenOk = false;
+          continue;
+        }
+        if (Array.isArray(wv)) {
+          if (!wv.length || !wv.every(isJsonValue)) {
+            issues.add(wff, 'must be a JSON value or a non-empty list of JSON values (any-of)');
+            whenOk = false;
+            continue;
+          }
+          parsedWhen[wk] = wv;
+        } else if (!isJsonValue(wv)) {
+          issues.add(wff, 'must be a JSON value or a non-empty list of JSON values (any-of)');
+          whenOk = false;
+          continue;
+        } else {
+          parsedWhen[wk] = wv;
+        }
+      }
+      if (whenOk) {
+        when = parsedWhen;
+        for (const prev of seenWhens) {
+          if (whenSubsumes(prev.when, when)) {
+            if (whenSubsumes(when, prev.when)) {
+              issues.add(`${cf}.when`, `duplicate "when" predicate (already declared in cases[${prev.index}])`);
+            } else {
+              issues.add(`${cf}.when`, `unreachable case: already matched by cases[${prev.index}].when (put more specific cases first)`);
+            }
+            break;
+          }
+        }
+        seenWhens.push({ index: i, when });
+      }
+    }
+
+    const expect = parseWriteExpect(rawCase.expect, method, `${cf}.expect`, issues, { requireComplete: true });
+
+    let mutate = null;
+    let params = [];
+    if (rawCase.mutate === undefined) {
+      issues.add(`${cf}.mutate`, 'required; must be a map { entity, action, set, where } or false (mutation is never inferred inside a case)');
+    } else if (rawCase.mutate !== false) {
+      const parsed = parseWriteMutate(rawCase.mutate, method, path, paramNames, cf, `${cf}.mutate`, byName, auth, authDeclared, issues);
+      mutate = parsed.mutate;
+      params = parsed.params;
+    }
+
+    if (when && expect) {
+      const normCase = { when, expect };
+      if (params.length) normCase.params = params;
+      if (mutate) normCase.mutate = mutate;
+      out.push(normCase);
+    }
+  });
+  return out;
+}
+
 function normalizeWrites(rawWrites, world, auth, authDeclared, issues, endpoints = []) {
   if (rawWrites === undefined) return [];
   if (!isObj(rawWrites) || !Object.keys(rawWrites).length) {
-    issues.add('writes', 'must be a non-empty map "<METHOD> /path": { expect, mutate }');
+    issues.add('writes', 'must be a non-empty map "<METHOD> /path": { expect, mutate, cases }');
     return [];
   }
   const byName = Object.fromEntries(world.map((s) => [s.name, s]));
@@ -1624,174 +1884,56 @@ function normalizeWrites(rawWrites, world, auth, authDeclared, issues, endpoints
     seen.add(shapeKey);
 
     if (!isObj(rawRule)) {
-      issues.add(f, `must be a map { expect, mutate }; got ${typeName(rawRule)}`);
+      issues.add(f, `must be a map { expect, mutate, cases }; got ${typeName(rawRule)}`);
       continue;
     }
-    issues.unknownKeys(rawRule, ['expect', 'mutate'], f);
-    if (rawRule.expect === undefined && rawRule.mutate === undefined) {
-      issues.add(f, 'must declare "expect" and/or "mutate"');
+    issues.unknownKeys(rawRule, ['expect', 'mutate', 'cases'], f);
+    const hasFallback = rawRule.expect !== undefined || rawRule.mutate !== undefined;
+    const hasCases = rawRule.cases !== undefined;
+    if (!hasFallback && !hasCases) {
+      issues.add(f, 'must declare "expect" and/or "mutate" (or "cases")');
       continue;
     }
 
     let expect;
-    if (rawRule.expect === undefined) {
-      expect = {
-        status: method === 'POST' ? 201 : method === 'DELETE' ? 204 : 200,
-        ...(method !== 'DELETE' ? { echo: true } : {}),
-      };
-    } else if (!isObj(rawRule.expect)) {
-      issues.add(`${f}.expect`, `must be a map { status, echo, body }; got ${typeName(rawRule.expect)}`);
-      expect = { status: 200 };
-    } else {
-      issues.unknownKeys(rawRule.expect, ['status', 'echo', 'body'], `${f}.expect`);
-      let echo = false;
-      if (rawRule.expect.echo !== undefined) {
-        if (typeof rawRule.expect.echo !== 'boolean') issues.add(`${f}.expect.echo`, 'must be true or false');
-        else echo = rawRule.expect.echo;
-      }
-      const hasBody = rawRule.expect.body !== undefined;
-      if (echo && hasBody) issues.add(`${f}.expect`, 'use "echo: true" or "body", not both');
-      let status;
-      if (rawRule.expect.status !== undefined) {
-        if (!isInt(rawRule.expect.status) || rawRule.expect.status < 200 || rawRule.expect.status > 599) {
-          issues.add(`${f}.expect.status`, `must be an integer HTTP status between 200 and 599; got ${JSON.stringify(rawRule.expect.status)}`);
-          status = 200;
-        } else {
-          status = rawRule.expect.status;
-        }
-      } else {
-        status = method === 'POST' ? 201 : (method === 'DELETE' && !echo && !hasBody) ? 204 : 200;
-      }
-      if (NO_BODY_STATUSES.has(status) && (echo || (hasBody && rawRule.expect.body !== null))) {
-        issues.add(`${f}.expect`, `status ${status} cannot have a response body`);
-      }
-      expect = { status };
-      if (echo) expect.echo = true;
-      if (hasBody) expect.body = rawRule.expect.body;
-    }
-
-    // No `mutate` on a contract endpoint's route ⇒ it mutates that endpoint's entity (default action by method),
-    // as long as every path parameter binds to one of its fields. `mutate: false` keeps it stateless.
-    let rawMutate = rawRule.mutate === false ? undefined : rawRule.mutate;
-    let inferredFrom = null;
-    if (rawRule.mutate === undefined && paramNames) {
-      const ep = writeTargetEndpoint(method, path, endpoints);
-      const spec = ep && Object.hasOwn(byName, ep.entity) ? byName[ep.entity] : null;
-      if (spec && paramNames.every((p) => writeParamField(p, path, spec))) {
-        rawMutate = { entity: spec.name };
-        inferredFrom = ep.path;
-      }
-    }
-
     let mutate = null;
-    const params = [];
-    if (rawMutate !== undefined) {
-      const mf = `${f}.mutate`;
-      if (!isObj(rawMutate)) {
-        issues.add(mf, `must be a map { entity, action, set, where } or false (stateless); got ${typeName(rawMutate)}`);
-      } else {
-        issues.unknownKeys(rawMutate, ['entity', 'action', 'set', 'where'], mf);
-        const entityName = rawMutate.entity;
-        let spec = null;
-        if (typeof entityName !== 'string' || !entityName) {
-          issues.add(`${mf}.entity`, `required; a declared world entity (declared: ${Object.keys(byName).join(', ') || 'none'})`);
-        } else if (!Object.hasOwn(byName, entityName)) {
-          issues.add(`${mf}.entity`, `"${entityName}" is not declared in world (declared: ${Object.keys(byName).join(', ') || 'none'})`);
-        } else {
-          spec = byName[entityName];
-        }
+    let inferredFrom = null;
+    let params = [];
+    if (hasFallback) {
+      expect = parseWriteExpect(rawRule.expect, method, `${f}.expect`, issues);
 
-        let action = method === 'POST' ? 'create' : method === 'DELETE' ? 'delete' : 'update';
-        if (rawMutate.action !== undefined) {
-          if (!WRITE_ACTIONS.includes(rawMutate.action)) {
-            issues.add(`${mf}.action`, `must be ${WRITE_ACTIONS.map((a) => `"${a}"`).join(', ')}; got ${JSON.stringify(rawMutate.action)}`);
-          } else {
-            action = rawMutate.action;
-          }
+      // No `mutate` on a contract endpoint's route ⇒ it mutates that endpoint's entity (default action by method),
+      // as long as every path parameter binds to one of its fields. `mutate: false` keeps it stateless.
+      let rawMutate = rawRule.mutate === false ? undefined : rawRule.mutate;
+      if (rawRule.mutate === undefined && paramNames) {
+        const ep = writeTargetEndpoint(method, path, endpoints);
+        const spec = ep && Object.hasOwn(byName, ep.entity) ? byName[ep.entity] : null;
+        if (spec && paramNames.every((p) => writeParamField(p, path, spec))) {
+          rawMutate = { entity: spec.name };
+          inferredFrom = ep.path;
         }
+      }
 
-        const fields = spec ? entityFields(spec) : [];
-        if (spec && paramNames) {
-          for (const pname of paramNames) {
-            const boundField = writeParamField(pname, path, spec);
-            if (!boundField) {
-              issues.add(f, `parameter ":${pname}" does not match any field of "${spec.name}" (fields: ${fields.join(', ')})`);
-            } else {
-              params.push({ name: pname, field: boundField });
-            }
-          }
-        }
-
-        let set;
-        if (rawMutate.set !== undefined) {
-          const sf = `${mf}.set`;
-          if (action === 'delete') {
-            issues.add(sf, '"set" cannot be used with delete');
-          } else if (!isObj(rawMutate.set) || !Object.keys(rawMutate.set).length) {
-            issues.add(sf, 'must be a non-empty map field: value');
-          } else {
-            set = {};
-            for (const [sk, sv] of Object.entries(rawMutate.set)) {
-              const sff = `${sf}.${sk}`;
-              if (spec && !fields.includes(sk)) {
-                issues.add(sff, `field "${sk}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
-              } else if (sk === 'id') {
-                issues.add(sff, '"id" is managed by atrezzo and cannot be set in mutate.set');
-              } else if (typeof sv === 'string' && sv.startsWith('$')) {
-                const userField = parseUserToken(sv, sff, byName, auth, authDeclared, issues, spec ? sk : null, spec);
-                if (userField) set[sk] = sv;
-              } else if (!isScalar(sv)) {
-                issues.add(sff, 'must be a scalar value or "$user.<field>"');
-              } else {
-                set[sk] = sv;
-              }
-            }
-          }
-        }
-
-        let where;
-        if (rawMutate.where !== undefined) {
-          const wf = `${mf}.where`;
-          if (action === 'create') {
-            issues.add(wf, '"where" cannot be used with create');
-          } else if (!isObj(rawMutate.where) || !Object.keys(rawMutate.where).length) {
-            issues.add(wf, 'must be a non-empty map field: value');
-          } else {
-            where = {};
-            for (const [wk, wv] of Object.entries(rawMutate.where)) {
-              const wff = `${wf}.${wk}`;
-              if (spec && !fields.includes(wk)) {
-                issues.add(wff, `field "${wk}" does not exist in "${spec.name}" (fields: ${fields.join(', ')})`);
-                continue;
-              }
-              const parsed = parseScalarOrList(wv, wff, issues);
-              if (parsed === undefined) continue;
-              const candidates = Array.isArray(parsed) ? parsed : [parsed];
-              let ok = true;
-              for (const v of candidates) {
-                if (typeof v === 'string' && v.startsWith('$')) {
-                  if (!parseUserToken(v, wff, byName, auth, authDeclared, issues, spec ? wk : null, spec)) ok = false;
-                }
-              }
-              if (ok) where[wk] = parsed;
-            }
-          }
-        }
-
-        if (spec) {
-          mutate = { entity: spec.name, action };
-          if (set) mutate.set = set;
-          if (where) mutate.where = where;
-        }
+      if (rawMutate !== undefined) {
+        const parsed = parseWriteMutate(rawMutate, method, path, paramNames, f, `${f}.mutate`, byName, auth, authDeclared, issues);
+        mutate = parsed.mutate;
+        params = parsed.params;
+      } else if (paramNames) {
+        for (const pname of paramNames) params.push({ name: pname, field: null });
       }
     } else if (paramNames) {
       for (const pname of paramNames) params.push({ name: pname, field: null });
     }
 
-    const norm = { method, path, expect };
+    const cases = hasCases
+      ? normalizeWriteCases(rawRule.cases, method, path, paramNames, f, byName, auth, authDeclared, issues)
+      : null;
+
+    const norm = hasFallback ? { method, path, expect } : { method, path };
     if (params.length) norm.params = params;
     if (mutate) norm.mutate = mutate;
     if (mutate && inferredFrom) norm.inferred = inferredFrom; // the GET endpoint the entity came from
+    if (cases?.length) norm.cases = cases; // only when declared: keeps scenario hashes stable
     out.push(norm);
   }
   return out;
