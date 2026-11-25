@@ -2250,7 +2250,7 @@ export function loadFlow(file) {
       if (!isObj(st.requests)) issues.add(`${f}.requests`, 'must be a map name: "GET /path"');
       else for (const [k, v] of Object.entries(st.requests)) {
         const m = typeof v === 'string' ? /^GET\s+(\/\S*)$/.exec(v.trim()) : null;
-        if (!m) issues.add(`${f}.requests.${k}`, `format "GET /path?query" (GET only; the mock does not implement writes); got ${JSON.stringify(v)}`);
+        if (!m) issues.add(`${f}.requests.${k}`, `format "GET /path?query" (steps[].requests are GET-only; configure app-submitted writes separately under scenario writes:, using mutate: only for state-changing behavior)${typeof v === 'string' ? '' : `; got ${typeName(v)}`}`);
         else requests[k] = m[1];
       }
     }

@@ -7,7 +7,7 @@ import { AtrezzoError } from './errors.mjs';
 import { loadScenario, scenarioNameFromFile, MAX_LATENCY } from './scenario.mjs';
 import { generateWorld } from './world.mjs';
 import { createEngine } from './contract.mjs';
-import { createMissStore, guessShape, isMutation, missKey, safeSearch } from './misses.mjs';
+import { createMissStore, guessShape, isMutation, isWriteMethod, missKey, safeSearch, WRITE_METHODS } from './misses.mjs';
 import { discoverBundleFixturesDir } from './passthrough.mjs';
 
 export const ON_MISS = ['log', 'stub'];
@@ -236,7 +236,9 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
       const body = !isMutation(entry.method) && (shape ?? guessShape(entry.path)) === 'collection' ? [] : {};
       return send(res, 200, body, { ...JSON_CT, 'x-atrezzo-stub': 'true', 'x-atrezzo-scenario': state.dataset.scenario });
     }
-    const why = status === 405 ? ' (method not declared in scenario; add it under writes:)' : '';
+    const why = status !== 405 ? ''
+      : isWriteMethod(req.method) ? ' (method not declared in scenario; add it under writes:)'
+        : ` (method not declared in scenario; ${req.method} cannot be declared under writes:, only ${WRITE_METHODS.join('/')})`;
     return send(res, status, {
       ...fields,
       error: error ?? `${req.method} ${url.pathname} is not in the contract of scenario "${state.dataset.scenario}"${why}`,

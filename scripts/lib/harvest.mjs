@@ -1170,8 +1170,13 @@ export function formatHarvestReport(res) {
     for (const u of d.uninferrable ?? []) uninferrable.push(`${d.method} ${d.path}: ${u}`);
   }
   for (const n of res.uninferrable ?? []) uninferrable.push(n);
+  const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
   for (const m of res.mutations ?? []) {
-    uninferrable.push(`${m.method} ${m.path}: write not mocked (${m.times}×; atrezzo only projects reads)`);
+    const method = String(m.method).toUpperCase();
+    const detail = WRITE_METHODS.has(method)
+      ? `${m.times}×; if state-changing, optionally declare a scenario writes: route, with mutate: only when state changes`
+      : `${m.times}×`;
+    uninferrable.push(`${m.method} ${m.path}: non-GET request not inferred by harvest (${detail})`);
   }
 
   if (uninferrable.length) {

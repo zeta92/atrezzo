@@ -78,6 +78,10 @@ export function guessShape(pattern) {
 
 export const isMutation = (method) => !['GET', 'HEAD'].includes(method);
 
+/** Methods a scenario can declare under writes: (a subset of mutations). */
+export const WRITE_METHODS = Object.freeze(['POST', 'PUT', 'PATCH', 'DELETE']);
+export const isWriteMethod = (method) => WRITE_METHODS.includes(method);
+
 /**
  * Store backed by a JSON file (or memory when file is null). The file is re-read when it
  * changes on disk, so `atrezzo misses --clear` from another process is honoured.
@@ -221,7 +225,8 @@ export function hintFor(miss, { spec = null, contract = null, scenarios = [] } =
   if (covering.length) return `already declared by scenario ${covering.join(', ')} → atrezzo world + POST /__atrezzo/reload (or restart serve)`;
   const fn = miss.method === 'POST' ? rpcFunction(miss.path) : null;
   if (fn) return `PostgREST function: declare it under rpc: { ${fn}: { expect: { status: 200 }, body: … } } in the scenario`;
-  if (isMutation(miss.method)) return 'mutation: declare it under writes: in the scenario, or use serve --on-miss stub (or leave it unresolved)';
+  if (isWriteMethod(miss.method)) return 'mutation: declare it under writes: in the scenario, or use serve --on-miss stub (or leave it unresolved)';
+  if (isMutation(miss.method)) return `${miss.method} cannot be declared under writes: (only ${WRITE_METHODS.join('/')}); use serve --on-miss stub (or leave it unresolved)`;
   if (spec) {
     const hit = findInSpec(spec, miss.method, miss.path);
     if (hit?.method) return `the contract has it (${miss.method} ${hit.path}) → atrezzo import ${contract}`;

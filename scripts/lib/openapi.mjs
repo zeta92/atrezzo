@@ -216,7 +216,7 @@ export function inferScenario(spec, { name = 'api', base, file = '<spec>', apiPr
       operations++;
       const M = method.toUpperCase();
       if (method !== 'get') {
-        ignored.push({ method: M, path: rawPath, reason: ['post', 'put', 'patch', 'delete'].includes(method) ? 'mutation not supported: atrezzo only projects reads (GET)' : `${M} is not projected` });
+        ignored.push({ method: M, path: rawPath, reason: ['post', 'put', 'patch', 'delete'].includes(method) ? 'non-GET operation not imported: atrezzo import projects GET only (manually declare under writes: in the scenario if state-changing)' : `${M} is not projected by import` });
         continue;
       }
       const params = rawPath.match(/\{[^}]+\}/g) ?? [];

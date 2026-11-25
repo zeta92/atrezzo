@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
 import { parseYaml, YamlError } from '../scripts/lib/yaml.mjs';
-import { normalizeScenario, MAX_STREAM_INTERVAL } from '../scripts/lib/scenario.mjs';
+import { normalizeScenario, loadFlow, MAX_STREAM_INTERVAL } from '../scripts/lib/scenario.mjs';
 import { scenarioHash } from '../scripts/lib/world.mjs';
 import { AtrezzoError } from '../scripts/lib/errors.mjs';
 import { SCENARIO, tmpProject, cli } from './helpers.mjs';
@@ -249,4 +250,84 @@ ${extra}`;
   assert.match(errorOf(() => norm(make('    shape: object\n    wrap: "1bad"\n'))).message, /endpoints\[0\]\.wrap": must be a single key name/);
   assert.match(errorOf(() => norm(make('    shape: object\n    wrap: ""\n'))).message, /endpoints\[0\]\.wrap": must be a single key name/);
   assert.match(errorOf(() => norm(make('    shape: object\n    wrap: 123\n'))).message, /endpoints\[0\]\.wrap": must be a single key name/);
+});
+
+test('loadFlow: non-GET steps[].requests explains GET-only steps[].requests and points to writes:/mutate:', () => {
+  const dir = tmpProject({
+    'ok.yaml': 'steps:\n  - screen: bonus\n    requests:\n      player: GET /api/players?id=1\n',
+    'post.yaml': 'steps:\n  - screen: bonus\n    requests:\n      optin: POST /api/bonusOptIn\n',
+    'multi.yaml': [
+      'steps:',
+      '  - screen: orders',
+      '    requests:',
+      '      create: POST /api/orders',
+      '      replace: PUT /api/orders/1',
+      '      update: PATCH /api/orders/1',
+      '      remove: DELETE /api/orders/1',
+      '',
+    ].join('\n'),
+  });
+
+  const ok = loadFlow(join(dir, 'ok.yaml'));
+  assert.deepEqual(ok.steps[0].requests, { player: '/api/players?id=1' });
+
+  const postErr = errorOf(() => loadFlow(join(dir, 'post.yaml')));
+  assert.ok(postErr instanceof AtrezzoError);
+  assert.equal(postErr.exitCode, 3);
+  assert.match(postErr.message, /steps\[0\]\.requests\.optin": format "GET \/path\?query" \(steps\[\]\.requests are GET-only; configure app-submitted writes separately under scenario writes:, using mutate: only for state-changing behavior\)/);
+  assert.doesNotMatch(postErr.message, /POST \/api\/bonusOptIn/);
+  assert.doesNotMatch(postErr.message, /mock does not implement writes|does not implement writes/i);
+
+  const multiErr = errorOf(() => loadFlow(join(dir, 'multi.yaml')));
+  assert.ok(multiErr instanceof AtrezzoError);
+  assert.equal(multiErr.exitCode, 3);
+  for (const key of ['create', 'replace', 'update', 'remove']) {
+    assert.ok(
+      multiErr.issues.some((l) => l.includes(`steps[0].requests.${key}`) && /steps\[\]\.requests are GET-only/.test(l) && /writes:.*mutate: only for state-changing behavior/.test(l)),
+      `missing expected issue for ${key}: ${multiErr.issues.join('\n')}`,
+    );
+  }
+  assert.doesNotMatch(multiErr.message, /mock does not implement writes|does not implement writes/i);
+});
+
+test('loadFlow: invalid steps[].requests never echoes raw values or secret-looking objects', () => {
+  const bearerSecret = 'top-secret-bearer-token-999';
+  const apiKeySecret = 'super-secret-api-key-777';
+  const querySecret = 'super-secret-query-token-555';
+  const dir = tmpProject({
+    'secret-obj.yaml': [
+      'steps:',
+      '  - screen: bonus',
+      '    requests:',
+      '      optin:',
+      '        method: POST',
+      '        url: /api/bonusOptIn',
+      '        headers:',
+      `          Authorization: Bearer ${bearerSecret}`,
+      '        body:',
+      `          api_key: ${apiKeySecret}`,
+      '',
+    ].join('\n'),
+    'secret-str.yaml': [
+      'steps:',
+      '  - screen: bonus',
+      '    requests:',
+      `      optin: POST /api/bonusOptIn?token=${querySecret}`,
+      '',
+    ].join('\n'),
+  });
+
+  const objErr = errorOf(() => loadFlow(join(dir, 'secret-obj.yaml')));
+  assert.ok(objErr instanceof AtrezzoError);
+  assert.equal(objErr.exitCode, 3);
+  assert.match(objErr.message, /steps\[0\]\.requests\.optin": format "GET \/path\?query" \(steps\[\]\.requests are GET-only; configure app-submitted writes separately under scenario writes:, using mutate: only for state-changing behavior\); got map/);
+  for (const leaked of [bearerSecret, apiKeySecret, 'Authorization', 'api_key', '/api/bonusOptIn']) {
+    assert.ok(!objErr.message.includes(leaked), `error message must not echo ${leaked}: ${objErr.message}`);
+  }
+
+  const strErr = errorOf(() => loadFlow(join(dir, 'secret-str.yaml')));
+  assert.ok(strErr instanceof AtrezzoError);
+  assert.equal(strErr.exitCode, 3);
+  assert.match(strErr.message, /steps\[0\]\.requests\.optin": format "GET \/path\?query" \(steps\[\]\.requests are GET-only; configure app-submitted writes separately under scenario writes:, using mutate: only for state-changing behavior\)/);
+  assert.ok(!strErr.message.includes(querySecret), `error message must not echo raw string: ${strErr.message}`);
 });
