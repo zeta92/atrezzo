@@ -57,6 +57,56 @@ test('derive copies the parent fk through the child: every piece belongs to the 
   }
 });
 
+test('derive follows the gadget selected by its explicit id: every piece belongs to the widget of that gadget (#43)', () => {
+  const widgetIds = ['w-a', 'w-b', 'w-c', 'w-d'];
+  const gadgetIds = ['g-a', 'g-b', 'g-c', 'g-d', 'g-e', 'g-f', 'g-g', 'g-h', 'g-i'];
+  const w = world(doc({
+    widgets: { total: widgetIds.length, ids: widgetIds },
+    gadgets: { total: gadgetIds.length, ids: gadgetIds },
+    pieces: DERIVE,
+  }));
+  const gadgetById = new Map(w.entities.gadgets.map((g) => [g.id, g]));
+
+  assert.deepEqual(w.entities.widgets.map((x) => x.id), widgetIds);
+  assert.deepEqual([...gadgetById.keys()], gadgetIds);
+  assert.ok(w.entities.pieces.length > 0, 'pieces has no rows');
+  for (const p of w.entities.pieces) {
+    assert.ok(gadgetById.has(p.gadget_id), `piece ${p.id} gadget_id ${p.gadget_id} is not an explicit gadget id`);
+    assert.equal(p.widget_id, gadgetById.get(p.gadget_id).widget_id, `piece ${p.id} widget_id does not match gadget ${p.gadget_id}`);
+  }
+});
+
+test('derive keeps the parent created_at constraint when widget_id is derived from gadgets (#43)', () => {
+  const widgetIds = ['w-a', 'w-b', 'w-c', 'w-d'];
+  const gadgetIds = ['g-a', 'g-b', 'g-c', 'g-d', 'g-e', 'g-f', 'g-g', 'g-h', 'g-i'];
+  const w = world({
+    name: 'coherence',
+    seed: 11,
+    now: '2025-03-01T09:00:00Z',
+    world: {
+      widgets: { total: widgetIds.length, ids: widgetIds, fields: { created_at: ['2025-02-28T23:59:00Z'] } },
+      gadgets: { total: gadgetIds.length, ids: gadgetIds, ref: 'widgets', fields: { created_at: ['2025-02-27T12:00:00Z'] } },
+      pieces: { total: 60, ref: ['widgets', 'gadgets'], ...DERIVE },
+    },
+    endpoints: [
+      { path: '/api/widgets', entity: 'widgets' },
+      { path: '/api/widgets/:widget_id/gadgets', entity: 'gadgets' },
+      { path: '/api/widgets/:widget_id/gadgets/:gadget_id/pieces', entity: 'pieces' },
+    ],
+  });
+  const widgetById = new Map(w.entities.widgets.map((x) => [x.id, x]));
+
+  assert.ok(w.entities.pieces.length > 0, 'pieces has no rows');
+  for (const p of w.entities.pieces) {
+    const widget = widgetById.get(p.widget_id);
+    assert.ok(widget, `piece ${p.id} widget_id ${p.widget_id} is not an explicit widget id`);
+    assert.ok(
+      Date.parse(p.created_at) >= Date.parse(widget.created_at),
+      `piece ${p.id} created_at (${p.created_at}) predates widget ${widget.id} created_at (${widget.created_at})`,
+    );
+  }
+});
+
 test('the nested route answers exactly the pieces of that gadget, and a gadget under another widget answers []', () => {
   const w = world(doc({ pieces: DERIVE }));
   const engine = createEngine(w);

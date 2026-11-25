@@ -84,7 +84,77 @@ function normalizeExpect(item, field, issues) {
 
 // ---------- world ----------
 
-const ENTITY_KEYS = ['total', 'distribution', 'distribution_field', 'amount', 'ref', 'nulls', 'values', 'days', 'fields', 'derive', 'seed_first', 'values_order', 'counts'];
+const ENTITY_KEYS = ['total', 'ids', 'distribution', 'distribution_field', 'amount', 'ref', 'nulls', 'values', 'days', 'fields', 'derive', 'seed_first', 'values_order', 'counts'];
+
+const isValidStringId = (v) => typeof v === 'string'
+  && v.length >= 1
+  && v.length <= 200
+  && v !== '.'
+  && v !== '..'
+  && /^[A-Za-z0-9._~-]+$/.test(v);
+
+const isValidIntId = (v) => Number.isSafeInteger(v) && v >= 1;
+
+/**
+ * `ids`: explicit row ids for an entity. Length must match `total`; every value is either a
+ * 1..200 URL-unreserved ASCII string (excluding "." and "..") or a safe positive integer, all unique and of one type.
+ */
+function normalizeIds(rawIds, total, f, issues) {
+  if (!Array.isArray(rawIds)) {
+    issues.add(f, `must be a list of explicit ids (strings or integers >= 1); got ${typeName(rawIds)}`);
+    return null;
+  }
+  let ok = true;
+  if (isInt(total) && total >= 0 && rawIds.length !== total) {
+    issues.add(f, `length (${rawIds.length}) does not match total (${total})`);
+    ok = false;
+  }
+  let kind = null;
+  let mixedReported = false;
+  const seen = new Set();
+  const out = [];
+  for (let i = 0; i < rawIds.length; i += 1) {
+    const v = rawIds[i];
+    const ff = `${f}[${i}]`;
+    let vKind = null;
+    if (typeof v === 'string') {
+      if (!isValidStringId(v)) {
+        issues.add(ff, `invalid string id ${JSON.stringify(v)}: must use 1..200 URL-unreserved characters (ASCII A-Z, a-z, 0-9, ".", "_", "~", "-", maximum 200 characters, not "." or "..")`);
+        ok = false;
+        continue;
+      }
+      vKind = 'string';
+    } else if (typeof v === 'number') {
+      if (!isValidIntId(v)) {
+        issues.add(ff, `invalid numeric id ${String(v)}: must be a safe integer >= 1`);
+        ok = false;
+        continue;
+      }
+      vKind = 'integer';
+    } else {
+      issues.add(ff, `must be a non-empty string or a safe integer >= 1; got ${typeName(v)}`);
+      ok = false;
+      continue;
+    }
+    if (kind === null) {
+      kind = vKind;
+    } else if (vKind !== kind) {
+      ok = false;
+      if (!mixedReported) {
+        issues.add(f, 'mixed id types: every id must be a string or every id must be an integer, not both');
+        mixedReported = true;
+      }
+    }
+    if (seen.has(v)) {
+      issues.add(ff, `duplicate id ${JSON.stringify(v)}`);
+      ok = false;
+      continue;
+    }
+    seen.add(v);
+    out.push(v);
+  }
+  return ok ? out : null;
+}
 
 /** `values_order`: how a field with a list of values draws it (random: the PRNG; cycle: row i takes values[i % n]). */
 export const VALUES_ORDERS = ['random', 'cycle'];
@@ -335,8 +405,25 @@ function typesFromEntry(entry) {
   return [...types];
 }
 
-function fieldValueTypes(field, spec) {
-  if (field === 'id' || fkTargetEntity(spec, field)) return ['integer'];
+// Declared explicit ids (`world.<entity>.ids`) are homogeneous: all strings or all integers.
+function declaredIdsOf(spec) {
+  return Array.isArray(spec?.ids) && spec.ids.length ? spec.ids : null;
+}
+
+function ownIdType(spec) {
+  const ids = declaredIdsOf(spec);
+  return ids && typeof ids[0] === 'string' ? 'string' : 'integer';
+}
+
+// Type of a foreign key: the target entity's declared ids type, or integer (legacy 1..n).
+function fkIdType(refEntity, byName) {
+  return ownIdType(byName?.[refEntity]);
+}
+
+function fieldValueTypes(field, spec, byName = null) {
+  if (field === 'id') return [ownIdType(spec)];
+  const refEntity = fkTargetEntity(spec, field);
+  if (refEntity) return [fkIdType(refEntity, byName)];
   if (spec.distribution && field === spec.distribution.field) return ['string'];
   const amountField = templateFor(spec.name).amountField || 'amount';
   if (spec.amount && field === 'currency') return ['string'];
@@ -362,16 +449,18 @@ function isSingleTypeCompatible(srcType, dstType) {
   return false;
 }
 
-function areFieldsCompatible(srcField, srcSpec, dstField, dstSpec) {
-  const srcTypes = fieldValueTypes(srcField, srcSpec);
-  const dstTypes = fieldValueTypes(dstField, dstSpec);
+function areFieldsCompatible(srcField, srcSpec, dstField, dstSpec, byName = null) {
+  const srcTypes = fieldValueTypes(srcField, srcSpec, byName);
+  const dstTypes = fieldValueTypes(dstField, dstSpec, byName);
   return srcTypes.length > 0 && dstTypes.length > 0
     && srcTypes.every((st) => dstTypes.some((dt) => isSingleTypeCompatible(st, dt)));
 }
 
 function isWhereValueCompatible(v, field, spec, byName) {
   if (v === null) return canFieldBeNull(field, spec, byName);
-  if (field === 'id' || fkTargetEntity(spec, field)) return Number.isInteger(v);
+  if (field === 'id') return ownIdType(spec) === 'string' ? typeof v === 'string' : Number.isInteger(v);
+  const refEntity = fkTargetEntity(spec, field);
+  if (refEntity) return fkIdType(refEntity, byName) === 'string' ? typeof v === 'string' : Number.isInteger(v);
   if (spec.distribution && field === spec.distribution.field) return typeof v === 'string';
   const amountField = templateFor(spec.name).amountField || 'amount';
   if (spec.amount && field === 'currency') return typeof v === 'string';
@@ -389,8 +478,14 @@ function isWhereValueCompatible(v, field, spec, byName) {
 function isWhenValuePossible(v, condField, spec, byName) {
   if (v === null) return canFieldBeNull(condField, spec, byName);
   const refEntity = fkTargetEntity(spec, condField);
-  if (condField === 'id') return Number.isInteger(v) && v >= 1 && v <= spec.count;
+  if (condField === 'id') {
+    const ids = declaredIdsOf(spec);
+    if (ids) return ids.includes(v);
+    return Number.isInteger(v) && v >= 1 && v <= spec.count;
+  }
   if (refEntity) {
+    const targetIds = declaredIdsOf(byName[refEntity]);
+    if (targetIds) return targetIds.includes(v);
     const targetCount = byName[refEntity]?.count ?? 0;
     return Number.isInteger(v) && v >= 1 && v <= targetCount;
   }
@@ -412,9 +507,15 @@ function isWhenValuePossible(v, condField, spec, byName) {
 }
 
 function describeTargetField(condField, spec, byName) {
-  if (condField === 'id') return spec.count >= 1 ? `integer 1..${spec.count}` : 'no rows (total is 0)';
+  if (condField === 'id') {
+    const ids = declaredIdsOf(spec);
+    if (ids) return `${ownIdType(spec)} id in ${JSON.stringify(ids)}`;
+    return spec.count >= 1 ? `integer 1..${spec.count}` : 'no rows (total is 0)';
+  }
   const refEntity = fkTargetEntity(spec, condField);
   if (refEntity) {
+    const targetIds = declaredIdsOf(byName[refEntity]);
+    if (targetIds) return `${fkIdType(refEntity, byName)} id in ${JSON.stringify(targetIds)} (${refEntity})`;
     const targetCount = byName[refEntity]?.count ?? 0;
     return targetCount >= 1 ? `integer 1..${targetCount} (${refEntity})` : `no rows in "${refEntity}" (total is 0)`;
   }
@@ -513,6 +614,11 @@ function normalizeWorld(world, issues) {
     if (!isInt(raw.total) || raw.total < 0) issues.add(`${f}.total`, `required; integer >= 0 (got ${JSON.stringify(raw.total)})`);
     else spec.count = raw.total;
 
+    if (raw.ids !== undefined) {
+      const ids = normalizeIds(raw.ids, raw.total, `${f}.ids`, issues);
+      if (ids !== null) spec.ids = ids;
+    }
+
     if (raw.distribution !== undefined) {
       const field = raw.distribution_field ?? t.statusField ?? 'status';
       if (!isObj(raw.distribution) || !Object.keys(raw.distribution).length) issues.add(`${f}.distribution`, 'must be a non-empty map value: count');
@@ -565,7 +671,7 @@ function normalizeWorld(world, issues) {
         const empty = {};
         for (const [k, type] of Object.entries(raw.fields)) {
           const ff = `${f}.fields.${k}`;
-          if (k === 'id') issues.add(ff, 'atrezzo assigns the id (integers 1..n); remove it from fields');
+          if (k === 'id') issues.add(ff, 'atrezzo assigns the id; remove it from fields (use "ids" on the entity to declare explicit values)');
           else if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) issues.add(ff, 'invalid field name (letters, digits, "_")');
           else if (isObj(type) && type.default === undefined && type.when === undefined && type.value === undefined) {
             // Plain typed field in object form: `{ type: string, empty: 0.4 }`.
@@ -1012,7 +1118,7 @@ function parseUserToken(val, ff, byName, auth, authDeclared, issues, targetField
     issues.add(ff, `field "${userField}" does not exist in auth user entity "${auth.user.entity}" (fields: ${userFields.join(', ')})`);
     return null;
   }
-  if (targetField && targetSpec && !areFieldsCompatible(userField, userSpec, targetField, targetSpec)) {
+  if (targetField && targetSpec && !areFieldsCompatible(userField, userSpec, targetField, targetSpec, byName)) {
     issues.add(ff, `${JSON.stringify(val)} (${auth.user.entity}.${userField}: ${describeTargetField(userField, userSpec, byName)}) is incompatible with field "${targetField}" in "${targetSpec.name}" (${describeTargetField(targetField, targetSpec, byName)})`);
     return null;
   }
@@ -1368,7 +1474,18 @@ function normalizeAuth(raw, world, issues) {
     entityOk = true;
   }
   let idOk = false;
-  if (!isInt(id) || id < 1) {
+  const declaredIds = entityOk && Array.isArray(byName[entity].ids) ? byName[entity].ids : null;
+  if (declaredIds) {
+    if (!isValidStringId(id) && !isValidIntId(id)) {
+      issues.add('auth.user.id', `required; a declared id of "${entity}" (string or integer >= 1) (got ${JSON.stringify(id)})`);
+    } else if (byName[entity].count === 0) {
+      issues.add('auth.user.id', `entity "${entity}" has 0 rows in world; id ${JSON.stringify(id)} does not exist`);
+    } else if (!declaredIds.includes(id)) {
+      issues.add('auth.user.id', `id ${JSON.stringify(id)} does not exist in "${entity}" (declared ids: ${declaredIds.map((v) => JSON.stringify(v)).join(', ')})`);
+    } else {
+      idOk = true;
+    }
+  } else if (!isInt(id) || id < 1) {
     issues.add('auth.user.id', `required; integer >= 1 (got ${JSON.stringify(id)})`);
   } else if (entityOk) {
     const spec = byName[entity];

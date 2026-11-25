@@ -198,7 +198,10 @@ function generateEntity(spec, scenario, counts, built) {
 
   // Foreign keys: first min(n, parentCount) children cover every parent once,
   // the rest pick a random parent. Every id exists by construction.
+  // `fkIndex` keeps the drawn 1-based parent row indexes; `fkValues` holds the parent's actual id
+  // (an explicit id when the parent declares `ids`, otherwise the same number).
   const fkValues = {};
+  const fkIndex = {};
   const derive = spec.derive ?? {};
   for (const ref of spec.refs) {
     if (Object.hasOwn(derive, templateFor(ref).fk)) continue; // copied below, never drawn
@@ -207,12 +210,25 @@ function generateEntity(spec, scenario, counts, built) {
     const cover = frng.shuffle([...Array(parentCount).keys()].map((i) => i + 1));
     const assigned = [];
     for (let i = 0; i < n; i++) assigned.push(i < cover.length ? cover[i] : frng.int(1, parentCount));
-    fkValues[templateFor(ref).fk] = frng.shuffle(assigned);
+    const indexes = frng.shuffle(assigned);
+    fkIndex[templateFor(ref).fk] = indexes;
+    fkValues[templateFor(ref).fk] = indexes.map((pid) => built[ref]?.[pid - 1]?.id ?? pid);
   }
   // Derived fks: the value of `field` in the row the `from` fk points at (built first: it is a ref).
   for (const [fk, { from, field }] of Object.entries(derive)) {
-    const via = fkValues[templateFor(from).fk];
-    fkValues[fk] = via.map((pid) => built[from][pid - 1]?.[field] ?? null);
+    const via = fkIndex[templateFor(from).fk];
+    fkValues[fk] = via.map((index) => built[from][index - 1]?.[field] ?? null);
+  }
+  // Map actual parent id -> 1-based row index for referenced entities whose FK is derived
+  // (no fkIndex, only fkValues), so created_at clamping resolves the parent row in O(1).
+  const derivedParentIndex = new Map();
+  for (const ref of spec.refs) {
+    const fk = templateFor(ref).fk;
+    if (Object.hasOwn(fkIndex, fk) || !Object.hasOwn(fkValues, fk)) continue;
+    const byId = new Map();
+    const parentRows = built[ref] ?? [];
+    for (let j = 0; j < parentRows.length; j++) byId.set(parentRows[j].id, j + 1);
+    derivedParentIndex.set(ref, byId);
   }
 
   const amount = spec.amount;
@@ -226,10 +242,11 @@ function generateEntity(spec, scenario, counts, built) {
   const cursors = new Map();
   const rows = [];
   for (let i = 0; i < n; i++) {
-    const id = i + 1;
-    const base = t.make(rng, id);
+    const seq = i + 1;
+    const id = spec.ids?.[i] ?? seq;
+    const base = t.make(rng, seq);
     const typed = {};
-    if (frng) for (const [f, entry] of Object.entries(spec.fields)) typed[f] = typedValue(fieldType(entry), f, frng, id, spec.name, nowMs, spec.days);
+    if (frng) for (const [f, entry] of Object.entries(spec.fields)) typed[f] = typedValue(fieldType(entry), f, frng, seq, spec.name, nowMs, spec.days);
     const row = {};
     for (const f of fields) {
       if (f === 'id') row.id = id;
@@ -241,7 +258,11 @@ function generateEntity(spec, scenario, counts, built) {
         // Template timestamp (a `created_at` declared in `fields` stays a typed date):
         // a child never predates its parent, its date falls between the parent's and "now".
         const parentMs = Math.max(nowMs - spec.days * DAY_MS, ...spec.refs.map((r) => {
-          const p = built[r]?.[(fkValues[templateFor(r).fk][i] ?? 0) - 1];
+          const fk = templateFor(r).fk;
+          const idx = Object.hasOwn(fkIndex, fk)
+            ? fkIndex[fk][i]
+            : derivedParentIndex.get(r)?.get(fkValues[fk]?.[i]);
+          const p = built[r]?.[(idx ?? 0) - 1];
           return p?.created_at ? Date.parse(p.created_at) : -Infinity;
         }));
         const spanMin = Math.max(0, Math.floor((nowMs - parentMs) / 60_000));

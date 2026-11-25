@@ -251,7 +251,7 @@ test('scenario: typed fields replace the template ones and types are validated',
   const rows = generateWorld(sc).entities.users;
   assert.deepEqual(Object.keys(rows[0]), ['id', 'username', 'active', 'uid', 'role']);
   assert.match(rows[0].uid, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-  assert.throws(() => normalizeScenario({ ...base, world: { users: { total: 1, fields: { id: 'integer', x: 'weird_date' } } } }), (e) => /fields\.id.*atrezzo assigns the id/.test(e.message) && /fields\.x.*unknown type/.test(e.message));
+  assert.throws(() => normalizeScenario({ ...base, world: { users: { total: 1, fields: { id: 'integer', x: 'weird_date' } } } }), (e) => /fields\.id.*atrezzo assigns the id.*use "ids"/i.test(e.message) && /fields\.x.*unknown type/.test(e.message));
   assert.throws(() => normalizeScenario({ ...base, world: { users: 1 }, endpoints: [{ path: '/u', entity: 'users', pagination: { param_page: 'page' } }] }), /default_limit.*required with "param_page"/);
   assert.throws(() => normalizeScenario({ ...base, world: { users: 1 }, endpoints: [{ path: '/u', entity: 'users', shape: 'array', pick: 'items' }] }), /incompatible with shape: array/);
 });

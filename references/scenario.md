@@ -69,7 +69,7 @@ expect:
 Any other field is an error (`unknown field`). A scenario can also be `.json` with the same structure (`atrezzo import --format json`).
 
 ### Entities (`world.<name>`)
-An integer (= `total`) or a map with: `total` (required), `distribution`, `distribution_field` (default `status`), `amount`, `ref`, `nulls`, `values`, `days`, `fields`, `derive`, `seed_first`, `values_order`, `counts`.
+An integer (= `total`) or a map with: `total` (required), `ids`, `distribution`, `distribution_field` (default `status`), `amount`, `ref`, `nulls`, `values`, `days`, `fields`, `derive`, `seed_first`, `values_order`, `counts`.
 
 #### `fields`: typed fields (written by `atrezzo import`)
 
@@ -85,7 +85,7 @@ world:
       createdAt: date
 ```
 
-Types: `string`, `integer`, `number`, `boolean`, `date` (ISO, within `days` before `now`), `email`, `uuid`, `url`, or a list of values. A field can also be written as `{ type: <type> }`, and a `string` one can add `empty:` (see below). With `fields`, the entity has **exactly** `id` + the fks of its `ref` + `fields` (+ the `distribution` field and the `amount` fields if you declare them): the template (`customers`, `orders`…) adds neither its own fields nor its defaults. `id` cannot be declared (always integers 1..n). Values come from a dedicated PRNG stream (`fields:<entity>`): adding `fields` to one entity does not change the others.
+Types: `string`, `integer`, `number`, `boolean`, `date` (ISO, within `days` before `now`), `email`, `uuid`, `url`, or a list of values. A field can also be written as `{ type: <type> }`, and a `string` one can add `empty:` (see below). With `fields`, the entity has **exactly** `id` + the fks of its `ref` + `fields` (+ the `distribution` field and the `amount` fields if you declare them): the template (`customers`, `orders`…) adds neither its own fields nor its defaults. `id` cannot be declared (defaults to integers `1..n`; use `ids` on the entity for explicit integer or string ids). Values come from a dedicated PRNG stream (`fields:<entity>`): adding `fields` to one entity does not change the others.
 
 ##### Empty strings (`{ type: string, empty }`)
 
@@ -172,7 +172,7 @@ world:
 
 #### `values_order`: lists of values in the written order
 
-A field with a list of values (`values:`, or an enum in `fields`) is drawn at random per row. With `values_order: cycle` row *i* (0-based, ids 1..n) takes `values[i % n]`: the order you wrote, the same row on every seed. That fixes a sequence a screen shows in order, or ties generated rows to ids of an external feed:
+A field with a list of values (`values:`, or an enum in `fields`) is drawn at random per row. With `values_order: cycle`, row position *i* (0-based; primary key `ids[i]` when declared, else `i+1`) receives `values[i % n]`: the order you wrote, the same row on every seed. That fixes a sequence a screen shows in order, or ties generated rows to ids of an external feed:
 
 ```yaml
 world:
@@ -204,6 +204,23 @@ world:
 - Validation: `cycle` or `random`, or `{ cycle: { by: <field> } }` with an existing field; an entity with no field with a list of values is an error.
 - With `pluck` (below), `values_order: cycle` gives an endpoint that answers a known list of ids in order: `pluck: external_id` ⇒ `["70001", …]`.
 
+#### `ids`: explicit primary keys (`world.<entity>.ids`)
+
+Declare explicit primary keys when a screen expects fixed string IDs (slugs, UUIDs, external keys) or specific positive integers instead of sequential `1..n`:
+
+```yaml
+world:
+  accounts:
+    total: 2
+    ids: ["acc-alpha", "acc-beta"]
+    fields: { name: string, active: boolean }
+```
+
+- **Length and uniqueness**: `ids` must be a list of length `total` with unique values.
+- **One homogeneous type**: every entry must be either a safe positive integer (`>= 1`) or a string of 1–200 ASCII RFC3986 unreserved characters (`[A-Za-z0-9._~-]`), excluding `.` and `..`; types cannot be mixed. Restricting string IDs to unreserved ASCII keeps detail URLs and generated runtimes consistent.
+- **Primary key only**: `ids` replaces only each row's `id` (`ids[i]` for row `i`); all other generated fields, template values, PRNG streams and determinism stay unchanged.
+- **Defaults and foreign keys**: omitting `ids` preserves sequential `1..n` defaults (and scenario hashes). Foreign-key links (`ref:`, `derive:`) and `auth.user.id` use the parent's actual declared IDs.
+
 Built-in templates and their fields:
 
 | entity | fields |
@@ -217,7 +234,7 @@ Built-in templates and their fields:
 Template names are matched exactly; there are no aliases. A foreign key is the singular of the referenced entity + `_id` (`customers` → `customer_id`, `categories` → `category_id`, `boxes` → `box_id`). The pre-0.4 Spanish template names are rejected with the English name to use instead (e.g. `field "world.<old name>": … use "customers"`).
 
 Generator guarantees:
-- integer ids 1..n.
+- default sequential integer ids `1..n` or exact declared `ids`.
 - `distribution` is exact (not approximate) and shuffled with the seed.
 - Every fk exists; if there are at least as many children as parents, every parent has a child (a `derive`d fk copies its value instead, so it inherits the coverage of the fk it reads).
 - A child never predates its parent (the template's `created_at`; a `created_at` declared in `fields` is a plain typed date).
@@ -378,7 +395,7 @@ endpoints:
 
 - **Current user row**: the projection engine exposes the row as `currentUser` (`null` when `auth` is omitted). Any endpoint filter `{ <field>: "$user.<userField>" }` (or `$user.<userField>` inside a world-resolved filter's `where`) compares `<field>` against `currentUser[userField]` without requiring a query parameter.
 - **No query parameter**: like world-resolved filters, `$user.<field>` filters do not expose a query parameter (sending `?account_id=1` is ignored and listed in `X-Atrezzo-Ignored`). If `currentUser[userField]` is `null`, no rows match.
-- **Validation (scenario error)**: `auth.user.entity` must be declared in `world`, and `auth.user.id` must be an integer `>= 1` within `1..total` of that entity. Using `$user.<field>` without `auth`, naming a field missing from `auth.user.entity`, or referencing a user field whose type is incompatible with the filtered field is also a scenario error.
+- **Validation (scenario error)**: `auth.user.entity` must be declared in `world`, and `auth.user.id` must be an integer in `1..total` by default, or an exact declared id from `world.<entity>.ids`. Using `$user.<field>` without `auth`, naming a field missing from `auth.user.entity`, or referencing a user field whose type is incompatible with the filtered field is also a scenario error.
 - **Without `auth`**: behaviour and scenario hashes are completely unchanged.
 
 #### Paths with parameters (`/cabinets/:cabinet_id/drawers/:drawer_id/items`)
@@ -626,7 +643,8 @@ writes:
     mutate: { entity: orders }
 ```
 
-- **Integrity on writes**: deleting a row that has children in the world answers `409 { error: "cannot delete <entity>#<id>: N rows of "<child>" point at it (<fk>); delete them first" }`, and creating or updating a row with a foreign key that does not exist answers `422 { error: "<entity>.<fk>=… does not exist in <target>" }`. A foreign key sent as a string (`"1"`) is stored with the type of the target's ids (`1`). A `POST` without the foreign key stores `null` when the world already has nulls in that key (`nulls:`), and otherwise answers `422 { error: "<entity>.<fk> is required: …" }`. There is no implicit cascade: if you want cascading deletes, declare the children's DELETEs in the flow.
+- **Integrity on writes**: deleting a row that has children in the world answers `409 { error: "cannot delete <entity>#<id>: N rows of "<child>" point at it (<fk>); delete them first" }`, and creating or updating a row with a foreign key that does not exist answers `422 { error: "<entity>.<fk>=… does not exist in <target>" }`. Foreign keys of either incoming string or number values are coerced to the target id type. A `POST` without the foreign key stores `null` when the world already has nulls in that key (`nulls:`), and otherwise answers `422 { error: "<entity>.<fk> is required: …" }`. There is no implicit cascade: if you want cascading deletes, declare the children's DELETEs in the flow.
+- **IDs on create (`POST`)**: for string-id entities, `POST` requires a caller-supplied new string `id` in the body matching the same 1–200 ASCII RFC3986 unreserved character rule (`[A-Za-z0-9._~-]`, excluding `.` and `..`; absent, non-string, or invalid `id` ⇒ `422`; duplicate `id` ⇒ `409`). Numeric-id and default entities keep sequential next-integer assignment (`maxId + 1`).
 - **Route keys**: must be `"<METHOD> /path"` with an explicit HTTP method (`POST`, `PUT`, `PATCH`, `DELETE`) and a path starting with `/` (no query or fragment). Path parameters (`:id`, `:customer_id`, etc.) bind to fields of `mutate.entity` (`:id` at the end of a path or before an action segment binds to `id`; `:<entity>_id` binds to `id` for the target entity; other `:name` segments match `name` or `<name>_id`).
 - **`expect`**: `{ status, echo, body }` (optional; defaults to `201` + `echo: true` for `POST`, `204` for `DELETE`, `200` + `echo: true` for `PUT`/`PATCH`):
   - `status`: integer HTTP status `200..599`.
@@ -653,7 +671,7 @@ writes:
       mutate: false
   ```
 - **Response body**: `expect.body` when declared, else the resulting row(s) with `echo: true`, else `{}` (no body for `204`/`205`/`304`). In `serve`, an undeclared method on a contract route answers `405` with `Allow` and an unknown route answers `404`. Both are recorded as gaps, and their `atrezzo` payload lists `endpoints` and the declared `writes`.
-- **Determinism**: no `Math.random()` or wall clock is used. Each entity assigns sequential integer `id`s independently (`maxId + 1`), mutated rows keep only declared entity schema fields in canonical schema order (formatted like reads when a GET endpoint exists, ignoring unknown request fields), stateless `echo: true` sorts payload keys deterministically, and `GET` projections preserve deterministic sort order across mutations.
+- **Determinism**: no `Math.random()` or wall clock is used. Numeric and default entities assign sequential integer `id`s independently (`maxId + 1`), while entities with explicit string `ids` use the caller-supplied `id` verbatim; mutated rows keep only declared entity schema fields in canonical schema order (formatted like reads when a GET endpoint exists, ignoring unknown request fields), stateless `echo: true` sorts payload keys deterministically, and `GET` projections preserve deterministic sort order across mutations.
 - **Session & reset**: `serve` and MSW handlers keep mutations in memory across subsequent reads in the same session (`embed` and `counts` indexes are invalidated automatically). `POST /__atrezzo/reset` (in both `serve` and MSW handlers, plus `reset()` exported from `<scenario>.handlers.mjs`) restores the world and ID counters to their initial seeded state.
 - **Validation (scenario error, exit 3)**: rejects empty `writes`, route keys without an explicit `POST`/`PUT`/`PATCH`/`DELETE` method, duplicate write routes, unknown `mutate.entity`, unknown fields in `set`/`where`, `id` in `set`, unbound `:param` segments, `set` on `delete`, `where` on `create`, and `echo: true`/`body` with `204`. Scenarios without `writes` keep their exact behaviour and hash.
 

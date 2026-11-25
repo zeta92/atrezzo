@@ -490,6 +490,60 @@ endpoints:
   assert.match(parseErr('{ source_id: { from: sources, where: { active: [] } } }'), /filters\.source_id\.where\.active": must be a scalar value or a non-empty list/);
 });
 
+test('world-resolved filter matches a `from` entity by its explicit string id (#43)', () => {
+  const yaml = `name: explicit-id-filter
+seed: 4343
+now: 2025-03-01T09:00:00Z
+world:
+  customers: { total: 2, ids: ["cust-a", "cust-b"], fields: { name: string } }
+  orders:
+    total: 20
+    ref: customers
+    fields:
+      status: [draft, paid]
+endpoints:
+  - path: /api/cust-a-orders
+    entity: orders
+    filters:
+      customer_id: { from: customers, where: { id: cust-a } }
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid.yaml'), 'eid.yaml'));
+  assert.deepEqual(ds.entities.customers.map((c) => c.id), ['cust-a', 'cust-b']);
+  const expected = ds.entities.orders.filter((o) => o.customer_id === 'cust-a');
+  assert.ok(expected.length > 0, 'no orders reference "cust-a"');
+  assert.ok(expected.length < ds.entities.orders.length, 'every order references "cust-a"; the filter would be vacuous');
+
+  const res = createEngine(ds).handle({ method: 'GET', pathname: '/api/cust-a-orders' });
+  assert.equal(res.status, 200);
+  assert.ok(Array.isArray(res.body));
+  assert.deepEqual(ids(res), expected.map((o) => o.id));
+  assert.ok(res.body.every((o) => o.customer_id === 'cust-a'));
+  assert.equal(res.headers['x-total-count'], String(expected.length));
+});
+
+test('$user.id with explicit string ids is rejected against an integer FK to another entity (#43)', () => {
+  const yaml = `name: explicit-id-user-mismatch
+seed: 4343
+auth: { user: { entity: customers, id: cust-a } }
+world:
+  customers: { total: 2, ids: ["cust-a", "cust-b"], fields: { name: string } }
+  numeric_customers: 2
+  orders: { total: 6, ref: numeric_customers }
+endpoints:
+  - path: /api/my-orders
+    entity: orders
+    filters: { numeric_customer_id: "$user.id" }
+`;
+  let err;
+  try {
+    normalizeScenario(parseYaml(yaml, 'eid-user.yaml'), 'eid-user.yaml');
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err instanceof AtrezzoError, 'expected scenario validation error');
+  assert.match(err.message, /filters\.numeric_customer_id": "\$user\.id" \(customers\.id: [^)]*\) is incompatible with field "numeric_customer_id" in "orders"/);
+});
+
 test('world-resolved filter combines with path parameters and shape: object', () => {
   const activeIds = new Set(wfDataset.entities.sources.filter((s) => s.active === true).map((s) => s.id));
   const group1Expected = wfDataset.entities.items.filter(
@@ -2328,4 +2382,347 @@ endpoints:
   assert.deepEqual([p3.body.page, p3.body.pages, p3.body.rows.length], [3, 3, 10]);
   const sinPaginar = get('/api/lineas-sin-paginar');
   assert.deepEqual([sinPaginar.body.total, sinPaginar.body.pages], [60, 1], 'sin paginación es una página');
+});
+
+test('writes: POST create with explicit string ids preserves body id and GET detail returns the same row (#43)', () => {
+  const yaml = `name: explicit-id-write-create
+seed: 4343
+world:
+  customers: { total: 2, ids: ["cust-a", "cust-b"], fields: { name: string } }
+endpoints:
+  - path: /api/customers
+    entity: customers
+writes:
+  "POST /api/customers":
+    expect: { status: 201, echo: true }
+    mutate: { entity: customers }
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid-write.yaml'), 'eid-write.yaml'));
+  const eng = createEngine(ds);
+
+  const created = eng.handle({
+    method: 'POST',
+    pathname: '/api/customers',
+    body: { id: 'cust-new', name: 'New' },
+  });
+  assert.equal(created.status, 201);
+  assert.equal(created.body.id, 'cust-new');
+  assert.equal(created.body.name, 'New');
+
+  const fetched = eng.handle({ method: 'GET', pathname: '/api/customers/cust-new' });
+  assert.equal(fetched.status, 200);
+  assert.deepEqual(fetched.body, created.body);
+});
+
+test('writes: POST create with duplicate explicit string id returns 409 and leaves world unchanged (#43)', () => {
+  const yaml = `name: explicit-id-write-create
+seed: 4343
+world:
+  customers: { total: 2, ids: ["cust-a", "cust-b"], fields: { name: string } }
+endpoints:
+  - path: /api/customers
+    entity: customers
+writes:
+  "POST /api/customers":
+    expect: { status: 201, echo: true }
+    mutate: { entity: customers }
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid-write.yaml'), 'eid-write.yaml'));
+  const eng = createEngine(ds);
+
+  const before = eng.handle({ method: 'GET', pathname: '/api/customers/cust-a' });
+  assert.equal(before.status, 200);
+
+  const dup = eng.handle({
+    method: 'POST',
+    pathname: '/api/customers',
+    body: { id: 'cust-a', name: 'Duplicate' },
+  });
+  assert.equal(dup.status, 409);
+
+  const list = eng.handle({ method: 'GET', pathname: '/api/customers' });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.length, 2);
+
+  const after = eng.handle({ method: 'GET', pathname: '/api/customers/cust-a' });
+  assert.equal(after.status, 200);
+  assert.deepEqual(after.body, before.body);
+});
+
+test('writes: POST create without id on explicit string-id entity returns 422 and leaves world unchanged (#43)', () => {
+  const yaml = `name: explicit-id-write-create
+seed: 4343
+world:
+  customers: { total: 2, ids: ["cust-a", "cust-b"], fields: { name: string } }
+endpoints:
+  - path: /api/customers
+    entity: customers
+writes:
+  "POST /api/customers":
+    expect: { status: 201, echo: true }
+    mutate: { entity: customers }
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid-write.yaml'), 'eid-write.yaml'));
+  const eng = createEngine(ds);
+
+  const missing = eng.handle({
+    method: 'POST',
+    pathname: '/api/customers',
+    body: { name: 'No id' },
+  });
+  assert.equal(missing.status, 422);
+
+  const list = eng.handle({ method: 'GET', pathname: '/api/customers' });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.length, 2);
+});
+
+test('writes: POST create with non-string id on explicit string-id entity returns 422 and leaves world unchanged (#43)', () => {
+  const yaml = `name: explicit-id-write-create
+seed: 4343
+world:
+  customers: { total: 2, ids: ["cust-a", "cust-b"], fields: { name: string } }
+endpoints:
+  - path: /api/customers
+    entity: customers
+writes:
+  "POST /api/customers":
+    expect: { status: 201, echo: true }
+    mutate: { entity: customers }
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid-write.yaml'), 'eid-write.yaml'));
+  const eng = createEngine(ds);
+
+  const wrongType = eng.handle({
+    method: 'POST',
+    pathname: '/api/customers',
+    body: { id: 900001, name: 'Wrong type' },
+  });
+  assert.equal(wrongType.status, 422);
+
+  const list = eng.handle({ method: 'GET', pathname: '/api/customers' });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.length, 2);
+});
+
+test('writes: POST create with path-unsafe explicit string id returns 422 and leaves world unchanged (#43)', () => {
+  const yaml = `name: explicit-id-write-create
+seed: 4343
+world:
+  customers: { total: 2, ids: ["cust-a", "cust-b"], fields: { name: string } }
+endpoints:
+  - path: /api/customers
+    entity: customers
+writes:
+  "POST /api/customers":
+    expect: { status: 201, echo: true }
+    mutate: { entity: customers }
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid-write.yaml'), 'eid-write.yaml'));
+  const eng = createEngine(ds);
+
+  const unsafe = eng.handle({
+    method: 'POST',
+    pathname: '/api/customers',
+    body: { id: 'bad/id', name: 'Unsafe' },
+  });
+  assert.equal(unsafe.status, 422);
+
+  const list = eng.handle({ method: 'GET', pathname: '/api/customers' });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.length, 2);
+});
+
+test('writes: POST create with reserved-delimiter explicit string id returns 422 and leaves world unchanged (#43)', () => {
+  const yaml = `name: explicit-id-write-create
+seed: 4343
+world:
+  customers: { total: 2, ids: ["cust-a", "cust-b"], fields: { name: string } }
+endpoints:
+  - path: /api/customers
+    entity: customers
+writes:
+  "POST /api/customers":
+    expect: { status: 201, echo: true }
+    mutate: { entity: customers }
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid-write.yaml'), 'eid-write.yaml'));
+  const eng = createEngine(ds);
+
+  const reserved = eng.handle({
+    method: 'POST',
+    pathname: '/api/customers',
+    body: { id: 'x|y', name: 'Reserved' },
+  });
+  assert.equal(reserved.status, 422);
+
+  const list = eng.handle({ method: 'GET', pathname: '/api/customers' });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.length, 2);
+});
+
+test('writes: POST create with overly long explicit string id returns 422 and leaves world unchanged (#43)', () => {
+  const yaml = `name: explicit-id-write-create
+seed: 4343
+world:
+  customers: { total: 2, ids: ["cust-a", "cust-b"], fields: { name: string } }
+endpoints:
+  - path: /api/customers
+    entity: customers
+writes:
+  "POST /api/customers":
+    expect: { status: 201, echo: true }
+    mutate: { entity: customers }
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid-write.yaml'), 'eid-write.yaml'));
+  const eng = createEngine(ds);
+
+  const tooLong = eng.handle({
+    method: 'POST',
+    pathname: '/api/customers',
+    body: { id: 'a'.repeat(201), name: 'Too long' },
+  });
+  assert.equal(tooLong.status, 422);
+
+  const list = eng.handle({ method: 'GET', pathname: '/api/customers' });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.length, 2);
+});
+
+test('writes: PATCH updates and DELETE removes explicit string-id rows by :id (#43)', () => {
+  const yaml = `name: explicit-id-write-patch-delete
+seed: 4343
+world:
+  customers: { total: 2, ids: ["cust-a", "cust-b"], fields: { name: string } }
+endpoints:
+  - path: /api/customers
+    entity: customers
+writes:
+  "PATCH /api/customers/:id":
+    expect: { status: 200, echo: true }
+    mutate: { entity: customers }
+  "DELETE /api/customers/:id":
+    expect: { status: 204 }
+    mutate: { entity: customers }
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid-write-patch-delete.yaml'), 'eid-write-patch-delete.yaml'));
+  const eng = createEngine(ds);
+
+  const patched = eng.handle({
+    method: 'PATCH',
+    pathname: '/api/customers/cust-b',
+    body: { name: 'Updated' },
+  });
+  assert.equal(patched.status, 200);
+  assert.equal(patched.body.id, 'cust-b');
+  assert.equal(patched.body.name, 'Updated');
+
+  const fetched = eng.handle({ method: 'GET', pathname: '/api/customers/cust-b' });
+  assert.equal(fetched.status, 200);
+  assert.deepEqual(fetched.body, patched.body);
+
+  const deleted = eng.handle({ method: 'DELETE', pathname: '/api/customers/cust-a' });
+  assert.equal(deleted.status, 204);
+  assert.equal(deleted.body, null);
+
+  const missing = eng.handle({ method: 'GET', pathname: '/api/customers/cust-a' });
+  assert.equal(missing.status, 404);
+});
+
+test('writes: nested POST preserves numeric-looking string FK path param instead of coercing to integer (#43)', () => {
+  const yaml = `name: explicit-id-write-numeric-string-fk
+seed: 4343
+world:
+  customers: { total: 2, ids: ["001", "002"], fields: { name: string } }
+  orders: { total: 2, ref: customers, fields: { reference: string } }
+endpoints:
+  - path: /api/customers
+    entity: customers
+  - path: /api/orders
+    entity: orders
+writes:
+  "POST /api/customers/:customer_id/orders":
+    expect: { status: 201, echo: true }
+    mutate: { entity: orders }
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid-write-numeric-string-fk.yaml'), 'eid-write-numeric-string-fk.yaml'));
+  const eng = createEngine(ds);
+
+  const created = eng.handle({
+    method: 'POST',
+    pathname: '/api/customers/001/orders',
+    body: { reference: 'ORD-X' },
+  });
+  assert.equal(created.status, 201);
+  assert.strictEqual(created.body.customer_id, '001');
+  assert.equal(created.body.reference, 'ORD-X');
+});
+
+test('detail /:id decodes percent-encoded unreserved character in explicit string id (#43)', () => {
+  const yaml = `name: items
+seed: 4343
+world:
+  items: { total: 2, ids: ["sku.1", "sku-2"] }
+endpoints:
+  - path: /api/items
+    entity: items
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid-percent-detail.yaml'), 'eid-percent-detail.yaml'));
+  const eng = createEngine(ds);
+
+  const res = eng.handle({ method: 'GET', pathname: '/api/items/sku%2E1' });
+  assert.equal(res.status, 200);
+  assert.strictEqual(res.body.id, 'sku.1');
+
+  const malformed = eng.handle({ method: 'GET', pathname: '/api/items/sku%2E%' });
+  assert.ok(malformed);
+  assert.equal(malformed.status, 404);
+  assert.equal(malformed.miss, undefined);
+  assert.equal(malformed.body.atrezzo, undefined);
+  assert.match(malformed.body.error, /items .* does not exist/);
+});
+
+test('filters: eq. does not numerically coerce numeric-looking string ids or FKs (#43)', () => {
+  const yaml = `name: explicit-id-numeric-string-filter
+seed: 4343
+world:
+  customers: { total: 2, ids: ["001", "002"], fields: { name: string } }
+  orders: { total: 6, ref: customers, fields: { reference: string } }
+endpoints:
+  - path: /api/customers
+    entity: customers
+    filters: [id]
+  - path: /api/orders
+    entity: orders
+    filters: [customer_id]
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'eid-numeric-string-filter.yaml'), 'eid-numeric-string-filter.yaml'));
+  const eng = createEngine(ds);
+  const req = (path) => {
+    const u = new URL(path, 'http://x');
+    return eng.handle({ method: 'GET', pathname: u.pathname, query: u.searchParams });
+  };
+
+  const customer001 = ds.entities.customers.find((c) => c.id === '001');
+  assert.ok(customer001);
+  const expectedOrders = ds.entities.orders.filter((o) => o.customer_id === '001');
+  assert.ok(expectedOrders.length > 0 && expectedOrders.length < ds.entities.orders.length);
+
+  const custCoerced = req('/api/customers?id=eq.1');
+  assert.equal(custCoerced.status, 200);
+  assert.deepEqual(custCoerced.body, []);
+
+  const custExact = req('/api/customers?id=eq.001');
+  assert.equal(custExact.status, 200);
+  assert.deepEqual(custExact.body, [customer001]);
+  assert.strictEqual(custExact.body[0].id, '001');
+
+  const ordersCoerced = req('/api/orders?customer_id=eq.1');
+  assert.equal(ordersCoerced.status, 200);
+  assert.deepEqual(ordersCoerced.body, []);
+
+  const ordersExact = req('/api/orders?customer_id=eq.001');
+  assert.equal(ordersExact.status, 200);
+  assert.deepEqual(ordersExact.body, expectedOrders);
+  assert.ok(ordersExact.body.every((o) => o.customer_id === '001'));
 });

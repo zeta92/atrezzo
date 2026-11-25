@@ -161,6 +161,28 @@ test('supabase: seed.sql with as many rows as the world, stable ids and well-for
   assert.match(reset.content, /--allow-remote/);
 });
 
+test('supabase: string ids use text primary key, insert literal ids, and skip setval', () => {
+  const sc = normalizeScenario({
+    name: 'string-ids',
+    seed: 1,
+    world: {
+      customers: { total: 2, ids: ['cust-a', 'cust-b'], fields: { name: 'string' } },
+    },
+    endpoints: [{ path: '/api/customers', entity: 'customers' }],
+  });
+  const ds = generateWorld(sc);
+  const { files, notes } = getAdapter('supabase').emit({ dataset: ds, scenario: sc, config, dir: '/nada' });
+  const schema = files.find((f) => f.path.endsWith('schema.sql')).content;
+  const seed = files.find((f) => f.path.endsWith('seed.sql')).content;
+  assert.match(schema, /"id" text PRIMARY KEY/);
+  assert.match(seed, /INSERT INTO "customers" \("id", "name"\)/);
+  assert.match(seed, /^\s*\('cust-a', '/m);
+  assert.match(seed, /^\s*\('cust-b', '/m);
+  assert.doesNotMatch(seed, /setval\([^;]*customers/i);
+  assert.ok(notes.some((n) => /ids from the scenario/i.test(n)));
+  assert.ok(!notes.some((n) => /ids 1\.\.n/i.test(n)));
+});
+
 const PG_BIN = ['17', '16', '15', '14'].map((v) => `/usr/lib/postgresql/${v}/bin`).find((d) => existsSync(join(d, 'initdb')));
 const canPg = PG_BIN && process.getuid?.() === 0 && spawnSync('psql', ['--version']).status === 0;
 
@@ -231,6 +253,24 @@ test('prism: a standard YAML parser (PyYAML) reads the YAML exactly like ours', 
   assert.deepEqual(JSON.parse(r.stdout), parseYaml(files[0].content));
 });
 
+test('prism: string ids emit string path parameter schema on detail route without minimum', () => {
+  const sc = normalizeScenario({
+    name: 'string-ids',
+    seed: 1,
+    world: {
+      customers: { total: 2, ids: ['cust-a', 'cust-b'], fields: { name: 'string' } },
+    },
+    endpoints: [{ path: '/api/customers', entity: 'customers' }],
+  });
+  const ds = generateWorld(sc);
+  const { files } = getAdapter('prism').emit({ dataset: ds, scenario: sc, config, dir: '/nada' });
+  const doc = parseYaml(files[0].content);
+  const idParam = doc.paths['/api/customers/{id}'].get.parameters.find((p) => p.name === 'id' && p.in === 'path');
+  assert.ok(idParam);
+  assert.deepEqual(idParam.schema, { type: 'string' });
+  assert.equal(doc.components.schemas.Customer.properties.id.type, 'string');
+});
+
 // ---------- wiremock ----------
 
 test('wiremock: mappings with urlPath + bodyFileName, templating with transformers and a 501 fallback', () => {
@@ -275,6 +315,27 @@ test('wiremock: world picks up the requests of the scenario flows', () => {
   const body = join(dir, 'atrezzo/.generated/wiremock/conciliacion/__files/conciliacion/api-orders/limit-2__status-issue.json');
   assert.equal(JSON.parse(readFileSync(body, 'utf8')).length, 2);
   assert.match(r.stdout, /Runtime wiremock:/);
+});
+
+test('wiremock: escapes regex metacharacters in string ids for detail urlPathPattern', () => {
+  const sc = normalizeScenario({
+    name: 'regex-ids',
+    seed: 1,
+    world: {
+      items: { total: 2, ids: ['sku.1', 'sku-2'] },
+    },
+    endpoints: [{ path: '/api/items', entity: 'items' }],
+  });
+  const ds = generateWorld(sc);
+  const { files } = getAdapter('wiremock').emit({ dataset: ds, scenario: sc, config, dir: '/nada' });
+  const byPath = Object.fromEntries(files.map((f) => [f.path, f.content]));
+  const root = 'atrezzo/.generated/wiremock/regex-ids';
+  const { mappings } = JSON.parse(byPath[`${root}/mappings/api-items.json`]);
+  const detail = mappings.find((m) => m.name?.includes('{id} (body picked by template)'));
+  assert.ok(detail);
+  assert.equal(detail.request.urlPathPattern, '^/api/items/(sku\\.1|sku-2)$');
+  assert.ok(byPath[`${root}/__files/regex-ids/api-items/id/sku.1.json`]);
+  assert.ok(byPath[`${root}/__files/regex-ids/api-items/id/sku-2.json`]);
 });
 
 test('supabase in world: reset.sh is executable', () => {
