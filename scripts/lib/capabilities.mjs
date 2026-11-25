@@ -147,6 +147,17 @@ export const CAPABILITIES = [
     }
   },
   {
+    id: 'write-cases',
+    label: 'body-conditioned write branches (`writes.*.cases`)',
+    present: (s) => (s.writes ?? []).some((w) => w.cases?.length > 0),
+    states: { msw: 'same', supabase: 'different', prism: 'different', wiremock: 'different' },
+    notes: {
+      supabase: 'Postgres/PostgREST does not evaluate declarative `cases` request-body predicates or mock fallback/422 branches',
+      prism: 'write routes and `cases` predicates are not emitted and there is no 501: they answer 404',
+      wiremock: 'write routes and `cases` predicates are not emitted and there is no 501: they answer 404'
+    }
+  },
+  {
     id: 'rpc',
     label: '`rpc` functions',
     present: (s) => (s.rpc ?? []).length > 0,
@@ -309,7 +320,7 @@ export function renderCapabilities() {
     '',
     '`builtin` is the engine and the oracle: always `✅`. ✅ same · ◐ partial, the rest declined · ✖ not supported, and declared · ⚠ **different without a warning** (what still has to be closed).',
     '',
-    'The `msw` cells are checked in `tests/parity.test.mjs` (fast, with a stub that runs the handlers) and in `tests/parity-real.test.mjs` (real `msw/node`, `ATREZZO_PARITY=real`, nightly). A cell without a test is a promise.',
+    'The `msw` cells are checked in `tests/parity.test.mjs` (fast, with a stub that runs the handlers) and in `tests/parity-real.test.mjs` (real `msw/node`, `ATREZZO_PARITY=real`, nightly), with `write-cases` covered in its dedicated `tests/write-cases.test.mjs`. A cell without a test is a promise.',
     '',
     head,
     sep,
