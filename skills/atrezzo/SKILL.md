@@ -35,6 +35,6 @@ With no config, always start with `/atrezzo:init`. With no contract, run `/atrez
 1. Determinism: same seed ⇒ same bytes. "Now" goes in the scenario's `now:`.
 2. Referential integrity: ids exist in the world; never invent a `client_id`.
 3. You pick distributions and narrative; **the code produces the data**. Do not hand-write data JSON.
-4. The mock shapes data; it does not implement business rules (GET only; no domain calculations).
+4. The mock shapes data; its behavior is declarative (reads, `writes:`, `rpc:`, `streams:`) and does not run arbitrary app business-rule code or domain calculations.
 
 Environment check: `atrezzo doctor`.

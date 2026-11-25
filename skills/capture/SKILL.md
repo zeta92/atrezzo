@@ -15,7 +15,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/cli.mjs import <openapi.yaml|json> --name <sc
 ```
 
 - Writes `atrezzo/scenarios/<scenario>.yaml` with `world` (entities with typed `fields`, default counts), `endpoints` (path with the `servers[0].url` base, filters = query enums, `limit/offset` or `page` pagination, `pick` if the response is `{data: […]}`/`{items: […]}`) and `expect: []`.
-- **Read the whole report and bring it to the user**: inferred endpoints, envelopes, `# TODO`s (GETs that do not return a collection), ignored routes with their reason (mutations, no schema, binary, nested) and notes (non-integer ids, a spec base that differs from the front-end prefix → `--base`).
+- **Read the whole report and bring it to the user**: inferred endpoints, envelopes, `# TODO`s (GETs that do not return a collection), ignored routes with their reason (non-GET operations, no schema, binary, nested) and notes (non-integer ids, a spec base that differs from the front-end prefix → `--base`).
 - Exit 3 = the scenario is not valid yet (e.g. no inferable collection): complete the `# TODO`s by hand before `world`.
 - Do not edit the data: adjust counts, distributions and `expect` (skill `/atrezzo:scene`) and regenerate with `world`.
 - Then check against the client code (level 3 below): which fields it actually reads and which filters it sends. The spec says what the server promises, not what the screen uses.

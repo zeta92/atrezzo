@@ -828,7 +828,7 @@ atrezzo harvest <url> --scenario <file> [--storage <file.json|@->] [--until <css
   - `field: T` (`T | null`, optional) → **parent**: `include: [<entity of T>]` when a world entity for `T` exists and this entity `ref:`s it (the ref, whose FK is `<singular>_id`, is added only to an entity no other endpoint projects yet); the property name must equal the entity's singular (`include` answers that key).
   - A route the app requests later under the parent (`/widgets/:widget_id/gadgets/:gadget_id/sprockets`) binds `:gadget_id` to the same embedded entity, and its own entity takes the fields of its interface: the id the app put in the URL came from the embedded rows.
   - Never invented: a type not declared in the file, a world entity for `T` without the `ref:`, a self reference, a cycle or a name mismatch leaves the scenario untouched and is listed under "Could not infer / not mocked" as `Widget.parts: Part[] → relation not mocked (missing entity + ref): <reason> (types:<file>:<line>)`. Scalars, enums, literal unions, primitive arrays (`string[]`), generics (`Record<…>`) and built-ins (`Date`) are fields, never relations.
-- **Output**: prints a table (`endpoint`, `entity`, `shape`, `source`, `fields`), a `Relations (from --types)` section, one line per relation with the property and the type (`Shelf.items → embed [items] (type StoreItem, new entity items, ref: shelves, types:types.ts:5)`), a `Response shape` section for each envelope found by trial, and anything it could not infer (including `POST`/`PUT`/`DELETE` writes, which are never mocked). With `--write`, merges into `<file>` keeping existing keys; without it, writes to a temporary copy.
+- **Output**: prints a table (`endpoint`, `entity`, `shape`, `source`, `fields`), a `Relations (from --types)` section, one line per relation with the property and the type (`Shelf.items → embed [items] (type StoreItem, new entity items, ref: shelves, types:types.ts:5)`), a `Response shape` section for each envelope found by trial, and anything it could not infer (including non-GET requests, which harvest reports rather than inferring; only `POST`/`PUT`/`PATCH`/`DELETE` routes can be declared under `writes:` in the scenario if state-changing, adding `mutate:` only when state changes). With `--write`, merges into `<file>` keeping existing keys; without it, writes to a temporary copy.
 
 ### Assertions (`expect`)
 | field | rule |
@@ -874,6 +874,11 @@ steps:
 ```
 
 Scenario assertions are added to the step of their `screen` (default: the last one in `path`).
+
+### Step requests (`requests`)
+
+- Each entry in `steps[].requests` must be a `GET` string (`"GET /path"` or `"GET /path?query"`): `steps[].requests` are **GET-only** for `--driver http` checks and `data` assertions (comparing JSON against the DOM), and are also consumed by `atrezzo world` to pre-generate WireMock mappings.
+- App-submitted writes (`POST`, `PUT`, `PATCH`, `DELETE`) are configured separately in the scenario under root `writes:` (using `mutate:` only for state-changing behavior, or inferred from a matching endpoint); under `--driver playwright`, writes the app sends to `base_url` are honored when `base_url` is served by `atrezzo serve` (generated MSW handlers honor `writes:` separately).
 
 ### Headers (`headers`)
 

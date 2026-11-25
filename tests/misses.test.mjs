@@ -79,6 +79,16 @@ test('findInSpec / hintFor: contract has the route ⇒ import; it does not ⇒ s
   assert.match(hintFor({ method: 'GET', path: '/api/products/2' }, opts), /already declared by scenario catalogo/);
 });
 
+test('hintFor: only declarable write methods get writes: advice; OPTIONS cannot be declared under writes:', () => {
+  const spec = loadSpec(join(ROOT, 'tests/fixtures/petstore.yaml'));
+  const opts = { spec, contract: 'api/openapi.yaml', scenarios: [] };
+  const options = hintFor({ method: 'OPTIONS', path: '/api/pets/1' }, opts);
+  assert.match(options, /cannot be declared under writes:/);
+  assert.doesNotMatch(options, /declare it under writes:|add it under writes:/);
+  assert.match(hintFor({ method: 'POST', path: '/api/pets' }, opts), /declare it under writes:/);
+  assert.match(hintFor({ method: 'PATCH', path: '/api/pets/1' }, opts), /declare it under writes:/);
+});
+
 // ---------- server ----------
 
 test('gap recorded and deduplicated: 3 identical requests ⇒ times 3, one entry, actionable 404', async () => {

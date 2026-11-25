@@ -177,7 +177,7 @@ test('mergeGapIntoScenario: preference types -> select= -> guess, singleton heur
 import { normalizeScenario } from '../scripts/lib/scenario.mjs';
 const loadScenarioFromObj = (doc) => normalizeScenario(doc, 'test.yaml');
 
-test('harvest reports mutations without mocking them and leaves original untouched without --write', async () => {
+test('harvest reports non-GET requests without inferring them and leaves original untouched without --write', async () => {
   const dir = tmpProject({
     's.yaml': 'name: app\nseed: 1\nworld:\n  health: 1\nendpoints:\n  - path: /api/health\n    entity: health\n',
   });
@@ -215,13 +215,79 @@ test('harvest reports mutations without mocking them and leaves original untouch
     const report = formatHarvestReport(res);
     assert.match(report, /GET \/api\/widgets/);
     assert.match(report, /guess/);
-    assert.match(report, /POST \/api\/health: write not mocked/);
+    const postLine = report.split('\n').find((l) => l.includes('POST /api/health'));
+    assert.ok(postLine, `expected POST /api/health line in report:\n${report}`);
+    assert.match(postLine, /POST \/api\/health: non-GET request not inferred by harvest\b/);
+    assert.match(postLine, /\(1×[;)]/);
+    assert.match(postLine, /writes:/);
+    assert.match(postLine, /state-changing/i);
+    assert.doesNotMatch(postLine, /\bwrite\b|observed writes/i);
+    assert.doesNotMatch(report, /mutation not supported|atrezzo only projects reads|never mocked/i);
     assert.match(report, /Temporary copy:/);
     // Original scenario file was NOT touched
     assert.doesNotMatch(readFileSync(join(dir, 's.yaml'), 'utf8'), /widgets/);
   } finally {
     rmSync(join(res.tempFile, '..'), { recursive: true, force: true });
   }
+});
+
+test('formatHarvestReport: non-GET wording advises writes: only for allowed write methods when state-changing', () => {
+  const report = formatHarvestReport({
+    targetUrl: '/',
+    scenarioName: 'app',
+    roundsRun: 1,
+    stoppedReason: 'no-new-gaps',
+    discovered: [],
+    uninferrable: [],
+    written: 's.yaml',
+    mutations: [
+      { method: 'POST', path: '/api/items', times: 1 },
+      { method: 'PUT', path: '/api/items/:id', times: 2 },
+      { method: 'PATCH', path: '/api/items/:id', times: 1 },
+      { method: 'DELETE', path: '/api/items/:id', times: 1 },
+      { method: 'OPTIONS', path: '/api/items', times: 3 },
+    ],
+  });
+
+  const lineFor = (route) => {
+    const line = report.split('\n').find((l) => l.includes(route));
+    assert.ok(line, `expected ${route} line in report:\n${report}`);
+    return line;
+  };
+
+  for (const [method, path, times] of [
+    ['POST', '/api/items', 1],
+    ['PUT', '/api/items/:id', 2],
+    ['PATCH', '/api/items/:id', 1],
+    ['DELETE', '/api/items/:id', 1],
+  ]) {
+    const line = lineFor(`${method} ${path}`);
+    const escapedPath = path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(line, new RegExp(`${method} ${escapedPath}: non-GET request not inferred by harvest\\b`));
+    assert.match(line, new RegExp(`\\(${times}×[;)]`));
+    assert.match(line, /writes:/);
+    assert.match(line, /state-changing/i);
+    assert.doesNotMatch(line, /\bwrite\b|observed writes/i);
+  }
+
+  const optionsLine = lineFor('OPTIONS /api/items');
+  assert.match(optionsLine, /OPTIONS \/api\/items: non-GET request not inferred by harvest\b/);
+  assert.match(optionsLine, /\(3×[;)]/);
+  assert.doesNotMatch(optionsLine, /\bwrite\b|observed writes/i);
+  assert.doesNotMatch(optionsLine, /writes:|mutate:|declare/i);
+
+  assert.throws(
+    () => normalizeScenario({
+      name: 'app',
+      seed: 1,
+      world: { items: 1 },
+      endpoints: [{ path: '/api/items', entity: 'items' }],
+      writes: { 'OPTIONS /api/items': { expect: { status: 204 } } },
+    }, 's.yaml'),
+    /method "OPTIONS" is not supported in writes/,
+  );
+
+  assert.doesNotMatch(report, /mutation not supported|atrezzo only projects reads|never mocked/i);
 });
 
 test('harvest is deterministic and captures requests retried after a failed request', async () => {

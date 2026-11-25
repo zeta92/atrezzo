@@ -49,7 +49,8 @@ test('import petstore: endpoints, {data} envelope, ignored routes with reasons, 
   assert.deepEqual(owners.pagination, { param_page: 'page', param_limit: 'per_page', default_limit: 10 });
   assert.deepEqual(r.doc.entities.find((e) => e.name === 'owners').fields, { name: 'string', email: 'email' });
   const ignored = Object.fromEntries(r.ignored.map((i) => [`${i.method} ${i.path}`, i.reason]));
-  assert.match(ignored['POST /pets'], /mutation not supported/);
+  assert.match(ignored['POST /pets'], /non-GET operation not imported: atrezzo import projects GET only \(manually declare under writes: in the scenario if state-changing\)/);
+  assert.doesNotMatch(ignored['POST /pets'], /mutation not supported|mutation not imported|atrezzo only projects reads/i);
   assert.match(ignored['GET /health'], /without schema/);
   assert.match(ignored['GET /pets/{petId}/photo'], /binary\/non-JSON response \(image\/png\)/);
   assert.ok(r.notes.some((n) => /owners\.id: the spec says string \(uuid\)/.test(n)));
@@ -59,7 +60,8 @@ test('import CLI: writes a valid scenario that world generates and the engine se
   const dir = tmpProject({});
   const r = cli(['import', PETSTORE], dir);
   assert.equal(r.code, 0, r.stderr);
-  for (const s of [/Inferred endpoints \(2\)/, /envelope \{data: \[\.\.\.\]\} → pick: data/, /Ignored \(3\):/, /POST \/pets: mutation/, /GET \/health: 200 without schema/, /binary\/non-JSON response/, /Written: atrezzo\/scenarios\/api\.yaml \(valid scenario\)/]) assert.match(r.stdout, s);
+  for (const s of [/Inferred endpoints \(2\)/, /envelope \{data: \[\.\.\.\]\} → pick: data/, /Ignored \(3\):/, /POST \/pets: non-GET operation not imported: atrezzo import projects GET only \(manually declare under writes: in the scenario if state-changing\)/, /GET \/health: 200 without schema/, /binary\/non-JSON response/, /Written: atrezzo\/scenarios\/api\.yaml \(valid scenario\)/]) assert.match(r.stdout, s);
+  assert.doesNotMatch(r.stdout, /mutation not supported|mutation not imported|atrezzo only projects reads/i);
   const file = join(dir, 'atrezzo/scenarios/api.yaml');
   const yaml = readFileSync(file, 'utf8');
   assert.match(yaml, /^expect: \[\]$/m);
@@ -254,4 +256,31 @@ test('scenario: typed fields replace the template ones and types are validated',
   assert.throws(() => normalizeScenario({ ...base, world: { users: { total: 1, fields: { id: 'integer', x: 'weird_date' } } } }), (e) => /fields\.id.*atrezzo assigns the id.*use "ids"/i.test(e.message) && /fields\.x.*unknown type/.test(e.message));
   assert.throws(() => normalizeScenario({ ...base, world: { users: 1 }, endpoints: [{ path: '/u', entity: 'users', pagination: { param_page: 'page' } }] }), /default_limit.*required with "param_page"/);
   assert.throws(() => normalizeScenario({ ...base, world: { users: 1 }, endpoints: [{ path: '/u', entity: 'users', shape: 'array', pick: 'items' }] }), /incompatible with shape: array/);
+});
+
+test('import: ignored non-GET routes describe the importer read-only projection without claiming writes are unsupported', () => {
+  const ok = { responses: { 200: { description: 'ok' } } };
+  const spec = {
+    openapi: '3.0.3',
+    paths: {
+      '/api/players': {
+        get: { responses: json200({ type: 'array', items: { type: 'object', properties: { id: { type: 'integer' }, name: { type: 'string' } } } }) },
+        post: ok,
+        put: ok,
+        patch: ok,
+        delete: ok,
+        head: ok,
+        options: ok,
+      },
+    },
+  };
+  const r = inferScenario(spec, { name: 'players', file: 'players.json' });
+  const ignored = Object.fromEntries(r.ignored.map((i) => [`${i.method} ${i.path}`, i.reason]));
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const reason = ignored[`${method} /api/players`];
+    assert.match(reason, /non-GET operation not imported: atrezzo import projects GET only \(manually declare under writes: in the scenario if state-changing\)/);
+    assert.doesNotMatch(reason, /mutation not supported|mutation not imported|atrezzo only projects reads/i);
+  }
+  assert.equal(ignored['HEAD /api/players'], 'HEAD is not projected by import');
+  assert.equal(ignored['OPTIONS /api/players'], 'OPTIONS is not projected by import');
 });

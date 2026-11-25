@@ -155,6 +155,18 @@ test('undeclared method on a contract route â‡’ 405 with Allow; unknown route â‡
   assert.ok(r404.body.atrezzo.writes.includes('POST /api/posts'));
 });
 
+test('405 for a method writes: cannot declare (TRACE) does not advise writes:; POST 405 still does', async () => {
+  await reset();
+  const trace = await send('TRACE', '/api/posts/2');
+  assert.equal(trace.status, 405);
+  assert.match(trace.body.error, /cannot be declared under writes:/);
+  assert.doesNotMatch(trace.body.error, /add it under writes:/);
+
+  const post = await send('POST', '/api/posts/2', {});
+  assert.equal(post.status, 405);
+  assert.match(post.body.error, /add it under writes:/);
+});
+
 test('a plain GET is untouched by the writes declaration', async () => {
   await reset();
   const list = await getJson(`${url}/api/posts`);

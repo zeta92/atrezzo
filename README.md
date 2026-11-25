@@ -114,7 +114,7 @@ Inferred endpoints (2):
       fields: name:string, email:email
       filters: — · pagination: param_page=page param_limit=per_page default_limit=10 · detail: no
 Ignored (3):
-  POST /pets: mutation not supported: atrezzo only projects reads (GET)
+  POST /pets: non-GET operation not imported: atrezzo import projects GET only (manually declare under writes: in the scenario if state-changing)
   GET /health: 200 without schema (no content)
   GET /pets/{petId}/photo: binary/non-JSON response (image/png)
 Written: atrezzo/scenarios/shop.yaml (valid scenario)
@@ -407,7 +407,7 @@ The capabilities below shipped across the releases from 0.11 to 0.21.
 
 ### 0.9.0
 
-Nested paths with `:name` parameters in the middle (`/cabinets/:cabinet_id/drawers/:drawer_id/items`), `embed: [drawers]` to inline child rows into each parent row, and `atrezzo harvest <url> --scenario <file>`: opens the page in Chromium, collects 404 gaps and retries, infers endpoints and entities (`--types` TypeScript interfaces → `select=` → guess; singletons with `shape: object`), reloads the mock and repeats until `--until`, no new gaps, or `--rounds`. Writes are reported, never mocked; `--write` merges into the scenario.
+Nested paths with `:name` parameters in the middle (`/cabinets/:cabinet_id/drawers/:drawer_id/items`), `embed: [drawers]` to inline child rows into each parent row, and `atrezzo harvest <url> --scenario <file>`: opens the page in Chromium, collects 404 gaps and retries, infers endpoints and entities (`--types` TypeScript interfaces → `select=` → guess; singletons with `shape: object`), reloads the mock and repeats until `--until`, no new gaps, or `--rounds`. Harvest reports non-GET requests rather than inferring responses; `--write` merges inferred routes into the scenario.
 
 ### 0.8.0
 
