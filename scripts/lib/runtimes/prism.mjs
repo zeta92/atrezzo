@@ -33,6 +33,7 @@ const OAS = {
   string: { type: 'string' },
 };
 const pascal = (s) => s.replace(/(^|[_-])(\w)/g, (_, __, c) => c.toUpperCase());
+const detailIdSchema = (rows) => (typeof rows?.[0]?.id === 'string' ? { type: 'string' } : { type: 'integer', minimum: 1 });
 
 /** components.schemas: one per entity; `required` = fields never null in the world. */
 function componentSchemas(dataset) {
@@ -210,7 +211,7 @@ export function openapiDocument(dataset, config) {
       paths[oasPath] = { get: { operationId: `list_${op}`, summary: `${ep.entity} (atrezzo declared error)`, parameters, responses: declared } };
       if (ep.detail) {
         const idName = ep.params?.some((x) => x.name === 'id') ? 'row_id' : 'id';
-        paths[`${oasPath}/{${idName}}`] = { get: { operationId: `detail_${op}`, parameters: [...parameters.filter((x) => x.in === 'path'), { name: idName, in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }], responses: declared } };
+        paths[`${oasPath}/{${idName}}`] = { get: { operationId: `detail_${op}`, parameters: [...parameters.filter((x) => x.in === 'path'), { name: idName, in: 'path', required: true, schema: detailIdSchema(rows) }], responses: declared } };
       }
       continue;
     }
@@ -238,7 +239,7 @@ export function openapiDocument(dataset, config) {
       paths[`${oasPath}/{${idName}}`] = {
         get: {
           operationId: `detail_${op}`,
-          parameters: [...parameters.filter((x) => x.in === 'path'), { name: idName, in: 'path', required: true, schema: { type: 'integer', minimum: 1 } }],
+          parameters: [...parameters.filter((x) => x.in === 'path'), { name: idName, in: 'path', required: true, schema: detailIdSchema(rows) }],
           responses: detailResponses,
         },
       };

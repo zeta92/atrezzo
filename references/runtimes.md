@@ -63,8 +63,8 @@ In a monorepo the signals of the root, the front end and the backend add up (e.g
 Supabase has no mock layer: its API is PostgREST over Postgres. The "runtime" is **the local database with the world loaded**.
 
 - **Does**: `world` writes to `<backend>/supabase/atrezzo/<scenario>/` (or `supabase/atrezzo/…` at the root; without a `supabase/` folder, to `.generated/supabase/<scenario>/`):
-  - `schema.sql`: minimal `CREATE TABLE IF NOT EXISTS` with types inferred from the data and FKs (so PostgREST can join); `GRANT SELECT … TO anon` if the role exists.
-  - `seed.sql`: in one transaction, `TRUNCATE … RESTART IDENTITY CASCADE` + `INSERT … OVERRIDING SYSTEM VALUE` with the world's ids (the same as in `serve`/MSW) and `setval` on the sequence if the `id` column is serial/identity.
+  - `schema.sql`: minimal `CREATE TABLE IF NOT EXISTS` with types inferred from the data (`id text PRIMARY KEY` for string-ID entities) and FKs (so PostgREST can join); `GRANT SELECT … TO anon` if the role exists.
+  - `seed.sql`: in one transaction, `TRUNCATE … RESTART IDENTITY CASCADE` + `INSERT … OVERRIDING SYSTEM VALUE` with the world's ids (the same as in `serve`/MSW); runs `setval` on the sequence when the `id` column is numeric serial/identity, and emits no sequence `setval` for string-ID entities.
   - `reset.sh`: applies both with `psql`, is idempotent and **refuses a connection string that does not look local** unless you add `--allow-remote` (exit 2).
   - `README.md`: steps with the Supabase CLI or standalone Postgres + PostgREST.
   - Your `supabase/seed.sql` is left alone.
@@ -76,7 +76,7 @@ Supabase has no mock layer: its API is PostgREST over Postgres. The "runtime" is
   ```
   Or with `supabase db reset`: in `config.toml`, `[db.seed] sql_paths = ["./atrezzo/orders/seed.sql"]` (if your CLI version supports `sql_paths`).
 
-Tested against a real PostgreSQL 17 (test `supabase: reset.sh …`, skipped without `initdb`): two runs in a row, counts and ids equal to the JSON, and a pre-existing table with `id GENERATED ALWAYS AS IDENTITY`.
+Tested against a real PostgreSQL 17 (test `supabase: reset.sh …`, skipped without `initdb`), verifying two idempotent loads in a row, counts and IDs equal to the JSON, and a pre-existing table with `id GENERATED ALWAYS AS IDENTITY`. Separately, `tests/runtimes.test.mjs` has SQL assertions for string-ID `text` primary keys, literal inserts, and skipped `setval`.
 
 #### Alternative: a PostgREST facade over `serve`/MSW
 
@@ -84,7 +84,7 @@ If you do not want to run Postgres, you can point the app's Supabase URL (in you
 
 ### prism
 
-- **Does**: `world` writes `<generatedDir>/<scenario>.openapi.yaml` (OpenAPI 3.1) from the scenario endpoints: one schema per entity with `required` = fields never null in the world, filter and pagination parameters, `X-Total-Count`, `/{id}` detail with 404, and `examples` computed by the engine (the projection without a query, plus one per value of the first filter with ≤ 10 values, e.g. `status-issue`).
+- **Does**: `world` writes `<generatedDir>/<scenario>.openapi.yaml` (OpenAPI 3.1) from the scenario endpoints: one schema per entity with `required` = fields never null in the world, filter and pagination parameters, `X-Total-Count`, `/{id}` detail with 404 (detail path parameter schema is `type: string` for string-ID entities and `type: integer, minimum: 1` otherwise), and `examples` computed by the engine (the projection without a query, plus one per value of the first filter with ≤ 10 values, e.g. `status-issue`).
 - **Does not**: filter or paginate. Prism returns the default example for **any** query (`?status=issue` returns all 40 orders); another example only with the `Prefer: example=status-issue` header. The detail always returns the first id (`/api/orders/999` → 200 with id 1) unless you send `Prefer: code=404`. With `-d` (dynamic) it generates data that is not the world. Filters are declared as `string` without `enum` because with an enum Prism would reject the `a,b` lists the engine accepts.
 - **Does (Prism's own)**: validate requests against the parameters: `?limit=abc` → 400.
 - **Start**: with `@stoplight/prism-cli` already among your project's dev dependencies, `prism mock atrezzo/.generated/orders.openapi.yaml --port 4010`.
@@ -100,7 +100,7 @@ WireMock cannot run the projection: Handlebars has no sane way to filter + sort 
   - each value of each filter, one at a time (if the field has ≤ 20 distinct values; `null` included);
   - pages of `default_limit`/`max_limit` (`limit=N` and `limit=N&offset=k`, up to 50 pages);
   - **the exact requests of the flows** (`flow.yaml` files whose `scenario` points here), e.g. `?status=issue&limit=12`.
-  Body and `X-Total-Count` come from the engine: the same bytes as `serve`. The `/{id}` detail uses **response templating**: `bodyFileName: "<scenario>/<endpoint>/id/{{request.pathSegments.[n]}}.json"` with `transformers: ["response-template"]` declared in the mapping; unknown ids return 404.
+  Body and `X-Total-Count` come from the engine: the same bytes as `serve`. The `/{id}` detail uses **response templating**: `bodyFileName: "<scenario>/<endpoint>/id/{{request.pathSegments.[n]}}.json"` with `transformers: ["response-template"]` declared in the mapping (detail mapping IDs are ASCII URL-unreserved strings or numbers, and regex metacharacters in `urlPathPattern` are escaped); unknown ids return 404.
 - **Does not**: combined filters, `a,b` lists, other sort orders or pages not enumerated. Those requests fall into a low-priority mapping that answers **501** with `{"error": …, "generated": [...]}`: never a wrong page. If a screen requests a new combination, add it to a flow and run `world` again. It does not emit `X-Atrezzo-Ignored` either. Do not mix two scenarios in the same `mappings/` folder (routes clash): each scenario is its own root.
 - **Start**:
   ```bash

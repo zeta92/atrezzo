@@ -94,6 +94,7 @@ export function combinations(ep, dataset, requests = []) {
 const RESPONSE_HEADERS = ['content-type', 'x-total-count', 'x-atrezzo-scenario'];
 const pickHeaders = (h) => Object.fromEntries(RESPONSE_HEADERS.filter((k) => h[k] !== undefined).map((k) => [k, h[k]]));
 const json = (v) => `${JSON.stringify(v, null, 2)}\n`;
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * @param {{ dataset, config, requests?: string[] }} args  requests: "/path?query" from flows
@@ -193,7 +194,7 @@ export function emit({ dataset, config, dir = '.', requests = [] }) {
         mappings.push({
           name: `${ep.path}/{id} (body picked by template)`,
           priority: 1,
-          request: { method: 'GET', urlPathPattern: `^${ep.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(${rows.map((r) => r.id).join('|')})$` },
+          request: { method: 'GET', urlPathPattern: `^${escapeRegex(ep.path)}/(${rows.map((r) => escapeRegex(r.id)).join('|')})$` },
           response: {
             status: 200,
             headers: { 'content-type': 'application/json; charset=utf-8', 'x-atrezzo-scenario': dataset.scenario },
@@ -205,7 +206,7 @@ export function emit({ dataset, config, dir = '.', requests = [] }) {
       mappings.push({
         name: `${ep.path}/{id} not found`,
         priority: 5,
-        request: { method: 'GET', urlPathPattern: `^${ep.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/[^/]+$` },
+        request: { method: 'GET', urlPathPattern: `^${escapeRegex(ep.path)}/[^/]+$` },
         response: { status: 404, headers: { 'content-type': 'application/json; charset=utf-8' }, jsonBody: { error: `${ep.entity} does not exist in scenario "${dataset.scenario}"` } },
       });
     }

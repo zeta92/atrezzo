@@ -29,6 +29,7 @@ export const meta = metaFrom({
 
 const PG_TYPE = { integer: 'bigint', number: 'numeric', boolean: 'boolean', datetime: 'timestamptz', string: 'text' };
 const ident = (s) => `"${String(s).replace(/"/g, '""')}"`;
+const hasStringId = (rows) => typeof rows[0]?.id === 'string';
 export function sqlLiteral(v) {
   if (v === null || v === undefined) return 'NULL';
   if (typeof v === 'boolean') return v ? 'true' : 'false';
@@ -64,8 +65,9 @@ export function schemaSql(dataset) {
   for (const name of order) {
     const meta = dataset.schema[name];
     const rows = dataset.entities[name];
+    const idType = hasStringId(rows) ? 'text' : 'bigint';
     const cols = meta.fields.map((f) => {
-      if (f === 'id') return `  ${ident('id')} bigint PRIMARY KEY`;
+      if (f === 'id') return `  ${ident('id')} ${idType} PRIMARY KEY`;
       const info = columnInfo(rows, f);
       const ref = meta.refs[f];
       return `  ${ident(f)} ${PG_TYPE[info.type]}${info.nullable || !rows.length ? '' : ' NOT NULL'}${ref ? ` REFERENCES ${ident(ref)} (${ident('id')})` : ''}`;
@@ -103,9 +105,11 @@ export function seedSql(dataset) {
       out.push(`INSERT INTO ${ident(name)} (${fields.map(ident).join(', ')}) OVERRIDING SYSTEM VALUE VALUES`);
       out.push(`${chunk.map((r) => `  (${fields.map((f) => sqlLiteral(r[f])).join(', ')})`).join(',\n')};`);
     }
-    // If the real table has a serial/identity id, move the sequence past our ids.
-    const seq = `pg_get_serial_sequence('${ident(name).replace(/'/g, "''")}', 'id')`;
-    out.push(`DO $$ BEGIN PERFORM setval(${seq}, GREATEST((SELECT max(${ident('id')}) FROM ${ident(name)}), 1)) WHERE ${seq} IS NOT NULL; END $$;`);
+    if (!hasStringId(rows)) {
+      // If the real table has a serial/identity id, move the sequence past our ids.
+      const seq = `pg_get_serial_sequence('${ident(name).replace(/'/g, "''")}', 'id')`;
+      out.push(`DO $$ BEGIN PERFORM setval(${seq}, GREATEST((SELECT max(${ident('id')}) FROM ${ident(name)}), 1)) WHERE ${seq} IS NOT NULL; END $$;`);
+    }
     out.push('');
   }
   out.push('COMMIT;', '');
@@ -198,7 +202,7 @@ export function emit({ dataset, config, dir }) {
     ],
     start: `${out}/reset.sh "postgresql://postgres@127.0.0.1:54322/postgres"   (after supabase start; the argument is the connection string, atrezzo does not look it up)`,
     notes: [
-      `${total} rows in ${Object.keys(dataset.entities).length} tables; stable ids 1..n (the same as in serve/msw)`,
+      `${total} rows in ${Object.keys(dataset.entities).length} tables; stable ids from the scenario (the same as in serve/msw)`,
       'the app queries /rest/v1/<entity> (PostgREST): the scenario routes are not used; PostgREST does filtering and pagination',
       'does not simulate RLS or auth: with RLS on, the anon role only sees what your policies allow',
       out.startsWith(p(config.generatedDir)) ? 'no supabase/ folder: files go to .generated (choose the folder with --backend)' : `next to ${out.split('/atrezzo/')[0]}; your supabase/seed.sql is left alone`,

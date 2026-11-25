@@ -457,3 +457,206 @@ test('empty strings: validation errors', () => {
   assert.match(bad('      description: { type: string, empty: 0.4, nope: 1 }'), /notes\.fields\.description\.nope/);
   assert.match(bad('      flag: boolean\n      label: { default: [a, b], when: { flag: true }, value: [a], empty: 0.3 }'), /notes\.fields\.label\.empty": only string fields can be empty/);
 });
+
+// ---------- explicit row ids (`world.<entity>.ids`) ----------
+
+test('explicit ids: generated rows use declared ids while keeping all non-id fields identical', () => {
+  const base = generateWorld(scenario());
+  const withIds = generateWorld(scenario(
+    SCENARIO.replace('  customers: 3', '  customers: { total: 3, ids: ["cust-a", "cust-b", "cust-c"] }'),
+  ));
+
+  assert.deepEqual(withIds.entities.customers.map((c) => c.id), ['cust-a', 'cust-b', 'cust-c']);
+  assert.deepEqual(
+    withIds.entities.customers.map(({ id: _id, ...rest }) => rest),
+    base.entities.customers.map(({ id: _id, ...rest }) => rest),
+  );
+});
+
+test('explicit ids: child foreign keys only reference the declared parent ids (#43)', () => {
+  const d = generateWorld(scenario(
+    SCENARIO
+      .replace('  customers: 3', '  customers: { total: 2, ids: ["cust-a", "cust-b"] }')
+      .replace('  users: 2', '  users: 2\n  invoices: { total: 6, ref: customers }'),
+  ));
+  const parentIds = ['cust-a', 'cust-b'];
+
+  assert.deepEqual(d.entities.customers.map((c) => c.id), parentIds);
+  for (const child of ['orders', 'invoices']) {
+    assert.ok(d.entities[child].length > 0, `${child} has no rows`);
+    for (const row of d.entities[child]) {
+      assert.ok(parentIds.includes(row.customer_id), `${child}.customer_id ${row.customer_id} is not an explicit customer id`);
+    }
+  }
+});
+
+test('explicit ids: positive integer ids replace customer ids and orders reference every one (#43)', () => {
+  const expectedIds = [900001, 900010, 900100];
+  const d = generateWorld(scenario(
+    SCENARIO.replace('  customers: 3', '  customers: { total: 3, ids: [900001, 900010, 900100] }'),
+  ));
+
+  assert.deepEqual(d.entities.customers.map((c) => c.id), expectedIds);
+  assert.ok(d.entities.orders.length > 0, 'orders has no rows');
+
+  const idSet = new Set(expectedIds);
+  const referenced = new Set();
+  for (const order of d.entities.orders) {
+    assert.ok(idSet.has(order.customer_id), `order ${order.id} customer_id ${order.customer_id} is not an explicit customer id`);
+    referenced.add(order.customer_id);
+  }
+  for (const id of expectedIds) {
+    assert.ok(referenced.has(id), `customer ${id} has no orders`);
+  }
+});
+
+test('explicit ids: no child order predates its explicitly identified parent (#43)', () => {
+  const parentCreated = '2025-02-28T23:59:00Z';
+  const now = '2025-03-01T09:00:00Z';
+  const d = generateWorld(scenario(
+    SCENARIO.replace(
+      '  customers: 3',
+      `  customers:\n    total: 2\n    ids: ["cust-a", "cust-b"]\n    fields: { created_at: ["${parentCreated}"] }`,
+    ),
+  ));
+  const born = new Map(d.entities.customers.map((c) => [c.id, Date.parse(c.created_at)]));
+
+  assert.ok(SCENARIO.includes(`now: ${now}`), 'base scenario "now" changed');
+  for (const [id, ms] of born) assert.equal(ms, Date.parse(parentCreated), `customer ${id} created_at is not the declared value`);
+  assert.ok(d.entities.orders.length > 0, 'orders has no rows');
+  for (const o of d.entities.orders) {
+    assert.ok(born.has(o.customer_id), `order ${o.id} customer_id ${o.customer_id} is not an explicit customer id`);
+    const ms = Date.parse(o.created_at);
+    assert.ok(ms >= born.get(o.customer_id), `order ${o.id} created_at ${o.created_at} predates customer ${o.customer_id}`);
+    assert.ok(ms <= Date.parse(now), `order ${o.id} created_at ${o.created_at} is after now`);
+  }
+});
+
+test('explicit ids: auth.user.id may reference a declared string id (#43)', () => {
+  const s = scenario(
+    SCENARIO
+      .replace('  customers: 3', '  customers: { total: 3, ids: ["cust-a", "cust-b", "cust-c"] }')
+      .replace('world:\n', 'auth: { user: { entity: customers, id: "cust-a" } }\nworld:\n'),
+  );
+
+  assert.equal(s.auth.user.id, 'cust-a', 'normalized auth.user.id must be the explicit string id');
+});
+
+test('explicit ids: a conditional field may match on a declared string id (#43)', () => {
+  const d = generateWorld(scenario(
+    SCENARIO.replace(
+      '  customers: 3',
+      '  customers: { total: 3, ids: ["cust-a", "cust-b", "cust-c"], fields: { flag: { default: [false], when: { id: cust-a }, value: true } } }',
+    ),
+  ));
+
+  const rows = d.entities.customers;
+  assert.deepEqual(rows.map((c) => c.id), ['cust-a', 'cust-b', 'cust-c']);
+  const target = rows.find((c) => c.id === 'cust-a');
+  assert.ok(target, 'row with id "cust-a" must exist');
+  assert.equal(target.flag, true, 'row "cust-a" must have flag true');
+});
+
+test('explicit ids: a foreign-key conditional matches the target entity declared ids (#43)', () => {
+  const d = generateWorld(scenario(
+    SCENARIO
+      .replace('  customers: 3', '  customers: { total: 3, ids: ["cust-a", "cust-b", "cust-c"] }')
+      .replace(
+        '  users: 2',
+        '  users: 2\n  invoices: { total: 6, ref: customers, fields: { flag: { default: [false], when: { customer_id: cust-a }, value: true } } }',
+      ),
+  ));
+
+  const invoices = d.entities.invoices;
+  assert.ok(invoices.some((i) => i.customer_id === 'cust-a'), 'at least one invoice must reference "cust-a"');
+  for (const i of invoices) {
+    assert.equal(i.flag, i.customer_id === 'cust-a', `invoice ${i.id} (customer_id ${i.customer_id}) has flag ${i.flag}`);
+  }
+});
+
+test('explicit ids: normalization rejects duplicate declared ids (#43)', () => {
+  const yaml = `name: dup-ids
+seed: 1
+world:
+  customers: { total: 2, ids: ["cust-a", "cust-a"] }
+endpoints:
+  - path: /api/customers
+    entity: customers
+`;
+
+  assert.throws(
+    () => normalizeScenario(parseYaml(yaml, 't.yaml'), 't.yaml'),
+    (e) => e instanceof AtrezzoError
+      && e.exitCode === 3
+      && e.issues.some((issue) => /duplicate id/i.test(issue)),
+  );
+});
+
+test('explicit ids: normalization rejects malformed ids arrays (#43)', () => {
+  const normalizeWithIds = (total, ids) => normalizeScenario({
+    name: 'malformed-ids',
+    seed: 1,
+    world: {
+      customers: { total, ids },
+    },
+    endpoints: [
+      { path: '/api/customers', entity: 'customers' },
+    ],
+  }, 't.yaml');
+
+  assert.throws(
+    () => normalizeWithIds(2, ['cust-a']),
+    (e) => e instanceof AtrezzoError
+      && e.exitCode === 3
+      && e.issues.some((issue) => /length \(1\) does not match total \(2\)/i.test(issue)),
+  );
+
+  assert.throws(
+    () => normalizeWithIds(2, ['cust-a', 2]),
+    (e) => e instanceof AtrezzoError
+      && e.exitCode === 3
+      && e.issues.some((issue) => /mixed id types/i.test(issue)),
+  );
+
+  assert.throws(
+    () => normalizeWithIds(1, ['bad/id']),
+    (e) => e instanceof AtrezzoError
+      && e.exitCode === 3
+      && e.issues.some((issue) => /invalid string id "bad\/id"/i.test(issue)),
+  );
+
+  assert.throws(
+    () => normalizeWithIds(1, ['café']),
+    (e) => e instanceof AtrezzoError
+      && e.exitCode === 3
+      && e.issues.some((issue) => /invalid string id/i.test(issue)),
+  );
+
+  assert.throws(
+    () => normalizeWithIds(1, ['x|y']),
+    (e) => e instanceof AtrezzoError
+      && e.exitCode === 3
+      && e.issues.some((issue) => /invalid string id/i.test(issue)),
+  );
+
+  assert.throws(
+    () => normalizeWithIds(1, ['a%2Fb']),
+    (e) => e instanceof AtrezzoError
+      && e.exitCode === 3
+      && e.issues.some((issue) => /invalid string id/i.test(issue)),
+  );
+
+  assert.throws(
+    () => normalizeWithIds(1, ['a'.repeat(201)]),
+    (e) => e instanceof AtrezzoError
+      && e.exitCode === 3
+      && e.issues.some((issue) => /invalid string id/i.test(issue) && /maximum 200 characters/i.test(issue)),
+  );
+
+  assert.throws(
+    () => normalizeWithIds(1, [0]),
+    (e) => e instanceof AtrezzoError
+      && e.exitCode === 3
+      && e.issues.some((issue) => /invalid numeric id 0/i.test(issue)),
+  );
+});

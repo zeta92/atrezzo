@@ -122,15 +122,15 @@ function likePattern(raw, flags) {
   return new RegExp(`^${body}$`, flags);
 }
 
-function applyOperator(value, op, arg) {
+function applyOperator(value, op, arg, strictStringId = false) {
   const v = value === null || value === undefined ? 'null' : String(value);
-  const nv = asNumber(value);
-  const na = asNumber(arg);
+  const nv = strictStringId ? null : asNumber(value);
+  const na = strictStringId ? null : asNumber(arg);
   switch (op) {
     case 'eq':
       return v === arg || (nv !== null && na !== null && nv === na);
     case 'neq':
-      return !applyOperator(value, 'eq', arg);
+      return !applyOperator(value, 'eq', arg, strictStringId);
     case 'gt':
       return nv !== null && na !== null ? nv > na : v > arg;
     case 'gte':
@@ -155,19 +155,19 @@ function applyOperator(value, op, arg) {
   }
 }
 
-function matchesTerm(value, term) {
+function matchesTerm(value, term, strictStringId = false) {
   const dot = term.indexOf('.');
   if (dot > 0) {
     const op = term.slice(0, dot).toLowerCase();
-    if (PGRST_OPERATORS.has(op)) return applyOperator(value, op, term.slice(dot + 1));
+    if (PGRST_OPERATORS.has(op)) return applyOperator(value, op, term.slice(dot + 1), strictStringId);
   }
   const v = value === null || value === undefined ? 'null' : String(value);
   return v === term;
 }
 
-function matchesFilter(value, raw) {
+function matchesFilter(value, raw, strictStringId = false) {
   // Top-level commas only: `in.(1,2)` keeps its list whole.
-  return splitSelect(String(raw)).some((term) => matchesTerm(value, term.trim()));
+  return splitSelect(String(raw)).some((term) => matchesTerm(value, term.trim(), strictStringId));
 }
 
 /** Split a PostgREST `select` on top-level commas (commas inside `(...)` belong to an embed). */
@@ -243,6 +243,13 @@ function canonicalValue(v) {
   }
   return v;
 }
+
+const isValidStringId = (v) => typeof v === 'string'
+  && v.length >= 1
+  && v.length <= 200
+  && v !== '.'
+  && v !== '..'
+  && /^[A-Za-z0-9._~-]+$/.test(v);
 
 export function createEngine(dataset) {
   const initialEntities = cloneEntities(dataset.entities);
@@ -430,8 +437,10 @@ export function createEngine(dataset) {
       if (params && (!best || Object.keys(params).length < Object.keys(best.params).length)) best = { ep, id: null, params };
     }
     if (best) return best;
-    const id = parts.at(-1);
-    if (!id || parts.length < 2) return null;
+    const rawId = parts.at(-1);
+    if (!rawId || parts.length < 2) return null;
+    let id;
+    try { id = decodeURIComponent(rawId); } catch { id = rawId; }
     for (const { ep, segs } of compiled) {
       if (!ep.detail) continue;
       const params = fit(segs, parts.slice(0, -1));
@@ -523,6 +532,13 @@ export function createEngine(dataset) {
    * cannot be deleted out from under them.
    */
   const schemaOf = (name) => dataset.schema?.[name]?.refs ?? {};
+  function isStringIdField(entity, field) {
+    const refs = schemaOf(entity);
+    const target = field === 'id' ? entity : (Object.hasOwn(refs, field) ? refs[field] : null);
+    if (!target) return false;
+    const sample = (initialEntities[target] ?? []).find((r) => r.id !== null && r.id !== undefined);
+    return typeof sample?.id === 'string';
+  }
   // A foreign key may be null only if the generated world already has nulls in it (`nulls:`).
   const nullableFks = (name) => new Set(Object.keys(schemaOf(name))
     .filter((fk) => (initialEntities[name] ?? []).some((r) => r[fk] === null)));
@@ -605,10 +621,16 @@ export function createEngine(dataset) {
     const rows = workingEntities[entity];
     const curUser = getCurrentUser();
     const resolveVal = (v) => (typeof v === 'string' && v.startsWith('$user.') ? (curUser ? (curUser[v.slice(6)] ?? null) : null) : v);
+    const hasNumericIds = (name) => {
+      const sample = (initialEntities[name] ?? []).find((r) => r.id !== null && r.id !== undefined)
+        ?? (workingEntities[name] ?? []).find((r) => r.id !== null && r.id !== undefined);
+      return sample ? typeof sample.id === 'number' : true;
+    };
     const coerceParam = (field, rawVal) => {
-      const meta = dataset.schema[entity];
-      const isNum = field === 'id' || Object.hasOwn(meta?.refs ?? {}, field) || rows.some((r) => typeof r[field] === 'number');
-      if (isNum && /^-?\d+$/.test(rawVal)) return Number.parseInt(rawVal, 10);
+      const refs = schemaOf(entity);
+      if (field === 'id') return hasNumericIds(entity) && /^\d+$/.test(rawVal) ? Number.parseInt(rawVal, 10) : rawVal;
+      if (Object.hasOwn(refs, field)) return hasNumericIds(refs[field]) && /^\d+$/.test(rawVal) ? Number.parseInt(rawVal, 10) : rawVal;
+      if (rows.some((r) => typeof r[field] === 'number') && /^-?\d+$/.test(rawVal)) return Number.parseInt(rawVal, 10);
       return rawVal;
     };
     const buildRow = (rawRow) => {
@@ -637,9 +659,24 @@ export function createEngine(dataset) {
       for (const [k, v] of Object.entries(set ?? {})) raw[k] = resolveVal(v);
       const fkError = foreignKeyError(entity, raw, { create: true });
       if (fkError) return fkError;
-      const id = nextIds.get(entity) ?? 1;
-      nextIds.set(entity, id + 1);
-      raw.id = id;
+      const sample = (initialEntities[entity] ?? []).find((r) => r.id !== null && r.id !== undefined)
+        ?? rows.find((r) => r.id !== null && r.id !== undefined);
+      if (typeof sample?.id === 'string') {
+        if (!Object.hasOwn(payload, 'id') || typeof payload.id !== 'string') {
+          return json(422, { error: `${entity}.id is required and must be a string in scenario "${dataset.scenario}"` });
+        }
+        if (!isValidStringId(payload.id)) {
+          return json(422, { error: `${entity}.id ${JSON.stringify(payload.id)} is invalid: must use 1..200 URL-unreserved characters (ASCII A-Z, a-z, 0-9, ".", "_", "~", "-", maximum 200 characters, not "." or "..") in scenario "${dataset.scenario}"` });
+        }
+        if (rows.some((r) => r.id === payload.id)) {
+          return json(409, { error: `${entity}#${payload.id} already exists in scenario "${dataset.scenario}"` });
+        }
+        raw.id = payload.id;
+      } else {
+        const id = nextIds.get(entity) ?? 1;
+        nextIds.set(entity, id + 1);
+        raw.id = id;
+      }
       const created = buildRow(raw);
       rows.push(created);
       invalidateIndexes();
@@ -808,8 +845,10 @@ export function createEngine(dataset) {
     if (scopeRes.preds.length) result = result.filter((r) => scopeRes.preds.every((p) => p(r)));
     for (const [key, raw] of params) {
       if (reserved.includes(key)) continue;
-      if (ep.filters.includes(key)) result = result.filter((r) => matchesFilter(r[key], raw));
-      else if (key === 'select' && honoured) continue;
+      if (ep.filters.includes(key)) {
+        const strictStringId = isStringIdField(ep.entity, key);
+        result = result.filter((r) => matchesFilter(r[key], raw, strictStringId));
+      } else if (key === 'select' && honoured) continue;
       else if (key === 'head' && (raw === 'true' || raw === 'false')) continue;
       else ignored.push(key);
     }
