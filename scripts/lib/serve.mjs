@@ -11,6 +11,17 @@ import { createMissStore, guessShape, isMutation, isWriteMethod, missKey, safeSe
 import { discoverBundleFixturesDir } from './passthrough.mjs';
 
 export const ON_MISS = ['log', 'stub'];
+const DEFAULT_EXPOSE_HEADERS = [
+  'x-total-count',
+  'content-range',
+  'x-atrezzo-scenario',
+  'x-atrezzo-ignored',
+  'x-atrezzo-stub',
+  'x-atrezzo-error',
+];
+const UNEXPOSED_HEADERS = new Set(['set-cookie', 'access-control-expose-headers']);
+// Implicit transport headers: Content-Type is CORS-safelisted and Allow comes with a 405; neither belongs in the expose list unless access-control-expose-headers names it.
+const IMPLICIT_HEADERS = new Set(['content-type', 'allow']);
 const wait = (ms) => new Promise((ok) => { setTimeout(ok, ms); });
 // Requests for these are the browser/bundler asking for files, not the app asking the API.
 const ASSET = /\.(ico|png|jpe?g|gif|svg|webp|avif|css|js|mjs|cjs|map|html?|woff2?|ttf|otf|txt|webmanifest)$/i;
@@ -71,6 +82,26 @@ export function errorSummary(endpoints) {
   return Object.fromEntries(endpoints.filter((e) => e.error).map((e) => [e.path, e.error.status]));
 }
 
+/** Declared/passthrough response header names per endpoint and write (never values): { [route]: string[] }. */
+export function responseHeadersSummary(endpoints, passthrough, writes = []) {
+  const out = {};
+  for (const ep of endpoints) {
+    const names = [...new Set([
+      ...Object.keys(ep.headers ?? {}),
+      ...Object.keys(passthrough?.[ep.path]?.headers ?? {}),
+    ].map((k) => k.toLowerCase()))].sort();
+    if (names.length) out[ep.path] = names;
+  }
+  for (const w of writes ?? []) {
+    const names = [...new Set([
+      ...Object.keys(w.expect?.headers ?? {}),
+      ...(w.cases ?? []).flatMap((c) => Object.keys(c.expect?.headers ?? {})),
+    ].map((k) => k.toLowerCase()))].sort();
+    if (names.length) out[`${w.method} ${w.path}`] = names;
+  }
+  return out;
+}
+
 function summary(state, available, generatedDir, misses, latency = 0) {
   const d = state.engine.dataset;
   const out = {
@@ -84,6 +115,8 @@ function summary(state, available, generatedDir, misses, latency = 0) {
   if (Object.keys(errors).length) out.errors = errors; // only when declared
   const passthrough = Object.fromEntries(d.endpoints.filter((e) => e.passthrough).map((e) => [e.path, e.passthrough.fixture]));
   if (Object.keys(passthrough).length) out.passthrough = passthrough; // only when declared
+  const responseHeaders = responseHeadersSummary(d.endpoints, d.passthrough, d.writes);
+  if (Object.keys(responseHeaders).length) out.responseHeaders = responseHeaders; // only when declared
   if (d.writes?.length) out.writes = d.writes.map((w) => `${w.method} ${w.path}`); // only when declared
   if (d.streams?.length) out.streams = d.streams.map((s) => s.path); // only when declared
   if (d.rpc?.length) out.rpc = d.rpc.map((r) => r.fn); // only when declared
@@ -135,8 +168,31 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
   let state = buildState(pick(scenario), resolvedFixturesDir);
 
   const send = (res, status, body, headers = {}, hasBody = body !== null) => {
+    const outHeaders = {
+      'access-control-allow-origin': '*',
+      'cache-control': 'no-store',
+    };
+    const exposed = new Set(DEFAULT_EXPOSE_HEADERS);
+    const addExposed = (name, explicit = true) => {
+      const lower = name.trim().toLowerCase();
+      if (lower && !UNEXPOSED_HEADERS.has(lower) && (explicit || !IMPLICIT_HEADERS.has(lower))) exposed.add(lower);
+    };
+    for (const [k, v] of Object.entries(headers ?? {})) {
+      if (v === undefined || v === null) continue;
+      const lower = k.toLowerCase();
+      if (lower === 'access-control-expose-headers') {
+        for (const part of (Array.isArray(v) ? v : [v])) {
+          if (part === undefined || part === null) continue;
+          for (const item of String(part).split(',')) addExposed(item);
+        }
+        continue;
+      }
+      outHeaders[lower] = v;
+      addExposed(lower, false);
+    }
+    outHeaders['access-control-expose-headers'] = [...exposed].join(', ');
     // hasBody false (or body null without hasBody) = no body (e.g. a count-only answer); text/binary goes verbatim, JSON values go through JSON.stringify.
-    const isJsonCt = /\bjson\b|\+json/i.test(headers['content-type'] ?? '');
+    const isJsonCt = /\bjson\b|\+json/i.test(String(outHeaders['content-type'] ?? ''));
     const payload = !hasBody
       ? ''
       : Buffer.isBuffer(body)
@@ -144,7 +200,7 @@ export function createMockServer({ scenariosDir, scenario, staticDir = null, gen
         : typeof body === 'string' && !isJsonCt
           ? body
           : JSON.stringify(body);
-    res.writeHead(status, { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'x-total-count, content-range, x-atrezzo-scenario, x-atrezzo-ignored, x-atrezzo-stub, x-atrezzo-error', 'cache-control': 'no-store', ...headers });
+    res.writeHead(status, outHeaders);
     res.end(!hasBody || res.req.method === 'HEAD' ? undefined : payload);
   };
 

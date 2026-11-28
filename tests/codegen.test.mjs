@@ -59,7 +59,7 @@ test('the generated handlers project exactly like the engine', async () => {
   assert.equal(res.status, 200);
   assert.equal(res.body.length, 3);
   assert.ok(res.body.every((p) => p.status === 'paid'));
-  assert.equal(res.headers['x-total-count'], '34');
+  assert.equal(res.headers.get('x-total-count'), '34');
   assert.equal(mod.handlers[0].resolver({ request: new Request('http://localhost/other') }), undefined);
 });
 
@@ -180,5 +180,57 @@ writes:
   const resetRes = await resetHandler.resolver({ request: new Request('http://localhost/__atrezzo/reset', { method: 'POST' }) });
   assert.equal(resetRes.status, 200);
   assert.equal(getList.resolver({ request: new Request('http://localhost/api/orders?status=nuevo') }).body.length, 0);
-  assert.equal(getList.resolver({ request: new Request('http://localhost/api/orders') }).headers['x-total-count'], '40');
+  assert.equal(getList.resolver({ request: new Request('http://localhost/api/orders') }).headers.get('x-total-count'), '40');
+});
+
+test('generated MSW handlers preserve multiple Set-Cookie headers', async () => {
+  const scenario = `name: cookies
+seed: 1
+world:
+  customers: 1
+endpoints:
+  - path: /api/customers
+    entity: customers
+    headers:
+      x-test: "ok"
+      set-cookie:
+        - "a=1; Path=/"
+        - "b=2; Path=/"
+`;
+  const dir = tmpProject({ 'e.yaml': scenario });
+  const r = cli(['world', 'e.yaml'], dir);
+  assert.equal(r.code, 0, r.stderr);
+
+  const mswStub = `
+export const http = {
+  get: (path, resolver) => ({ method: 'GET', path, resolver }),
+  head: (path, resolver) => ({ method: 'HEAD', path, resolver }),
+  all: (path, resolver) => ({ method: 'ALL', path, resolver }),
+  post: (path, resolver) => ({ method: 'POST', path, resolver }),
+  put: (path, resolver) => ({ method: 'PUT', path, resolver }),
+  patch: (path, resolver) => ({ method: 'PATCH', path, resolver }),
+  delete: (path, resolver) => ({ method: 'DELETE', path, resolver }),
+};
+function normalizeResponse(body, init) {
+  const normalizedHeaders = new Headers(init?.headers);
+  return { body, ...init, headers: normalizedHeaders };
+}
+export const HttpResponse = Object.assign(
+  function HttpResponse(body, init) { return normalizeResponse(body, init); },
+  { json: (body, init) => normalizeResponse(body, init) },
+);
+export const delay = async () => {};
+`;
+  mkdirSync(join(dir, 'node_modules/msw'), { recursive: true });
+  writeFileSync(join(dir, 'node_modules/msw/package.json'), JSON.stringify({ name: 'msw', type: 'module', exports: './index.js' }));
+  writeFileSync(join(dir, 'node_modules/msw/index.js'), mswStub);
+
+  const mod = await import(pathToFileURL(join(dir, 'atrezzo/.generated/cookies.handlers.mjs')).href);
+  const getHandler = mod.handlers.find((h) => h.method === 'GET');
+  assert.ok(getHandler);
+
+  const res = await getHandler.resolver({ request: new Request('http://localhost/api/customers') });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('x-test'), 'ok');
+  assert.deepEqual(res.headers.getSetCookie(), ['a=1; Path=/', 'b=2; Path=/']);
 });

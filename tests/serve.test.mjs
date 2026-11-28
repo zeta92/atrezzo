@@ -427,3 +427,109 @@ test('SSE streams: max interval (2147483647) does not overflow setTimeout, and >
     /conflicts with endpoint "\/api\/products"/,
   );
 });
+
+// ---------- Custom endpoint response headers (#45) ----------
+
+test('endpoint headers: emitted over HTTP including separate Set-Cookie headers and 404 detail, omitted on 405 and unrelated routes', async () => {
+  const cookies = ['sid=one; Path=/; HttpOnly', 'refresh=two; Path=/; HttpOnly'];
+  const yaml = `name: endpoint-headers
+seed: 7712
+now: 2025-03-01T09:00:00Z
+world:
+  customers:
+    total: 2
+endpoints:
+  - path: /api/customers
+    entity: customers
+    headers:
+      x-ratelimit-limit: "5"
+      set-cookie:
+        - "sid=one; Path=/; HttpOnly"
+        - "refresh=two; Path=/; HttpOnly"
+`;
+  const dir = tmpProject({ 'scenarios/endpoint-headers.yaml': yaml });
+  const srv = createMockServer({ scenariosDir: join(dir, 'scenarios'), scenario: 'endpoint-headers' });
+  const base = `http://127.0.0.1:${(await srv.listen(0)).port}`;
+  try {
+    const listRes = await fetch(`${base}/api/customers`);
+    assert.equal(listRes.status, 200);
+    assert.equal(listRes.headers.get('x-ratelimit-limit'), '5');
+    const exposed = (listRes.headers.get('access-control-expose-headers') ?? '')
+      .split(',')
+      .map((h) => h.trim().toLowerCase());
+    assert.ok(
+      exposed.includes('x-ratelimit-limit'),
+      `expected access-control-expose-headers to include x-ratelimit-limit, got: ${listRes.headers.get('access-control-expose-headers')}`,
+    );
+    assert.deepEqual(listRes.headers.getSetCookie(), cookies);
+    assert.equal((await listRes.json()).length, 2);
+
+    const detailRes = await fetch(`${base}/api/customers/999`);
+    assert.equal(detailRes.status, 404);
+    assert.equal(detailRes.headers.get('x-ratelimit-limit'), '5');
+    assert.deepEqual(detailRes.headers.getSetCookie(), cookies);
+    await detailRes.text();
+
+    const postRes = await fetch(`${base}/api/customers`, { method: 'POST' });
+    assert.equal(postRes.status, 405);
+    assert.equal(postRes.headers.get('x-ratelimit-limit'), null);
+    assert.deepEqual(postRes.headers.getSetCookie(), []);
+    await postRes.text();
+
+    const elsewhereRes = await fetch(`${base}/api/elsewhere`);
+    assert.equal(elsewhereRes.status, 404);
+    assert.equal(elsewhereRes.headers.get('x-ratelimit-limit'), null);
+    assert.deepEqual(elsewhereRes.headers.getSetCookie(), []);
+    await elsewhereRes.text();
+
+    const stateRes = await fetch(`${base}/__atrezzo/state`);
+    assert.equal(stateRes.status, 200);
+    const stateText = await stateRes.text();
+    const stateBody = JSON.parse(stateText);
+    assert.deepEqual(stateBody.responseHeaders['/api/customers'], ['set-cookie', 'x-ratelimit-limit']);
+    assert.equal(stateText.includes('sid=one'), false);
+    assert.equal(stateText.includes('refresh=two'), false);
+  } finally {
+    await srv.close();
+  }
+});
+
+const CORS_EXPOSE_YAML = `name: cors-expose
+seed: 7713
+now: 2025-03-01T09:00:00Z
+world:
+  customers:
+    total: 2
+endpoints:
+  - path: /api/customers
+    entity: customers
+`;
+const CORS_DEFAULT_EXPOSE = ['x-total-count', 'content-range', 'x-atrezzo-scenario', 'x-atrezzo-ignored', 'x-atrezzo-stub', 'x-atrezzo-error'];
+
+async function withCorsServer(fn) {
+  const dir = tmpProject({ 'scenarios/cors-expose.yaml': CORS_EXPOSE_YAML });
+  const srv = createMockServer({ scenariosDir: join(dir, 'scenarios'), scenario: 'cors-expose' });
+  const base = `http://127.0.0.1:${(await srv.listen(0)).port}`;
+  try { await fn(base); } finally { await srv.close(); }
+}
+const exposedOf = (res) => (res.headers.get('access-control-expose-headers') ?? '').split(',').map((h) => h.trim().toLowerCase());
+
+test('CORS expose list: a plain JSON GET without declared headers exposes only the defaults (no implicit content-type)', async () => {
+  await withCorsServer(async (base) => {
+    const res = await fetch(`${base}/api/customers`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /json/);
+    assert.deepEqual(exposedOf(res), CORS_DEFAULT_EXPOSE);
+    await res.text();
+  });
+});
+
+test('CORS expose list: a 405 keeps Allow on the response but does not expose it', async () => {
+  await withCorsServer(async (base) => {
+    const res = await fetch(`${base}/api/customers`, { method: 'POST' });
+    assert.equal(res.status, 405);
+    assert.ok(res.headers.get('allow'), 'the 405 still carries Allow');
+    assert.deepEqual(exposedOf(res), CORS_DEFAULT_EXPOSE);
+    await res.text();
+  });
+});

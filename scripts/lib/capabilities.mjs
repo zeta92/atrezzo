@@ -24,6 +24,8 @@ export const STATE_LABEL = {
 };
 
 const anyEndpoint = (s, fn) => s.endpoints.some(fn);
+const hasHeaders = (h) => Boolean(h && typeof h === 'object' && Object.keys(h).length > 0);
+const hasWriteHeaders = (s) => (s.writes ?? []).some((w) => hasHeaders(w.expect?.headers) || (w.cases ?? []).some((c) => hasHeaders(c.expect?.headers)));
 
 /**
  * Each capability: how to tell that the scenario uses it, and what each runtime
@@ -210,6 +212,17 @@ export const CAPABILITIES = [
       prism: 'only the example\'s total, no `X-Atrezzo-Ignored`',
       wiremock: 'the total, yes; `X-Atrezzo-Ignored`, no'
     }
+  },
+  {
+    id: 'response-headers',
+    label: 'response headers (endpoint and passthrough fixture)',
+    present: (s) => anyEndpoint(s, (ep) => hasHeaders(ep.headers) || hasHeaders(s._passthrough?.[ep.path]?.headers)) || hasWriteHeaders(s),
+    states: { msw: 'partial', supabase: 'declined', prism: 'partial', wiremock: 'same' },
+    notes: {
+      msw: 'Node preserves multiple `Set-Cookie` values; browsers may block scripted `Set-Cookie`',
+      supabase: 'PostgREST controls HTTP headers',
+      prism: 'OpenAPI scalar headers are supported, but `Set-Cookie` is omitted to avoid merging distinct values'
+    }
   }
 ];
 
@@ -276,7 +289,8 @@ export const KEY_COVERAGE = {
   pick: 'envelope',
   latency: 'latency',
   error: 'passthrough-error',
-  passthrough: 'passthrough-error'
+  passthrough: 'passthrough-error',
+  headers: 'response-headers'
 };
 
 /** Every scenario-level key (`SCENARIO_KEYS`): its capability, or `core` when every runtime reproduces it. */

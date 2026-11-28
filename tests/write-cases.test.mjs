@@ -652,6 +652,82 @@ test('write cases engine: branch-specific path-param binding executes distinct t
   assert.equal(JSON.stringify(eng.dataset.entities), beforeUnmatched);
 });
 
+test('write cases engine (#45): branch and fallback expect.headers preserve multi-value Set-Cookie and omit headers on unmatched 422', () => {
+  const scenario = normalizeScenario({
+    name: 'write-case-headers',
+    seed: 1,
+    world: {
+      customers: { total: 1 },
+    },
+    endpoints: [
+      { path: '/api/customers', entity: 'customers' },
+    ],
+    writes: {
+      'POST /api/login': {
+        cases: [
+          {
+            when: { action: 'login' },
+            expect: {
+              status: 200,
+              body: { ok: true },
+              headers: {
+                'x-outcome': 'login',
+                'set-cookie': ['sid=one; Path=/', 'refresh=two; Path=/'],
+              },
+            },
+            mutate: false,
+          },
+        ],
+        expect: {
+          status: 202,
+          body: { ok: false },
+          headers: {
+            'x-outcome': 'fallback',
+          },
+        },
+        mutate: false,
+      },
+      'POST /api/strict': {
+        cases: [
+          {
+            when: { action: 'ok' },
+            expect: {
+              status: 200,
+              headers: {
+                'x-outcome': 'matched',
+              },
+            },
+            mutate: false,
+          },
+        ],
+      },
+    },
+  }, 'write-case-headers.yaml');
+
+  const eng = createEngine(generateWorld(scenario));
+
+  // Matched case preserves multi-value Set-Cookie and branch x-outcome header
+  const matched = eng.handle({ method: 'POST', pathname: '/api/login', body: { action: 'login' } });
+  assert.equal(matched.status, 200);
+  assert.deepEqual(matched.body, { ok: true });
+  assert.equal(matched.headers['x-outcome'], 'login');
+  assert.deepEqual(matched.headers['set-cookie'], ['sid=one; Path=/', 'refresh=two; Path=/']);
+
+  // Fallback returns root fallback x-outcome header and no Set-Cookie
+  const fallback = eng.handle({ method: 'POST', pathname: '/api/login', body: { action: 'other' } });
+  assert.equal(fallback.status, 202);
+  assert.deepEqual(fallback.body, { ok: false });
+  assert.equal(fallback.headers['x-outcome'], 'fallback');
+  assert.equal(fallback.headers['set-cookie'], undefined);
+  assert.equal(Object.hasOwn(fallback.headers, 'set-cookie'), false);
+
+  // Unmatched strict route returns 422 without leaking any case x-outcome header
+  const unmatched = eng.handle({ method: 'POST', pathname: '/api/strict', body: { action: 'nope' } });
+  assert.equal(unmatched.status, 422);
+  assert.equal(unmatched.headers['x-outcome'], undefined);
+  assert.equal(Object.hasOwn(unmatched.headers, 'x-outcome'), false);
+});
+
 // ---------- 4. Builtin (serve) <-> MSW Parity + CLI Banners ----------
 
 test('write cases parity: builtin serve and generated MSW handlers produce identical status, body, mutations, 422 diagnostics, and reset', async () => {

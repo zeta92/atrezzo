@@ -203,5 +203,5 @@ export class HttpResponse { constructor(body, init) { this.body = body; Object.a
   assert.ok(head instanceof msw.HttpResponse, 'a bodiless HttpResponse, not HttpResponse.json(null)');
   assert.equal(head.body, null);
   assert.equal(head.status, 200);
-  assert.equal(head.headers['content-range'], '0-5/6');
+  assert.equal(head.headers.get('content-range'), '0-5/6');
 });

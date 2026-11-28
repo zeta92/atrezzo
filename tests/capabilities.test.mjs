@@ -99,6 +99,182 @@ test('capabilities: a scenario without the capabilities produces no warnings', (
   }
 });
 
+test('capabilities: response-headers is detected from endpoint headers and passthrough fixture headers', () => {
+  const dir = tmpProject({
+    'atrezzo/fixtures/market.json': JSON.stringify({
+      status: 200,
+      contentType: 'application/json; charset=utf-8',
+      body: { ok: true },
+      headers: {
+        'X-Fixture-Header': 'from-fixture',
+        'Set-Cookie': ['a=1; Path=/', 'b=2; Path=/']
+      }
+    }),
+    'atrezzo/fixtures/plain.json': JSON.stringify({
+      status: 200,
+      contentType: 'application/json; charset=utf-8',
+      body: { ok: true },
+      headers: {}
+    }),
+    'combined.yaml': [
+      'name: response-headers-demo', 'seed: 1', 'world:', '  items: 2',
+      'endpoints:',
+      '  - path: /api/items', '    entity: items', '    headers:', '      X-RateLimit-Remaining: "42"',
+      '  - path: /api/market', '    passthrough: { fixture: market }', ''
+    ].join('\n'),
+    'endpoint-only.yaml': [
+      'name: endpoint-headers-only', 'seed: 1', 'world:', '  items: 2',
+      'endpoints:',
+      '  - path: /api/items', '    entity: items', '    headers:', '      Cache-Control: no-store', ''
+    ].join('\n'),
+    'fixture-only.yaml': [
+      'name: fixture-headers-only', 'seed: 1',
+      'endpoints:',
+      '  - path: /api/market', '    passthrough: { fixture: market }', ''
+    ].join('\n'),
+    'empty-headers.yaml': [
+      'name: empty-headers', 'seed: 1', 'world:', '  items: 2',
+      'endpoints:',
+      '  - path: /api/items', '    entity: items', '    headers: {}',
+      '  - path: /api/plain', '    passthrough: { fixture: plain }', ''
+    ].join('\n')
+  });
+
+  const sc = loadScenario(join(dir, 'combined.yaml'));
+  const cap = usedCapabilities(sc).find((c) => c.id === 'response-headers');
+  assert.ok(cap, 'expected response-headers capability to be used');
+  assert.equal(cap.label, 'response headers (endpoint and passthrough fixture)');
+  assert.deepEqual(cap.states, {
+    msw: 'partial',
+    supabase: 'declined',
+    prism: 'partial',
+    wiremock: 'same'
+  });
+  assert.equal(stateOf('response-headers', 'builtin'), 'same');
+  assert.equal(stateOf('response-headers', 'msw'), 'partial');
+  assert.equal(stateOf('response-headers', 'supabase'), 'declined');
+  assert.equal(stateOf('response-headers', 'prism'), 'partial');
+  assert.equal(stateOf('response-headers', 'wiremock'), 'same');
+
+  const mswDeg = degradations(sc, 'msw').find((d) => d.id === 'response-headers');
+  assert.ok(mswDeg, 'expected msw degradation for response-headers');
+  assert.equal(mswDeg.state, 'partial');
+  assert.match(mswDeg.note, /Set-Cookie/);
+
+  const supabaseDeg = degradations(sc, 'supabase').find((d) => d.id === 'response-headers');
+  assert.ok(supabaseDeg, 'expected supabase degradation for response-headers');
+  assert.equal(supabaseDeg.state, 'declined');
+  assert.match(supabaseDeg.note, /PostgREST/);
+
+  const prismDeg = degradations(sc, 'prism').find((d) => d.id === 'response-headers');
+  assert.ok(prismDeg, 'expected prism degradation for response-headers');
+  assert.equal(prismDeg.state, 'partial');
+  assert.match(prismDeg.note, /Set-Cookie/);
+
+  assert.equal(
+    degradations(sc, 'wiremock').find((d) => d.id === 'response-headers'),
+    undefined,
+    'wiremock should not warn about response-headers'
+  );
+
+  const epOnly = loadScenario(join(dir, 'endpoint-only.yaml'));
+  assert.ok(usedCapabilities(epOnly).some((c) => c.id === 'response-headers'));
+
+  const fixOnly = loadScenario(join(dir, 'fixture-only.yaml'));
+  assert.ok(usedCapabilities(fixOnly).some((c) => c.id === 'response-headers'));
+
+  const empty = loadScenario(join(dir, 'empty-headers.yaml'));
+  assert.ok(!usedCapabilities(empty).some((c) => c.id === 'response-headers'));
+});
+
+test('capabilities: response-headers is detected from write expect.headers and cases[].expect.headers', () => {
+  const dir = tmpProject({
+    'write-only.yaml': [
+      'name: write-headers-only',
+      'seed: 1',
+      'world:',
+      '  items: 2',
+      'endpoints:',
+      '  - path: /api/items',
+      '    entity: items',
+      'writes:',
+      '  "POST /api/login":',
+      '    expect:',
+      '      status: 200',
+      '      body: { ok: true }',
+      '      headers:',
+      '        set-cookie: "sid=abc; Path=/; HttpOnly"',
+      '    mutate: false',
+      ''
+    ].join('\n'),
+    'write-empty-headers.yaml': [
+      'name: write-empty-headers',
+      'seed: 1',
+      'world:',
+      '  items: 2',
+      'endpoints:',
+      '  - path: /api/items',
+      '    entity: items',
+      'writes:',
+      '  "POST /api/login":',
+      '    mutate: false',
+      '    expect: { status: 200, headers: {} }',
+      '  "POST /api/logout":',
+      '    cases:',
+      '      - when: { all: true }',
+      '        expect: { status: 200, body: { ok: true }, headers: {} }',
+      '        mutate: false',
+      ''
+    ].join('\n'),
+    'write-case-only.yaml': [
+      'name: write-case-headers-only',
+      'seed: 1',
+      'world:',
+      '  items: 2',
+      'endpoints:',
+      '  - path: /api/items',
+      '    entity: items',
+      'writes:',
+      '  "POST /api/login":',
+      '    cases:',
+      '      - when: { email: "bad@example.com" }',
+      '        expect:',
+      '          status: 401',
+      '          body: { error: "invalid_credentials" }',
+      '        mutate: false',
+      '      - when: { email: "ok@example.com" }',
+      '        expect:',
+      '          status: 200',
+      '          body: { ok: true }',
+      '          headers:',
+      '            set-cookie: "sid=ok; Path=/; HttpOnly"',
+      '        mutate: false',
+      ''
+    ].join('\n')
+  });
+
+  const writeOnly = loadScenario(join(dir, 'write-only.yaml'));
+  const writeUsed = usedCapabilities(writeOnly).map((c) => c.id);
+  assert.ok(
+    writeUsed.includes('response-headers'),
+    `expected response-headers from write expect.headers: ${writeUsed.join(', ')}`
+  );
+
+  const writeEmpty = loadScenario(join(dir, 'write-empty-headers.yaml'));
+  assert.ok(
+    !usedCapabilities(writeEmpty).some((c) => c.id === 'response-headers'),
+    'empty write header maps must not activate response-headers'
+  );
+
+  const writeCaseOnly = loadScenario(join(dir, 'write-case-only.yaml'));
+  assert.equal(writeCaseOnly.writes[0].expect, undefined);
+  const writeCaseUsed = usedCapabilities(writeCaseOnly).map((c) => c.id);
+  assert.ok(
+    writeCaseUsed.includes('response-headers'),
+    `expected response-headers from cases[].expect.headers: ${writeCaseUsed.join(', ')}`
+  );
+});
+
 test('CLI world --strict: exit 3 when the runtime is degraded and nothing written, 0 without the flag', () => {
   const { dir, scenario } = fixtureCopy();
   const out = join(dir, 'strict-out');
