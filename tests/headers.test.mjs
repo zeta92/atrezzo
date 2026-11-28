@@ -3,8 +3,11 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseHeaders, parseHeaderArgs, headerLines, mergeHeaders, maskHeaders, isSecretHeader, redact, MASK } from '../scripts/lib/headers.mjs';
-import { loadFlow } from '../scripts/lib/scenario.mjs';
+import { parseHeaders, parseHeaderArgs, headerLines, mergeHeaders, parseResponseHeaders, mergeResponseHeaders, maskHeaders, isSecretHeader, redact, MASK } from '../scripts/lib/headers.mjs';
+import { loadFlow, normalizeScenario } from '../scripts/lib/scenario.mjs';
+import { parseYaml } from '../scripts/lib/yaml.mjs';
+import { scenarioHash } from '../scripts/lib/world.mjs';
+import { usedCapabilities } from '../scripts/lib/capabilities.mjs';
 import { runVerify, formatReport, loadPlaywright, chromeExecutable } from '../scripts/lib/verify.mjs';
 import { AtrezzoError } from '../scripts/lib/errors.mjs';
 import { FLOW, SCENARIO, ROOT, tmpProject, cliAsync } from './helpers.mjs';
@@ -53,6 +56,132 @@ test('mergeHeaders: the step overrides the flow case-insensitively; the rest is 
   const m = mergeHeaders({ Cookie: 'a=1', 'Accept-Language': 'en' }, { 'accept-language': 'es-ES', 'X-Extra': '1' });
   assert.deepEqual(m, { Cookie: 'a=1', 'accept-language': 'es-ES', 'X-Extra': '1' });
   assert.deepEqual(mergeHeaders({ A: '1' }, undefined), { A: '1' });
+});
+
+// ---------- response headers ----------
+
+test('parseResponseHeaders: valid scalars are lowercased/stringified/trimmed, set-cookie stays a list, ${SESSION} is literal', () => {
+  const is = collect();
+  const h = parseResponseHeaders({
+    'X-Tenant': ' acme ',
+    'X-Count': 42,
+    'X-Enabled': true,
+    'X-Template': '${SESSION}',
+    'Set-Cookie': [' a=1; Path=/ ', 'b=2; HttpOnly'],
+  }, 'endpoints[0].headers', is);
+  assert.deepEqual(is.list, []);
+  assert.deepEqual(h, {
+    'x-tenant': 'acme',
+    'x-count': '42',
+    'x-enabled': 'true',
+    'x-template': '${SESSION}',
+    'set-cookie': ['a=1; Path=/', 'b=2; HttpOnly'],
+  });
+  assert.ok(Array.isArray(h['set-cookie']));
+  assert.deepEqual(parseResponseHeaders(undefined, 'endpoints[0].headers', is), {});
+  assert.deepEqual(is.list, []);
+});
+
+test('parseResponseHeaders: rejects invalid names, case-insensitive duplicates, CR/LF, bad lists, and managed transport headers', () => {
+  {
+    const is = collect();
+    const out = parseResponseHeaders({ 'Bad Name': 'x' }, 'endpoints[0].headers', is);
+    assert.deepEqual(out, {});
+    assert.equal(is.list.length, 1);
+    assert.match(is.list[0], /^endpoints\[0\]\.headers\.Bad Name: invalid header name$/);
+  }
+  {
+    const is = collect();
+    const out = parseResponseHeaders({ 'X-Foo': 'a', 'x-foo': 'b' }, 'endpoints[0].headers', is);
+    assert.deepEqual(out, { 'x-foo': 'a' });
+    assert.equal(is.list.length, 1);
+    assert.match(is.list[0], /^endpoints\[0\]\.headers\.x-foo: duplicate header "x-foo" \(already declared as "X-Foo"\)$/);
+  }
+  {
+    const is = collect();
+    const out = parseResponseHeaders({
+      'X-Cr': 'a\rb',
+      'X-Lf': 'a\nb',
+      'X-Crlf': 'a\r\nInjected: 1',
+      'Set-Cookie': ['ok=1', 'bad=1\r\nInjected: 1'],
+    }, 'endpoints[0].headers', is);
+    assert.deepEqual(out, {});
+    assert.equal(is.list.length, 4);
+    assert.match(is.list[0], /^endpoints\[0\]\.headers\.X-Cr: .*line breaks/);
+    assert.match(is.list[1], /^endpoints\[0\]\.headers\.X-Lf: .*line breaks/);
+    assert.match(is.list[2], /^endpoints\[0\]\.headers\.X-Crlf: .*line breaks/);
+    assert.match(is.list[3], /^endpoints\[0\]\.headers\.Set-Cookie\[1\]: .*line breaks/);
+  }
+  {
+    const is = collect();
+    const out = parseResponseHeaders({ 'X-Multi': ['a', 'b'] }, 'endpoints[0].headers', is);
+    assert.deepEqual(out, {});
+    assert.equal(is.list.length, 1);
+    assert.match(is.list[0], /^endpoints\[0\]\.headers\.X-Multi: must be a scalar value; only "set-cookie" accepts a list of strings$/);
+  }
+  {
+    const is = collect();
+    const out = parseResponseHeaders({ 'Set-Cookie': [] }, 'endpoints[0].headers', is);
+    assert.deepEqual(out, {});
+    assert.equal(is.list.length, 1);
+    assert.match(is.list[0], /^endpoints\[0\]\.headers\.Set-Cookie: must be a string or a non-empty list of strings$/);
+  }
+  {
+    const is = collect();
+    const out = parseResponseHeaders({ 'Set-Cookie': ['a=1', 123] }, 'endpoints[0].headers', is);
+    assert.deepEqual(out, {});
+    assert.equal(is.list.length, 1);
+    assert.match(is.list[0], /^endpoints\[0\]\.headers\.Set-Cookie\[1\]: must be a string; got number$/);
+  }
+  for (const [rawName, canonical] of [['Content-Length', 'content-length'], ['Connection', 'connection'], ['Date', 'date']]) {
+    const is = collect();
+    const out = parseResponseHeaders({ [rawName]: 'value' }, 'endpoints[0].headers', is);
+    assert.deepEqual(out, {});
+    assert.equal(is.list.length, 1, rawName);
+    assert.match(is.list[0], new RegExp(`^endpoints\\[0\\]\\.headers\\.${rawName}: forbidden response header "${canonical}"`));
+  }
+});
+
+test('parseResponseHeaders: rejects NUL/control characters and Unicode code points above HTTP obs-text without echoing values', () => {
+  for (const [value, forbidden] of [
+    ['x\u0000y', ['x\u0000y', '\u0000', JSON.stringify('x\u0000y')]],
+    ['euro €', ['euro €', 'euro', '€']],
+  ]) {
+    const is = collect();
+    const out = parseResponseHeaders({ bad: value }, 'endpoints[0].headers', is);
+    assert.deepEqual(out, {});
+    assert.equal(is.list.length, 1);
+    assert.match(is.list[0], /^endpoints\[0\]\.headers\.bad: .+/);
+    for (const token of forbidden) {
+      assert.ok(!is.list[0].includes(token), `issue must not echo header value: ${is.list[0]}`);
+    }
+  }
+});
+
+test('mergeResponseHeaders: higher scalar wins case-insensitively; set-cookie appends across layers as an array', () => {
+  const merged = mergeResponseHeaders(
+    { 'Cache-Control': 'no-cache', 'X-Base': '1', 'Set-Cookie': 'a=1; Path=/' },
+    { 'cache-control': 'max-age=60', 'X-Top': '2', 'set-cookie': ['b=2; Path=/', 'c=3; HttpOnly'] },
+  );
+  assert.deepEqual(merged, {
+    'cache-control': 'max-age=60',
+    'x-base': '1',
+    'x-top': '2',
+    'set-cookie': ['a=1; Path=/', 'b=2; Path=/', 'c=3; HttpOnly'],
+  });
+  assert.ok(Array.isArray(merged['set-cookie']));
+
+  const fromTwoArrays = mergeResponseHeaders(
+    { 'Set-Cookie': ['a=1'] },
+    undefined,
+    { 'SET-COOKIE': ['b=2'] },
+  );
+  assert.deepEqual(fromTwoArrays, { 'set-cookie': ['a=1', 'b=2'] });
+  assert.ok(Array.isArray(fromTwoArrays['set-cookie']));
+
+  const singleScalarCookie = mergeResponseHeaders({ 'Set-Cookie': 'only=1' });
+  assert.deepEqual(singleScalarCookie, { 'set-cookie': ['only=1'] });
+  assert.ok(Array.isArray(singleScalarCookie['set-cookie']));
 });
 
 // ---------- secrets ----------
@@ -273,4 +402,14 @@ test('real playwright driver: invalid cookie ⇒ detects the redirect to /login 
   const r = await runVerify(loadFlow(join(dir, 'f.yaml')), { url: appUrl, driver: 'playwright', cwd: ROOT, headers: { Cookie: 'bad=1' } });
   assert.equal(r.exitCode, 1, formatReport(r));
   assert.match(r.rows[0].note, /redirected \/items → \/login/);
+});
+
+test('endpoint `headers: {}` normalizes like omitting headers: same hash, no response-headers capability', () => {
+  const yaml = (extra) => `name: empty-headers-hash\nseed: 5\nworld:\n  items: 2\nendpoints:\n  - path: /api/items\n    entity: items\n${extra}`;
+  const parse = (extra) => normalizeScenario(parseYaml(yaml(extra), 't.yaml'), 't.yaml');
+  const omitted = parse('');
+  const empty = parse('    headers: {}\n');
+  assert.equal('headers' in empty.endpoints[0], false);
+  assert.equal(scenarioHash(empty), scenarioHash(omitted));
+  assert.equal(usedCapabilities(empty).some((c) => c.id === 'response-headers'), false);
 });

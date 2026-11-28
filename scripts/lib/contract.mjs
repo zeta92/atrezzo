@@ -244,6 +244,26 @@ function canonicalValue(v) {
   return v;
 }
 
+function mergeResponseHeaders(...layers) {
+  const byLower = new Map();
+  for (const layer of layers) {
+    if (!layer) continue;
+    for (const [k, v] of Object.entries(layer)) {
+      if (v === undefined || v === null) continue;
+      const key = k.toLowerCase();
+      if (key === 'set-cookie') {
+        const next = Array.isArray(v) ? v.filter((item) => item !== undefined && item !== null) : [v];
+        if (!next.length) continue;
+        const prev = byLower.get(key);
+        byLower.set(key, prev ? [...prev, ...next] : [...next]);
+      } else {
+        byLower.set(key, v);
+      }
+    }
+  }
+  return Object.fromEntries(byLower);
+}
+
 const isValidStringId = (v) => typeof v === 'string'
   && v.length >= 1
   && v.length <= 200
@@ -650,9 +670,14 @@ export function createEngine(dataset) {
 
     const status = selected.expect.status;
     const respond = (defaultBody) => {
-      if (selected.expect.body !== undefined) return json(status, selected.expect.body === null ? null : JSON.parse(JSON.stringify(selected.expect.body)));
-      if (selected.expect.echo) return json(status, defaultBody);
-      return json(status, status === 204 || status === 205 || status === 304 ? null : {});
+      const res = selected.expect.body !== undefined
+        ? json(status, selected.expect.body === null ? null : JSON.parse(JSON.stringify(selected.expect.body)))
+        : selected.expect.echo
+          ? json(status, defaultBody)
+          : json(status, status === 204 || status === 205 || status === 304 ? null : {});
+      return selected.expect.headers
+        ? { ...res, headers: mergeResponseHeaders(res.headers, selected.expect.headers) }
+        : res;
     };
 
     if (!selected.mutate) return respond(canonicalValue(payload));
@@ -816,33 +841,12 @@ export function createEngine(dataset) {
     return { ...json(status, rule.body === undefined ? null : JSON.parse(JSON.stringify(rule.body))), hasBody: true };
   }
 
-  /**
-   * @param {{ method?: string, pathname: string, query?: URLSearchParams | Record<string,string>,
-   *   headers?: Headers | Record<string, string | string[]>, body?: unknown }} req
-   * @returns {{ status: number, headers: Record<string,string>, body: unknown, hasBody?: boolean, miss?: true } | null}
-   *   null = not ours (body null without hasBody: true = no body: a count-only answer;
-   *   miss = a `shape: object` endpoint whose entity has no rows, which `serve` records as a gap)
-   */
-  function handle({ method = 'GET', pathname, query, headers, body }) {
-    const upper = method.toUpperCase();
-    if (upper !== 'GET' && upper !== 'HEAD') {
-      const rpc = matchRpc(pathname);
-      if (rpc?.rule && upper === 'POST') return handleRpc(rpc, pathname, body);
-      const wm = matchWrite(upper, pathname);
-      if (wm) return handleWrite(wm, pathname, body);
-      if (rpc && upper === 'POST') return handleRpc(rpc, pathname, body);
-      const allowed = allowedMethods(pathname);
-      if (rpc?.rule && !allowed.length) return json(405, { error: `${upper} ${pathname} is not in the contract (PostgREST functions answer POST)` }, { allow: 'POST' });
-      if (!allowed.length) return null;
-      return json(405, { error: `${upper} ${pathname} is not in the contract (allowed: ${allowed.join(', ')})` }, { allow: allowed.join(', ') });
-    }
-    const m = match(pathname);
-    if (!m) {
-      const allowed = allowedMethods(pathname);
-      if (allowed.length) return json(405, { error: `${upper} ${pathname} is not in the contract (allowed: ${allowed.join(', ')})` }, { allow: allowed.join(', ') });
-      if (matchRpc(pathname)?.rule) return json(405, { error: `${upper} ${pathname} is not in the contract (PostgREST functions answer POST)` }, { allow: 'POST' });
-      return null;
-    }
+  function applyEndpointHeaders(res, ep) {
+    if (!res || res.miss || !ep.headers) return res;
+    return { ...res, headers: mergeResponseHeaders(res.headers, ep.headers) };
+  }
+
+  function handleEndpoint(m, upper, query, headers) {
     const params = query instanceof URLSearchParams ? query : new URLSearchParams(query ?? {});
     const { ep, id } = m;
     // `error:` answers the declared status and body on the list and the detail route, world untouched.
@@ -855,7 +859,10 @@ export function createEngine(dataset) {
       const hasBody = pt.hasBody ?? (pt.body !== null);
       return {
         status: pt.status,
-        headers: { 'content-type': ct, 'x-atrezzo-scenario': dataset.scenario },
+        headers: mergeResponseHeaders(
+          { 'content-type': ct, 'x-atrezzo-scenario': dataset.scenario },
+          pt.headers,
+        ),
         body: hasBody ? pt.body : null,
         hasBody,
       };
@@ -974,6 +981,36 @@ export function createEngine(dataset) {
     }
     if (ep.shape === 'envelope') return json(200, formatEnvelope(ep, page, total, limit, offset, pageNum), out);
     return json(200, page, out);
+  }
+
+  /**
+   * @param {{ method?: string, pathname: string, query?: URLSearchParams | Record<string,string>,
+   *   headers?: Headers | Record<string, string | string[]>, body?: unknown }} req
+   * @returns {{ status: number, headers: Record<string, string | string[]>, body: unknown, hasBody?: boolean, miss?: true } | null}
+   *   null = not ours (body null without hasBody: true = no body: a count-only answer;
+   *   miss = a `shape: object` endpoint whose entity has no rows, which `serve` records as a gap)
+   */
+  function handle({ method = 'GET', pathname, query, headers, body }) {
+    const upper = method.toUpperCase();
+    if (upper !== 'GET' && upper !== 'HEAD') {
+      const rpc = matchRpc(pathname);
+      if (rpc?.rule && upper === 'POST') return handleRpc(rpc, pathname, body);
+      const wm = matchWrite(upper, pathname);
+      if (wm) return handleWrite(wm, pathname, body);
+      if (rpc && upper === 'POST') return handleRpc(rpc, pathname, body);
+      const allowed = allowedMethods(pathname);
+      if (rpc?.rule && !allowed.length) return json(405, { error: `${upper} ${pathname} is not in the contract (PostgREST functions answer POST)` }, { allow: 'POST' });
+      if (!allowed.length) return null;
+      return json(405, { error: `${upper} ${pathname} is not in the contract (allowed: ${allowed.join(', ')})` }, { allow: allowed.join(', ') });
+    }
+    const m = match(pathname);
+    if (!m) {
+      const allowed = allowedMethods(pathname);
+      if (allowed.length) return json(405, { error: `${upper} ${pathname} is not in the contract (allowed: ${allowed.join(', ')})` }, { allow: allowed.join(', ') });
+      if (matchRpc(pathname)?.rule) return json(405, { error: `${upper} ${pathname} is not in the contract (PostgREST functions answer POST)` }, { allow: 'POST' });
+      return null;
+    }
+    return applyEndpointHeaders(handleEndpoint(m, upper, query, headers), m.ep);
   }
 
   return {

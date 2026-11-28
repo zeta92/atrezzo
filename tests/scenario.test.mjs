@@ -116,6 +116,31 @@ test('pre-0.4 Spanish template names fail with the English alternative (no silen
   }
 });
 
+test('endpoint headers: an empty map normalizes and hashes like omitting headers', () => {
+  const base = norm(SCENARIO);
+  const empty = norm(SCENARIO.replace(
+    '    filters: [status, customer_id]\n',
+    '    filters: [status, customer_id]\n    headers: {}\n',
+  ));
+  assert.equal('headers' in empty.endpoints[0], false);
+  assert.deepEqual(empty.endpoints, base.endpoints);
+  assert.equal(scenarioHash(empty), scenarioHash(base));
+});
+
+test('write expect.headers: an empty map normalizes and hashes like omitting headers', () => {
+  const withWrites = (expect) => `${SCENARIO}writes:\n  "POST /api/customers":\n    mutate: false\n    expect: ${expect}\n`;
+  const base = norm(withWrites('{ status: 201 }'));
+  const empty = norm(`${SCENARIO}writes:\n  "POST /api/customers": { mutate: false, expect: { headers: {} } }\n`);
+  const explicitEmpty = norm(withWrites('{ status: 201, headers: {} }'));
+  const omitted = norm(`${SCENARIO}writes:\n  "POST /api/customers": { mutate: false, expect: {} }\n`);
+  assert.equal('headers' in empty.writes[0].expect, false);
+  assert.equal('headers' in explicitEmpty.writes[0].expect, false);
+  assert.deepEqual(explicitEmpty.writes, base.writes);
+  assert.equal(scenarioHash(explicitEmpty), scenarioHash(base));
+  assert.deepEqual(empty.writes, omitted.writes);
+  assert.equal(scenarioHash(empty), scenarioHash(omitted));
+});
+
 test('sorts: valid configuration normalizes and scenarios without sorts keep their hash', () => {
   const base = norm(SCENARIO);
   assert.equal(base.endpoints[0].sorts, undefined);

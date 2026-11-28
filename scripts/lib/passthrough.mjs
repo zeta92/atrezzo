@@ -4,6 +4,7 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { AtrezzoError, EXIT } from './errors.mjs';
 import { CONFIG_FILE, loadConfig } from './config.mjs';
+import { parseResponseHeaders } from './headers.mjs';
 
 export const DEFAULT_FIXTURES_DIR = 'atrezzo/fixtures';
 export const FORBIDDEN_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -266,7 +267,7 @@ export function cloneJson(value) {
   return value;
 }
 
-/** Read and validate `<fixturesDir>/<fixtureName>.json` (`status`, `contentType`, `hasBody`, `body`). */
+/** Read and validate `<fixturesDir>/<fixtureName>.json` (`status`, `contentType`, `hasBody`, `body`, optional `headers`). */
 export function loadFixture(fixturesDir, fixtureName, endpointPath = '<endpoint>') {
   const filePath = fixtureFilePath(fixturesDir, fixtureName);
   let text;
@@ -309,15 +310,29 @@ export function loadFixture(fixturesDir, fixtureName, endpointPath = '<endpoint>
   if (ct !== null && typeof ct !== 'string') {
     throw new AtrezzoError(`passthrough fixture "${fixtureName}" (${filePath}): "contentType" must be a string`, { exitCode: EXIT.INVALID });
   }
+  let headers;
+  if (Object.hasOwn(doc, 'headers')) {
+    const issuesList = [];
+    const issues = { add(field, reason) { issuesList.push(`field "${field}": ${reason}`); } };
+    headers = parseResponseHeaders(doc.headers, 'headers', issues);
+    if (issuesList.length) {
+      throw new AtrezzoError(
+        `passthrough fixture "${fixtureName}" (${filePath}): invalid "headers"`,
+        { exitCode: EXIT.INVALID, issues: issuesList },
+      );
+    }
+  }
   const hasBody = explicitHasBody ?? (doc.body !== null);
   const body = hasBody ? doc.body : null;
 
-  return {
+  const fixture = {
     status: doc.status,
     contentType: ct ?? (typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8'),
     hasBody,
     body,
   };
+  if (headers !== undefined) fixture.headers = headers;
+  return fixture;
 }
 
 /**
@@ -411,7 +426,7 @@ export function applyPatch(body, patch, { endpointPath = '<endpoint>', fixtureNa
 
 /**
  * Resolve all `ep.passthrough` declarations in a normalized scenario against disk fixtures
- * and return a map `{ [ep.path]: { status, contentType, hasBody, body } }`.
+ * and return a map `{ [ep.path]: { status, contentType, hasBody, body, headers? } }`.
  */
 export function resolvePassthroughs(scenario, { scenarioFile = null, fixturesDir = null } = {}) {
   const passthroughEndpoints = (scenario.endpoints ?? []).filter((ep) => ep.passthrough);
@@ -425,12 +440,14 @@ export function resolvePassthroughs(scenario, { scenarioFile = null, fixturesDir
       endpointPath: ep.path,
       fixtureName: ep.passthrough.fixture,
     });
-    resolved[ep.path] = {
+    const entry = {
       status: fixture.status,
       contentType: fixture.contentType,
       hasBody: fixture.hasBody,
       body,
     };
+    if (fixture.headers !== undefined) entry.headers = cloneJson(fixture.headers);
+    resolved[ep.path] = entry;
   }
   return resolved;
 }

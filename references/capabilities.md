@@ -25,6 +25,7 @@ The `msw` cells are checked in `tests/parity.test.mjs` (fast, with a stub that r
 | `passthrough-error` · `passthrough` and `error` | ✅ | ⚠ | ✅ | ✅ |
 | `latency` · latency (`latency`) | ✅ | ⚠ | ⚠ | ⚠ |
 | `diagnostic-headers` · diagnostic headers (`X-Total-Count`, `X-Atrezzo-*`) | ✅ | ✖ | ◐ | ◐ |
+| `response-headers` · response headers (endpoint and passthrough fixture) | ◐ | ✖ | ◐ | ✅ |
 
 ## Why each cell is not ✅
 
@@ -71,3 +72,6 @@ The `msw` cells are checked in `tests/parity.test.mjs` (fast, with a stub that r
 - **diagnostic-headers × supabase** (not supported (declared)): PostgREST sets the headers (`Content-Range`)
 - **diagnostic-headers × prism** (partial): only the example's total, no `X-Atrezzo-Ignored`
 - **diagnostic-headers × wiremock** (partial): the total, yes; `X-Atrezzo-Ignored`, no
+- **response-headers × msw** (partial): Node preserves multiple `Set-Cookie` values; browsers may block scripted `Set-Cookie`
+- **response-headers × supabase** (not supported (declared)): PostgREST controls HTTP headers
+- **response-headers × prism** (partial): OpenAPI scalar headers are supported, but `Set-Cookie` is omitted to avoid merging distinct values

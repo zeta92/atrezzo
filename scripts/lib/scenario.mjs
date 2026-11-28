@@ -5,7 +5,7 @@ import { basename, dirname, resolve } from 'node:path';
 import { parseYaml, YamlError } from './yaml.mjs';
 import { AtrezzoError } from './errors.mjs';
 import { templateFor, entityFields, firstValueList, valueListFields, RENAMED_TEMPLATES } from './world.mjs';
-import { parseHeaders } from './headers.mjs';
+import { parseHeaders, parseResponseHeaders } from './headers.mjs';
 import { parseStorage } from './storage.mjs';
 import { FORBIDDEN_PATH_SEGMENTS, normalizeFixtureName, resolvePassthroughs } from './passthrough.mjs';
 
@@ -765,7 +765,7 @@ function normalizeWorld(world, issues) {
 
 // ---------- endpoints ----------
 
-export const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'scopes', 'include', 'embed', 'counts', 'shape', 'envelope', 'wrap', 'detail', 'pick', 'latency', 'pluck', 'error', 'passthrough'];
+export const ENDPOINT_KEYS = ['path', 'entity', 'filters', 'pagination', 'sort', 'sorts', 'scopes', 'include', 'embed', 'counts', 'shape', 'envelope', 'wrap', 'detail', 'pick', 'latency', 'pluck', 'error', 'passthrough', 'headers'];
 
 /** Levels of `embed` below an endpoint's entity (the endpoint's own children are level 1). */
 export const MAX_EMBED_DEPTH = 4;
@@ -1420,6 +1420,7 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
         else error = { status, body: ep.error.body === undefined ? { error: String(status) } : ep.error.body };
       }
     }
+    const headers = ep.headers !== undefined ? parseResponseHeaders(ep.headers, `${f}.headers`, issues) : null;
     const sorts = spec ? parseSorts(ep.sorts, fields, filters, pagination, f, issues) : null;
     const norm = {
       path, entity: spec ? spec.name : null, filters, pagination,
@@ -1440,6 +1441,7 @@ function normalizeEndpoints(endpoints, world, auth, authDeclared, issues) {
     if (pluck) norm.pluck = pluck; // same
     if (error) norm.error = error; // same
     if (passthrough) norm.passthrough = passthrough; // same: absent unless declared
+    if (headers !== null && Object.keys(headers).length) norm.headers = headers; // same: absent unless declared (an empty map hashes like omitting it)
     out.push(norm);
   });
   return out;
@@ -1616,7 +1618,7 @@ function whenSubsumes(earlier, later) {
 function parseWriteExpect(rawExpect, method, ef, issues, { requireComplete = false } = {}) {
   if (rawExpect === undefined) {
     if (requireComplete) {
-      issues.add(ef, 'required; must be a map { status, echo, body }');
+      issues.add(ef, 'required; must be a map { status, echo, body, headers }');
       return null;
     }
     return {
@@ -1625,10 +1627,10 @@ function parseWriteExpect(rawExpect, method, ef, issues, { requireComplete = fal
     };
   }
   if (!isObj(rawExpect)) {
-    issues.add(ef, `must be a map { status, echo, body }; got ${typeName(rawExpect)}`);
+    issues.add(ef, `must be a map { status, echo, body, headers }; got ${typeName(rawExpect)}`);
     return requireComplete ? null : { status: 200 };
   }
-  issues.unknownKeys(rawExpect, ['status', 'echo', 'body'], ef);
+  issues.unknownKeys(rawExpect, ['status', 'echo', 'body', 'headers'], ef);
   let echo = false;
   if (rawExpect.echo !== undefined) {
     if (typeof rawExpect.echo !== 'boolean') issues.add(`${ef}.echo`, 'must be true or false');
@@ -1653,9 +1655,11 @@ function parseWriteExpect(rawExpect, method, ef, issues, { requireComplete = fal
   if (NO_BODY_STATUSES.has(status) && (echo || (hasBody && rawExpect.body !== null))) {
     issues.add(ef, `status ${status} cannot have a response body`);
   }
+  const headers = rawExpect.headers !== undefined ? parseResponseHeaders(rawExpect.headers, `${ef}.headers`, issues) : null;
   const expect = { status };
   if (echo) expect.echo = true;
   if (hasBody) expect.body = rawExpect.body;
+  if (headers !== null && Object.keys(headers).length) expect.headers = headers; // absent unless declared (an empty map hashes like omitting it)
   return expect;
 }
 

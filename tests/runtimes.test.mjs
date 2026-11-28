@@ -449,3 +449,107 @@ export const HttpResponse = Object.assign(
   assert.deepEqual(Object.keys(userMedia.examples.scenario.value), ['user']);
   assert.deepEqual(userMedia.schema.required, ['user']);
 });
+
+// ---------- response headers (#45) ----------
+
+test('response headers (#45): WireMock carries endpoint/fixture headers, custom Content-Type, and Set-Cookie arrays; Prism omits Set-Cookie and Content-Type with notes', () => {
+  const sc = normalizeScenario({
+    name: 'response-headers',
+    seed: 1,
+    world: { customers: 1 },
+    endpoints: [
+      {
+        path: '/api/customers',
+        entity: 'customers',
+        headers: {
+          etag: '"endpoint"',
+          'x-ratelimit-limit': '5',
+          'set-cookie': ['endpoint=a; Path=/'],
+        },
+      },
+      {
+        path: '/api/login',
+        passthrough: { fixture: 'login' },
+        headers: {
+          etag: '"endpoint-login"',
+          'content-type': 'text/plain; charset=utf-8',
+          'set-cookie': ['endpoint=c; Path=/'],
+        },
+      },
+    ],
+  });
+  Object.defineProperty(sc, '_passthrough', {
+    value: {
+      '/api/login': {
+        status: 200,
+        contentType: 'application/json',
+        hasBody: true,
+        body: { ok: true },
+        headers: {
+          etag: '"fixture"',
+          'set-cookie': ['fixture=a; Path=/', 'fixture=b; Path=/'],
+        },
+      },
+    },
+    enumerable: false,
+    configurable: true,
+  });
+  const ds = generateWorld(sc);
+
+  // WireMock: normal list, detail 200, and passthrough mappings
+  const wm = getAdapter('wiremock').emit({ dataset: ds, scenario: sc, config, dir: '/nada' });
+  const byPath = Object.fromEntries(wm.files.map((f) => [f.path, f.content]));
+  const root = 'atrezzo/.generated/wiremock/response-headers';
+
+  const { mappings: customerMappings } = JSON.parse(byPath[`${root}/mappings/api-customers.json`]);
+  const list = customerMappings.find((m) => m.request.urlPath === '/api/customers' && m.response.status === 200);
+  assert.ok(list);
+  assert.equal(list.response.headers.etag, '"endpoint"');
+  assert.equal(list.response.headers['x-ratelimit-limit'], '5');
+  assert.ok(Array.isArray(list.response.headers['set-cookie']));
+  assert.deepEqual(list.response.headers['set-cookie'], ['endpoint=a; Path=/']);
+
+  const detail = customerMappings.find((m) => m.request.urlPathPattern && m.response.status === 200);
+  assert.ok(detail);
+  assert.equal(detail.response.headers.etag, '"endpoint"');
+  assert.equal(detail.response.headers['x-ratelimit-limit'], '5');
+  assert.ok(Array.isArray(detail.response.headers['set-cookie']));
+  assert.deepEqual(detail.response.headers['set-cookie'], ['endpoint=a; Path=/']);
+
+  const { mappings: loginMappings } = JSON.parse(byPath[`${root}/mappings/api-login.json`]);
+  const login = loginMappings.find((m) => m.response.status === 200);
+  assert.ok(login);
+  assert.equal(login.response.headers.etag, '"endpoint-login"');
+  assert.equal(login.response.headers['content-type'], 'text/plain; charset=utf-8');
+  assert.ok(Array.isArray(login.response.headers['set-cookie']));
+  assert.deepEqual(login.response.headers['set-cookie'], [
+    'fixture=a; Path=/',
+    'fixture=b; Path=/',
+    'endpoint=c; Path=/',
+  ]);
+
+  // Prism: OpenAPI declares ordinary headers and omits Set-Cookie and Content-Type with explicit notes
+  const prism = getAdapter('prism').emit({ dataset: ds, scenario: sc, config, dir: '/nada' });
+  const doc = parseYaml(prism.files[0].content);
+  const findHeader = (headersObj, name) => Object.entries(headersObj ?? {}).find(([k]) => k.toLowerCase() === name.toLowerCase())?.[1];
+  const headerExample = (spec) => spec?.example ?? spec?.schema?.example ?? spec?.schema?.examples?.[0] ?? spec?.schema?.const ?? spec?.schema?.enum?.[0];
+
+  const customersHeaders = doc.paths['/api/customers'].get.responses['200'].headers;
+  assert.equal(headerExample(findHeader(customersHeaders, 'etag')), '"endpoint"');
+  assert.equal(headerExample(findHeader(customersHeaders, 'x-ratelimit-limit')), '5');
+  assert.equal(findHeader(customersHeaders, 'set-cookie'), undefined);
+
+  const loginHeaders = doc.paths['/api/login'].get.responses['200'].headers;
+  assert.equal(headerExample(findHeader(loginHeaders, 'etag')), '"endpoint-login"');
+  assert.equal(findHeader(loginHeaders, 'set-cookie'), undefined);
+  assert.equal(findHeader(loginHeaders, 'content-type'), undefined);
+
+  assert.ok(
+    prism.notes.some((n) => /set-cookie/i.test(n) && /omit/i.test(n)),
+    `expected Prism emit notes to mention that Set-Cookie was omitted; got ${JSON.stringify(prism.notes)}`,
+  );
+  assert.ok(
+    prism.notes.some((n) => /content-type/i.test(n) && /(?:omit\w*|ignor\w*|(?:not|cannot)\s+represent\w*|not\s+(?:includ|emit|appl)\w*)/i.test(n)),
+    `expected Prism emit notes to mention that custom Content-Type header is not represented/ignored; got ${JSON.stringify(prism.notes)}`,
+  );
+});

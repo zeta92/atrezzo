@@ -2726,3 +2726,51 @@ endpoints:
   assert.deepEqual(ordersExact.body, expectedOrders);
   assert.ok(ordersExact.body.every((o) => o.customer_id === '001'));
 });
+
+test('endpoint headers: list, 404 detail, and declared error responses include normalized single and multi-value headers (#45)', () => {
+  const yaml = `name: response-headers
+seed: 4545
+world:
+  customers: { total: 2 }
+endpoints:
+  - path: /api/customers
+    entity: customers
+    headers:
+      x-ratelimit-limit: "5"
+      set-cookie:
+        - "sid=one; Path=/; HttpOnly"
+        - "refresh=two; Path=/; HttpOnly"
+  - path: /api/private
+    entity: customers
+    error: { status: 403, body: { error: "blocked" } }
+    headers:
+      x-ratelimit-limit: "5"
+      set-cookie:
+        - "sid=one; Path=/; HttpOnly"
+        - "refresh=two; Path=/; HttpOnly"
+`;
+  const ds = generateWorld(normalizeScenario(parseYaml(yaml, 'response-headers.yaml'), 'response-headers.yaml'));
+  const eng = createEngine(ds);
+
+  const expectedCookies = [
+    'sid=one; Path=/; HttpOnly',
+    'refresh=two; Path=/; HttpOnly',
+  ];
+
+  const list = eng.handle({ method: 'GET', pathname: '/api/customers' });
+  assert.equal(list.status, 200);
+  assert.equal(list.body.length, 2);
+  assert.equal(list.headers['x-ratelimit-limit'], '5');
+  assert.deepEqual(list.headers['set-cookie'], expectedCookies);
+
+  const missing = eng.handle({ method: 'GET', pathname: '/api/customers/cust-missing' });
+  assert.equal(missing.status, 404);
+  assert.equal(missing.headers['x-ratelimit-limit'], '5');
+  assert.deepEqual(missing.headers['set-cookie'], expectedCookies);
+
+  const blocked = eng.handle({ method: 'GET', pathname: '/api/private' });
+  assert.equal(blocked.status, 403);
+  assert.deepEqual(blocked.body, { error: 'blocked' });
+  assert.equal(blocked.headers['x-ratelimit-limit'], '5');
+  assert.deepEqual(blocked.headers['set-cookie'], expectedCookies);
+});

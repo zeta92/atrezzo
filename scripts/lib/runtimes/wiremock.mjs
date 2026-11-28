@@ -8,6 +8,7 @@
 import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { createEngine } from '../contract.mjs';
+import { mergeResponseHeaders } from '../headers.mjs';
 import { columnInfo, metaFrom, p, slug } from './common.mjs';
 
 export const WIREMOCK_VERSION = '3.13.2';
@@ -91,8 +92,7 @@ export function combinations(ep, dataset, requests = []) {
   return { combos: [...combos.values()], skipped, known: [...known].sort() };
 }
 
-const RESPONSE_HEADERS = ['content-type', 'x-total-count', 'x-atrezzo-scenario'];
-const pickHeaders = (h) => Object.fromEntries(RESPONSE_HEADERS.filter((k) => h[k] !== undefined).map((k) => [k, h[k]]));
+const pickHeaders = (h) => mergeResponseHeaders(h);
 const json = (v) => `${JSON.stringify(v, null, 2)}\n`;
 const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -115,7 +115,14 @@ export function emit({ dataset, config, dir = '.', requests = [] }) {
         name: `${ep.path} (declared error ${ep.error.status})`,
         priority: 1,
         request: { method: 'GET', urlPathPattern: `^${escaped}${ep.detail ? '(/[^/]+)?' : ''}$` },
-        response: { status: ep.error.status, headers: { 'content-type': 'application/json; charset=utf-8', 'x-atrezzo-scenario': dataset.scenario, 'x-atrezzo-error': 'declared' }, ...(ep.error.body === null ? {} : { jsonBody: ep.error.body }) },
+        response: {
+          status: ep.error.status,
+          headers: mergeResponseHeaders(
+            { 'content-type': 'application/json; charset=utf-8', 'x-atrezzo-scenario': dataset.scenario, 'x-atrezzo-error': 'declared' },
+            ep.headers,
+          ),
+          ...(ep.error.body === null ? {} : { jsonBody: ep.error.body }),
+        },
       };
       stubs += 1;
       files.push({ path: p(root, 'mappings', `${slug(ep.path)}.json`), content: json({ mappings: [mapping] }) });
@@ -140,7 +147,11 @@ export function emit({ dataset, config, dir = '.', requests = [] }) {
         request: { method: 'GET', urlPathPattern: `^${escaped}$` },
         response: {
           status: pt.status,
-          headers: { 'content-type': pt.contentType ?? 'application/json; charset=utf-8', 'x-atrezzo-scenario': dataset.scenario },
+          headers: mergeResponseHeaders(
+            { 'content-type': pt.contentType ?? 'application/json; charset=utf-8', 'x-atrezzo-scenario': dataset.scenario },
+            pt.headers,
+            ep.headers,
+          ),
           ...(hasBody ? { bodyFileName: bodyFile } : {}),
         },
       };
@@ -197,7 +208,10 @@ export function emit({ dataset, config, dir = '.', requests = [] }) {
           request: { method: 'GET', urlPathPattern: `^${escapeRegex(ep.path)}/(${rows.map((r) => escapeRegex(r.id)).join('|')})$` },
           response: {
             status: 200,
-            headers: { 'content-type': 'application/json; charset=utf-8', 'x-atrezzo-scenario': dataset.scenario },
+            headers: mergeResponseHeaders(
+              { 'content-type': 'application/json; charset=utf-8', 'x-atrezzo-scenario': dataset.scenario },
+              ep.headers,
+            ),
             bodyFileName: `${p(dataset.scenario, base, 'id')}/{{request.pathSegments.[${seg}]}}.json`,
             transformers: ['response-template'],
           },
@@ -207,7 +221,11 @@ export function emit({ dataset, config, dir = '.', requests = [] }) {
         name: `${ep.path}/{id} not found`,
         priority: 5,
         request: { method: 'GET', urlPathPattern: `^${escapeRegex(ep.path)}/[^/]+$` },
-        response: { status: 404, headers: { 'content-type': 'application/json; charset=utf-8' }, jsonBody: { error: `${ep.entity} does not exist in scenario "${dataset.scenario}"` } },
+        response: {
+          status: 404,
+          headers: mergeResponseHeaders({ 'content-type': 'application/json; charset=utf-8' }, ep.headers),
+          jsonBody: { error: `${ep.entity} does not exist in scenario "${dataset.scenario}"` },
+        },
       });
     }
     stubs += mappings.length;

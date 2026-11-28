@@ -3,6 +3,7 @@
 // returns), and run `prism mock` on it. Prism serves examples: it does NOT
 // filter or paginate.
 import { createEngine } from '../contract.mjs';
+import { mergeResponseHeaders } from '../headers.mjs';
 import { emitYaml } from '../yaml-emit.mjs';
 import { columnInfo, metaFrom, p, slug } from './common.mjs';
 
@@ -95,6 +96,42 @@ function itemSchema(ep, dataset, names) {
   return { allOf: [ref, { type: 'object', properties, required }] };
 }
 
+/** Convert a merged response-header map into OpenAPI response `headers` objects (omitting `set-cookie` and `content-type`, which OpenAPI ignores as response headers). */
+function openapiHeaders(merged) {
+  const out = {};
+  for (const [name, value] of Object.entries(merged ?? {})) {
+    const lower = name.toLowerCase();
+    if (lower === 'set-cookie' || lower === 'content-type') continue;
+    if (value === undefined || value === null) continue;
+    out[name] = {
+      description: 'Response header declared by the scenario',
+      schema: { type: 'string', example: String(value) },
+    };
+  }
+  return out;
+}
+
+/** Attach OpenAPI response `headers`, preserving base headers unless overridden case-insensitively. */
+function withHeaders(resp, customHeaders, baseHeaders) {
+  const merged = {};
+  if (baseHeaders) {
+    const customLower = new Set(Object.keys(customHeaders ?? {}).map((k) => k.toLowerCase()));
+    for (const [k, v] of Object.entries(baseHeaders)) {
+      if (!customLower.has(k.toLowerCase())) merged[k] = v;
+    }
+  }
+  for (const [k, v] of Object.entries(customHeaders ?? {})) merged[k] = v;
+  if (!Object.keys(merged).length) return resp;
+  const { description, ...rest } = resp;
+  return { description, headers: merged, ...rest };
+}
+
+/** Effective merged response headers for an endpoint (including passthrough fixture headers). */
+function endpointHeaders(ep, dataset) {
+  if (ep.passthrough) return mergeResponseHeaders(dataset.passthrough?.[ep.path]?.headers, ep.headers);
+  return mergeResponseHeaders(ep.headers);
+}
+
 export function openapiDocument(dataset, config) {
   const engine = createEngine(dataset);
   const { names, schemas } = componentSchemas(dataset);
@@ -108,10 +145,11 @@ export function openapiDocument(dataset, config) {
       const hasBody = pt ? (pt.hasBody ?? (pt.body !== null)) : false;
       const op = slug(ep.path).replace(/[.-]/g, '_');
       const mime = (pt?.contentType ?? 'application/json').split(';')[0].trim() || 'application/json';
-      const resp = {
+      const ptHeaders = openapiHeaders(mergeResponseHeaders(pt?.headers, ep.headers));
+      const resp = withHeaders({
         description: `Passthrough fixture "${ep.passthrough.fixture}"`,
         ...(hasBody ? { content: { [mime]: { schema: {}, examples: { scenario: { summary: `Fixture ${ep.passthrough.fixture}`, value: pt.body } } } } } : {}),
-      };
+      }, ptHeaders);
       paths[oasPath] = { get: { operationId: `list_${op}`, summary: `${ep.path} (atrezzo passthrough)`, parameters, responses: { [pt?.status ?? 200]: resp } } };
       continue;
     }
@@ -205,9 +243,15 @@ export function openapiDocument(dataset, config) {
       }
     }
     const op = slug(ep.path).replace(/[.-]/g, '_');
+    const epHeaders = openapiHeaders(mergeResponseHeaders(ep.headers));
     if (ep.error) {
       // `error:` answers the declared status and body on the list and the detail route.
-      const declared = { [ep.error.status]: { description: `Declared by the scenario (error: ${ep.error.status}); the world is not projected`, content: { 'application/json': { schema: {}, examples: { scenario: { summary: 'The body the scenario declares', value: ep.error.body } } } } } };
+      const declared = {
+        [ep.error.status]: withHeaders({
+          description: `Declared by the scenario (error: ${ep.error.status}); the world is not projected`,
+          content: { 'application/json': { schema: {}, examples: { scenario: { summary: 'The body the scenario declares', value: ep.error.body } } } },
+        }, epHeaders),
+      };
       paths[oasPath] = { get: { operationId: `list_${op}`, summary: `${ep.entity} (atrezzo declared error)`, parameters, responses: declared } };
       if (ep.detail) {
         const idName = ep.params?.some((x) => x.name === 'id') ? 'row_id' : 'id';
@@ -215,25 +259,27 @@ export function openapiDocument(dataset, config) {
       }
       continue;
     }
+    const totalHeader = Object.hasOwn(epHeaders, 'x-total-count')
+      ? undefined
+      : { 'X-Total-Count': { description: 'Total after filters, before pagination', schema: { type: 'integer', example: Number(def.headers['x-total-count']) } } };
     const responses = ep.shape === 'object'
       ? {
-        200: { description: `The first ${dataset.schema[ep.entity].singular} after filters and sort (shape: object)`, content: { 'application/json': { schema, examples } } },
-        404: { description: 'The entity has no rows, or no row matches the filters', content: { 'application/json': { schema: errorSchema } } },
+        200: withHeaders({ description: `The first ${dataset.schema[ep.entity].singular} after filters and sort (shape: object)`, content: { 'application/json': { schema, examples } } }, epHeaders),
+        404: withHeaders({ description: 'The entity has no rows, or no row matches the filters', content: { 'application/json': { schema: errorSchema } } }, epHeaders),
       }
       : {
-        200: {
+        200: withHeaders({
           description: `List of ${ep.entity}`,
-          headers: { 'X-Total-Count': { description: 'Total after filters, before pagination', schema: { type: 'integer', example: Number(def.headers['x-total-count']) } } },
           content: { 'application/json': { schema, examples } },
-        },
+        }, epHeaders, totalHeader),
       };
-    if (ep.pagination || ep.sorts) responses[400] = { description: 'Invalid pagination or sort query parameter', content: { 'application/json': { schema: errorSchema } } };
+    if (ep.pagination || ep.sorts) responses[400] = withHeaders({ description: 'Invalid pagination or sort query parameter', content: { 'application/json': { schema: errorSchema } } }, epHeaders);
     paths[oasPath] = { get: { operationId: `list_${op}`, summary: `${ep.entity} (atrezzo projection)`, parameters, responses } };
     if (ep.detail) {
       const first = rows[0];
       const detailResponses = {
-        200: { description: `One ${dataset.schema[ep.entity].singular}`, content: { 'application/json': { schema: wrapped(item), ...(first ? { examples: { scenario: { summary: `id ${first.id}`, value: engine.handle({ pathname: `${concrete}/${first.id}` }).body } } } : {}) } } },
-        404: { description: 'Does not exist in the scenario', content: { 'application/json': { schema: errorSchema } } },
+        200: withHeaders({ description: `One ${dataset.schema[ep.entity].singular}`, content: { 'application/json': { schema: wrapped(item), ...(first ? { examples: { scenario: { summary: `id ${first.id}`, value: engine.handle({ pathname: `${concrete}/${first.id}` }).body } } } : {}) } } }, epHeaders),
+        404: withHeaders({ description: 'Does not exist in the scenario', content: { 'application/json': { schema: errorSchema } } }, epHeaders),
       };
       const idName = ep.params?.some((x) => x.name === 'id') ? 'row_id' : 'id';
       paths[`${oasPath}/{${idName}}`] = {
@@ -262,6 +308,16 @@ export function emit({ dataset, config }) {
   const file = p(config.generatedDir, `${dataset.scenario}.openapi.yaml`);
   const doc = openapiDocument(dataset, config);
   const exampleKeys = Object.values(doc.paths).flatMap((x) => Object.keys(x.get.responses[200]?.content?.['application/json']?.examples ?? {})).filter((k) => k !== 'scenario');
+  const setCookieEndpoints = [...new Set(
+    dataset.endpoints
+      .filter((ep) => Object.hasOwn(endpointHeaders(ep, dataset), 'set-cookie'))
+      .map((ep) => ep.path),
+  )];
+  const contentTypeEndpoints = [...new Set(
+    dataset.endpoints
+      .filter((ep) => Object.hasOwn(endpointHeaders(ep, dataset), 'content-type'))
+      .map((ep) => ep.path),
+  )];
   return {
     files: [{ path: file, content: emitYaml(doc) }],
     start: `start the Prism CLI against ${file} on port ${config.mock.port}`,
@@ -272,6 +328,8 @@ export function emit({ dataset, config }) {
       'Prism does validate requests against the declared parameters (types, minimum/maximum): it answers 400 (the spec declares 400 on paginated lists) or 422 when they do not match',
       'filters are declared as string without enum: with an enum Prism would reject the "a,b" lists the engine accepts',
       ...dataset.endpoints.filter((e) => e.error).map((e) => `${e.path}: declares only its error response (${e.error.status}) with the scenario's body; if your Prism version does not pick it on its own, send Prefer: code=${e.error.status}`),
+      ...(setCookieEndpoints.length ? [`Set-Cookie omitted on ${setCookieEndpoints.join(', ')}: OpenAPI cannot preserve distinct multiple Set-Cookie values and they are not comma-joined`] : []),
+      ...(contentTypeEndpoints.length ? [`custom Content-Type omitted on ${contentTypeEndpoints.join(', ')}: OpenAPI ignores Content-Type as a response header, so Prism answers with the media type of the declared content (application/json)`] : []),
     ],
   };
 }

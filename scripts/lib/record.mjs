@@ -1,5 +1,6 @@
-// `atrezzo record`: capture a real HTTP response (without credentials/headers)
-// into `<fixturesDir>/<name>.json` for passthrough-and-patch endpoints.
+// `atrezzo record`: capture a real HTTP response (retaining safe response
+// headers and omitting credentials/unsupported headers) into
+// `<fixturesDir>/<name>.json` for passthrough-and-patch endpoints.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { AtrezzoError, EXIT } from './errors.mjs';
@@ -7,11 +8,100 @@ import { parseYaml, YamlError } from './yaml.mjs';
 import { emitYaml } from './yaml-emit.mjs';
 import { normalizeScenario } from './scenario.mjs';
 import { normalizeFixtureName, resolveFixturesDir, fixtureFilePath } from './passthrough.mjs';
-import { formatHeaders, redact } from './headers.mjs';
+import { formatHeaders, isSecretHeader, isValidResponseHeaderValue, redact } from './headers.mjs';
 import { safeSearch } from './misses.mjs';
 import { slug } from './runtimes/common.mjs';
 
 const JSON_CT = /\bjson\b|\+json/i;
+const HEADER_TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+// Allowlist of standard, non-identifying headers. `location` (redirect URLs with tokens),
+// `content-disposition` (file names, PII) and arbitrary `x-*` headers (tokens, PII) are
+// deliberately NOT persisted.
+const SAFE_RESPONSE_HEADERS = new Set([
+  'etag',
+  'last-modified',
+  'cache-control',
+  'expires',
+  'vary',
+  'content-language',
+  'retry-after',
+]);
+
+const FORBIDDEN_RESPONSE_HEADERS = new Set([
+  'content-length',
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+  'upgrade',
+  'te',
+  'trailer',
+  'proxy-connection',
+  'host',
+  'date',
+]);
+
+function iterResponseHeaders(rawHeaders) {
+  if (!rawHeaders) return [];
+  if (typeof rawHeaders.entries === 'function') return rawHeaders.entries();
+  if (typeof rawHeaders[Symbol.iterator] === 'function') return rawHeaders;
+  if (typeof rawHeaders.forEach === 'function') {
+    const pairs = [];
+    rawHeaders.forEach((value, name) => pairs.push([name, value]));
+    return pairs;
+  }
+  if (typeof rawHeaders.keys === 'function' && typeof rawHeaders.get === 'function') {
+    const pairs = [];
+    for (const name of rawHeaders.keys()) pairs.push([name, rawHeaders.get(name)]);
+    return pairs;
+  }
+  return [];
+}
+
+/**
+ * Partition upstream response headers into safe headers to persist (lowercased
+ * names with preserved values) and a sorted lowercase list of omitted header
+ * names (never values). `content-type` is handled separately as `contentType`.
+ */
+function captureResponseHeaders(rawHeaders) {
+  const savedMap = new Map();
+  const omitted = new Set();
+
+  for (const [rawName, rawValue] of iterResponseHeaders(rawHeaders)) {
+    const name = String(rawName).toLowerCase();
+    if (!name || name === 'content-type') continue;
+    if (
+      FORBIDDEN_RESPONSE_HEADERS.has(name)
+      || isSecretHeader(name)
+      || !HEADER_TOKEN.test(name)
+      || !SAFE_RESPONSE_HEADERS.has(name)
+    ) {
+      savedMap.delete(name);
+      omitted.add(name);
+      continue;
+    }
+    if (rawValue === undefined || rawValue === null) {
+      savedMap.delete(name);
+      omitted.add(name);
+      continue;
+    }
+    const text = String(rawValue);
+    if (!isValidResponseHeaderValue(text)) {
+      savedMap.delete(name);
+      omitted.add(name);
+      continue;
+    }
+    savedMap.set(name, text.trim());
+  }
+
+  const saved = [...savedMap.keys()].sort();
+  const headers = Object.fromEntries(saved.map((name) => [name, savedMap.get(name)]));
+  return {
+    headers,
+    saved,
+    omitted: [...omitted].sort(),
+  };
+}
 
 function readScenarioDoc(file) {
   let text;
@@ -42,8 +132,9 @@ export function defaultFixtureName(endpointPath) {
 }
 
 /**
- * Capture a real response from `url` and save `{ status, contentType, hasBody, body }`
- * (zero request/response secret headers) to `atrezzo/fixtures/<name>.json`.
+ * Capture a real response from `url` and save `{ status, contentType, hasBody, body, headers? }`
+ * (retaining safe response headers and omitting credentials/unsupported headers)
+ * to `atrezzo/fixtures/<name>.json`.
  */
 export async function recordEndpoint({
   url,
@@ -141,9 +232,16 @@ export async function recordEndpoint({
     body = rawText;
   }
 
+  const {
+    headers: responseHeaders,
+    saved: savedResponseHeaders,
+    omitted: omittedResponseHeaders,
+  } = captureResponseHeaders(res.headers);
   const contentType = rawCt ?? (typeof body === 'string' ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8');
-  // Persist ONLY status, contentType, hasBody, and body: no request/response headers, cookies, or tokens.
+  // Persist status, contentType, hasBody, body, and safe response headers only;
+  // request headers, credentials, and unsupported/transport response headers are omitted.
   const fixturePayload = { status, contentType, hasBody, body };
+  if (savedResponseHeaders.length) fixturePayload.headers = responseHeaders;
 
   mkdirSync(dirname(outFile), { recursive: true });
   writeFileSync(outFile, `${JSON.stringify(fixturePayload, null, 2)}\n`);
@@ -175,6 +273,8 @@ export async function recordEndpoint({
     contentType,
     bytes: Buffer.byteLength(rawText, 'utf8'),
     headers,
+    savedResponseHeaders,
+    omittedResponseHeaders,
     scenario: scenario.name,
     updatedScenario,
     hasPassthrough: Boolean(matchedRaw?.passthrough || write),
@@ -189,6 +289,12 @@ export function formatRecordReport(res) {
     lines.push(`  request headers (not saved): ${formatHeaders(res.headers)}`);
   }
   lines.push(`  captured: HTTP ${res.status} · ${res.contentType} · ${res.bytes} bytes`);
+  if (res.savedResponseHeaders?.length) {
+    lines.push(`  response headers saved: ${res.savedResponseHeaders.join(', ')}`);
+  }
+  if (res.omittedResponseHeaders?.length) {
+    lines.push(`  response headers omitted (not saved): ${res.omittedResponseHeaders.join(', ')}`);
+  }
   if (res.updatedScenario) {
     lines.push(`  updated: ${res.updatedScenario} (${res.endpoint} → passthrough.fixture "${res.fixture}")`);
   } else if (!res.hasPassthrough) {

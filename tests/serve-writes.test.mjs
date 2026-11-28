@@ -36,6 +36,16 @@ const EXTRA = `  "PATCH /api/posts/:id":
   "POST /api/notes":
     expect: { status: 200 }
     mutate: false
+  "POST /api/login":
+    expect:
+      status: 201
+      body: { ok: true }
+      headers:
+        x-session-kind: mock
+        set-cookie:
+          - "sid=one; Path=/; HttpOnly"
+          - "refresh=two; Path=/; HttpOnly"
+    mutate: false
 `;
 // Block-style writes added after the flow map: rewrite as a single block map.
 const SCENARIO = POSTS.replace(/^writes: .*$/m, `writes:
@@ -139,6 +149,29 @@ test('mutate: false keeps an endpoint write stateless and answers {}', async () 
   assert.equal(r.status, 200);
   assert.deepEqual(r.body, {});
   assert.equal((await getJson(`${url}/api/notes`)).body.length, 5);
+});
+
+test('write expect.headers sets custom headers and emits multiple Set-Cookie headers (#45)', async () => {
+  await reset();
+  const res = await fetch(`${url}/api/login`, {
+    method: 'POST',
+    headers: JSON_H,
+    body: JSON.stringify({ email: 'user@example.com' }),
+  });
+  assert.equal(res.status, 201);
+  assert.deepEqual(await res.json(), { ok: true });
+  assert.equal(res.headers.get('x-session-kind'), 'mock');
+  assert.deepEqual(res.headers.getSetCookie(), [
+    'sid=one; Path=/; HttpOnly',
+    'refresh=two; Path=/; HttpOnly',
+  ]);
+
+  const state = await getJson(`${url}/__atrezzo/state`);
+  assert.equal(state.status, 200);
+  assert.deepEqual(state.body.responseHeaders['POST /api/login'], ['set-cookie', 'x-session-kind']);
+  const serialized = JSON.stringify(state.body);
+  assert.doesNotMatch(serialized, /sid=one/);
+  assert.doesNotMatch(serialized, /refresh=two/);
 });
 
 test('undeclared method on a contract route ⇒ 405 with Allow; unknown route ⇒ 404; both list the writes', async () => {

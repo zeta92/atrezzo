@@ -241,7 +241,7 @@ ${block}
   assert.throws(() => normalizeScenario(parseYaml(badYaml('  - path: /api/x\n    filters: [id]\n    passthrough: { fixture: ok }'), 'b.yaml'), 'b.yaml'), /incompatible with "passthrough" without "entity"/);
 });
 
-test('atrezzo record: captures real status, content-type and body without saving request/response credentials', async () => {
+test('atrezzo record: captures real status, content-type, body and safe response headers without saving request/response credentials', async () => {
   let receivedAuth = null;
   let receivedCookie = null;
   const upstream = await startUpstream((req, res) => {
@@ -249,9 +249,13 @@ test('atrezzo record: captures real status, content-type and body without saving
     receivedCookie = req.headers.cookie;
     res.writeHead(200, {
       'content-type': 'application/json; charset=utf-8',
+      etag: 'W/"market-v1"',
       'set-cookie': 'session=super-secret-cookie; HttpOnly',
       'x-api-key': 'upstream-secret',
       'x-request-id': 'req-42',
+      location: 'https://upstream.example/callback?token=location-secret-token',
+      'x-internal-context': 'user=jane.doe@example.com;session=ctx-secret-99',
+      'content-disposition': 'attachment; filename="statement-john.smith.pdf"',
     });
     res.end(JSON.stringify(MARKET_FIXTURE.body));
   });
@@ -286,21 +290,32 @@ endpoints:
     assert.equal(receivedAuth, 'Bearer top-secret-token');
     assert.equal(receivedCookie, 'session=stdin-secret');
     // Secrets never leak to stdout or stderr
-    assert.doesNotMatch(rec.stdout + rec.stderr, /top-secret-token|stdin-secret|leak-in-query|super-secret-cookie|upstream-secret/);
+    assert.doesNotMatch(rec.stdout + rec.stderr, /top-secret-token|stdin-secret|leak-in-query|super-secret-cookie|HttpOnly|upstream-secret|location-secret-token|jane\.doe|ctx-secret-99|req-42|john\.smith|statement/i);
     assert.match(rec.stdout, /Authorization: \*\*\*/);
     assert.match(rec.stdout, /Cookie: \*\*\*/);
+    // Omitted sensitive response header names are reported, never their values
+    assert.match(rec.stdout, /omitted/i);
+    assert.match(rec.stdout, /\bset-cookie\b/i);
+    assert.match(rec.stdout, /\bx-api-key\b/i);
+    assert.match(rec.stdout, /\blocation\b/i);
+    assert.match(rec.stdout, /\bx-internal-context\b/i);
+    assert.match(rec.stdout, /\bcontent-disposition\b/i);
 
     const fixturePath = join(dir, 'atrezzo/fixtures/market-cap.json');
     assert.ok(existsSync(fixturePath));
     const saved = JSON.parse(readFileSync(fixturePath, 'utf8'));
-    assert.deepEqual(Object.keys(saved), ['status', 'contentType', 'hasBody', 'body']);
+    assert.deepEqual(Object.keys(saved), ['status', 'contentType', 'hasBody', 'body', 'headers']);
     assert.equal(saved.status, 200);
     assert.equal(saved.contentType, 'application/json; charset=utf-8');
     assert.equal(saved.hasBody, true);
     assert.deepEqual(saved.body, MARKET_FIXTURE.body);
+    // Only standard, non-identifying headers survive: Location, arbitrary x-* and Content-Disposition (file names) may carry tokens or PII
+    assert.deepEqual(saved.headers, { etag: 'W/"market-v1"' });
 
     const rawSaved = readFileSync(fixturePath, 'utf8');
-    assert.doesNotMatch(rawSaved, /set-cookie|x-api-key|x-request-id|authorization|top-secret-token|stdin-secret|super-secret-cookie|upstream-secret|leak-in-query/i);
+    assert.doesNotMatch(rawSaved, /set-cookie|x-api-key|authorization|top-secret-token|stdin-secret|super-secret-cookie|upstream-secret|leak-in-query/i);
+    assert.doesNotMatch(rawSaved, /location|location-secret-token|x-internal-context|jane\.doe|ctx-secret-99|x-request-id|req-42/i);
+    assert.doesNotMatch(rawSaved, /content-disposition|john\.smith|statement/i);
 
     // Now serve using the recorded fixture + existing patch in the scenario
     const srv = createMockServer({
@@ -312,6 +327,11 @@ endpoints:
     try {
       const res = await request(`${base}/api/market`);
       assert.equal(res.status, 200);
+      assert.equal(res.headers.get('etag'), 'W/"market-v1"');
+      assert.equal(res.headers.get('x-request-id'), null);
+      assert.equal(res.headers.get('location'), null);
+      assert.equal(res.headers.get('set-cookie'), null);
+      assert.equal(res.headers.get('content-disposition'), null);
       const body = JSON.parse(res.text);
       assert.equal(body.market.open, false);
       assert.deepEqual(body.items, MARKET_FIXTURE.body.items);
@@ -1068,4 +1088,42 @@ test('#44 resolveEffectiveDirs with a valid project config and --scenarios point
   const dirs = resolveEffectiveDirs({ cfg: loadConfig(project), dir: project, scenarios: project });
   assert.equal(dirs.fixturesDir, join(project, 'custom-fixtures'));
   assert.equal(dirs.fixturesSource, 'atrezzo.config.json');
+});
+
+test('#45 passthrough fixture headers merge with endpoint headers (etag overrides, set-cookie appends in fixture-then-endpoint order)', async () => {
+  const scenarioYaml = `${BASE_SCENARIO}    headers:
+      etag: '"endpoint"'
+      set-cookie:
+        - "endpoint=c; Path=/"
+`;
+  const fixture = {
+    ...MARKET_FIXTURE,
+    headers: {
+      etag: '"fixture"',
+      'set-cookie': ['fixture=a; Path=/', 'fixture=b; Path=/'],
+    },
+  };
+  const dir = tmpProject({
+    'atrezzo/scenarios/market-state.yaml': scenarioYaml,
+    'atrezzo/fixtures/market.json': JSON.stringify(fixture, null, 2),
+  });
+  const srv = createMockServer({
+    scenariosDir: join(dir, 'atrezzo/scenarios'),
+    fixturesDir: join(dir, 'atrezzo/fixtures'),
+    scenario: 'market-state',
+  });
+  const base = `http://127.0.0.1:${(await srv.listen(0)).port}`;
+  try {
+    const res = await fetch(`${base}/api/market`);
+    await res.text();
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('etag'), '"endpoint"');
+    assert.deepEqual(res.headers.getSetCookie(), [
+      'fixture=a; Path=/',
+      'fixture=b; Path=/',
+      'endpoint=c; Path=/',
+    ]);
+  } finally {
+    await srv.close();
+  }
 });
